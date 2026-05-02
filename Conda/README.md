@@ -152,6 +152,9 @@ python gui.py
 
 4. 打开浏览器访问 `http://127.0.0.1:22267`，即可看到 ALAS WEB GUI
 
+> [!CAUTION]
+> 若报告未找到 `Git`、`Python`、`Adb` 路径，请阅读 [附录 填写依赖路径](#附录-填写依赖路径)
+
 ---
 
 > [!CAUTION]
