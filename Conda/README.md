@@ -16,7 +16,7 @@
 
 ```bash
 # 下载 Miniforge 安装脚本
-wget -q --show-progress -O Miniforge3-Linux-x86_64.sh https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh
+wget --show-progress -O Miniforge3-Linux-x86_64.sh https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh
 
 # 运行安装脚本
 bash Miniforge3-Linux-x86_64.sh -b
@@ -81,7 +81,7 @@ cd AzurLaneAutoScript
 ## 4. 下载 environment.yml 文件
 
 ```bash
-wget --show-progress -O environment.yml https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/Linux/environment.yml
+wget --show-progress -O environment.yml https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Conda/environment.yml
 ```
 
 > [!TIP]
@@ -129,10 +129,7 @@ cp config/deploy.template-linux-cn.yaml config/deploy.yaml
 
 ---
 
-> [!TIP]
-> 当 ALAS WEB GUI 正确运行后，只要这个终端没关闭，ALAS 就不会终止运行
-
-## 7. 运行 ALAS
+## 7. 测试运行 ALAS
 
 1. 激活环境
 
@@ -157,27 +154,25 @@ python gui.py
 
 ---
 
-> [!IMPORTANT]
-> 后续可直接运行 sh 脚本，而不是按照步骤 7. 来运行 ALAS  
-> 或使用本仓库的 [run_alas.sh](./run_alas.sh) 文件
-
 > [!CAUTION]
 > 使用脚本运行前，必须进行下列操作：
 >
 > 1. 修改 `cd AzurLaneAutoScript` 为实际路径
 > 2. 修改脚本文件权限 `chmod +x run_alas.sh`
 
-## 8. 使用脚本运行 ALAS
+## 8. 编写脚本并测试运行 ALAS
 
-创建并配置 `run_alas.sh` 文件
+1. 下载脚本文件
 
-1. 在终端执行下列代码，创建脚本文件
+```bash
+wget --show-progress -O run_alas.sh https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Conda/run_alas.sh
+```
+
+2. 编辑脚本文件
 
 ```bash
 nano run_alas.sh
 ```
-
-2. 编辑脚本文件
 
 ```bash
 #!/bin/bash
@@ -210,11 +205,20 @@ chmod +x run_alas.sh
 
 ---
 
+> [!IMPORTANT]
+> 后续可以使用服务来运行 ALAS，避免终端关闭导致 ALAS 终止运行
+
+> [!CAUTION]
+> 使用服务运行前，必须进行下列操作：
+>
+> 1. 修改 `ExecStart=/root/run_alas.sh` 为实际路径
+> 2. 修改文件权限 `chmod 644 /etc/systemd/system/run_alas.service`
+
 ## 9. 配置开机自启
 
 ```bash
 # 下载预设的 run_alas.service 文件
-wget --show-progress -O /etc/systemd/system/run_alas.service https://example.com/run_alas.service
+wget --show-progress -O /etc/systemd/system/run_alas.service https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/run_alas.service
 
 # 修改 run_alas.service 文件中的路径为实际路径，例如 /root/run_alas.sh 或 /home/neanc/run_alas.sh
 nano /etc/systemd/system/run_alas.service
