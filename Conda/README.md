@@ -221,7 +221,7 @@ chmod +x run_alas.sh
 
 ```bash
 # 下载预设的 run_alas.service 文件
-wget --show-progress -O /etc/systemd/system/run_alas.service https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/run_alas.service
+wget --show-progress -O /etc/systemd/system/run_alas.service https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Conda/run_alas.service
 
 # 修改 run_alas.service 文件中的路径为实际路径，例如 /root/run_alas.sh 或 /home/neanc/run_alas.sh
 nano /etc/systemd/system/run_alas.service
