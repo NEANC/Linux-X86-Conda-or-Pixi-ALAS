@@ -1,0 +1,22 @@
+[Unit]
+Description=run_alas
+After=network.target
+
+[Service]
+# 运行服务的用户与用户组（根据实际情况修改，使用 id 命令查询）
+User=root
+Group=root
+
+# ALAS 目录，例：/root/AzurLaneAutoScript 或 /home/neanc/AzurLaneAutoScript
+WorkingDirectory=/root/AzurLaneAutoScript
+
+# 启动命令，需附带 run start
+# 使用 `which pixi` 查询 pixi 绝对路径（例：/root/.pixi/bin/pixi run start 或 /home/neanc/.pixi/bin/pixi run start）
+ExecStart=/root/.pixi/bin/pixi run start
+
+# 自动重启策略
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

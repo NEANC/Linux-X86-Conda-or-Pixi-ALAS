@@ -214,8 +214,9 @@ chmod +x run_alas.sh
 > [!CAUTION]
 > 使用服务运行前，必须进行下列操作：
 >
-> 1. 修改 `ExecStart=/root/run_alas.sh` 为实际路径
-> 2. 修改文件权限 `chmod 644 /etc/systemd/system/run_alas.service`
+> 1. 修改 `ExecStart=/root/run_alas.sh` 为实际路径  
+> 2. 修改用户 `User=root` 为实际用户，例如 `User=neanc`  
+> 3. 修改文件权限 `chmod 644 /etc/systemd/system/run_alas.service`
 
 ## 9. 配置开机自启
 
