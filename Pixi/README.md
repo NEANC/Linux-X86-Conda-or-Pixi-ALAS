@@ -29,10 +29,39 @@ pixi --version
 
 ## 2. 安装 Git 及 Adb
 
+1. 安装 Git 和 Adb
+
+<details open>
+  <summary> Debian/Ubuntu </summary>
+
 ```bash
 # 更新软件包列表并安装 Git 和 Adb
 apt update && apt install -y git adb
+```
 
+</details>
+
+<details>
+  <summary> Arch Linux </summary>
+
+```bash
+pacman -Syy --noconfirm git android-tools
+```
+
+</details>
+
+<details>
+  <summary> CentOS/RHEL/Fedora </summary>
+
+```bash
+yum update && yum install -y git adb
+```
+
+</details>
+
+2. 验证安装
+
+```bash
 # 检查 Adb 版本号
 adb --version
 
@@ -129,7 +158,7 @@ pixi run python gui.py
 # 下载预设的 run_alas.service 文件
 wget --show-progress -O /etc/systemd/system/run_alas.service https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Pixi/run_alas.service
 
-# 修改 run_alas.service 文件中的路径为实际路径
+# 按注释修改配置文件
 nano /etc/systemd/system/run_alas.service
 
 # 修改权限
@@ -193,6 +222,7 @@ platforms = ["linux-64"]
 version = "0.1.0"
 
 [tasks]
+start = "python gui.py"
 
 [dependencies]
 python = "==3.7.6"

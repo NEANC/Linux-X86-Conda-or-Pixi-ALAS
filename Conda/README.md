@@ -22,7 +22,7 @@ wget --show-progress -O Miniforge3-Linux-x86_64.sh https://github.com/conda-forg
 bash Miniforge3-Linux-x86_64.sh -b
 
 # 激活 Miniforge 临时环境
-source /root/miniforge3/bin/activate
+eval "$(~/miniforge3/bin/conda shell.bash hook)"
 
 # 激活环境变量
 source ~/.bashrc
@@ -50,10 +50,39 @@ rm Miniforge3-Linux-x86_64.sh
 
 ## 2. 安装 Git 及 Adb
 
+1. 安装 Git 和 Adb
+
+<details open>
+  <summary> Debian/Ubuntu </summary>
+
 ```bash
 # 更新软件包列表并安装 Git 和 Adb
 apt update && apt install -y git adb
+```
 
+</details>
+
+<details>
+  <summary> Arch Linux </summary>
+
+```bash
+pacman -Syy --noconfirm git android-tools
+```
+
+</details>
+
+<details>
+  <summary> CentOS/RHEL/Fedora </summary>
+
+```bash
+yum update && yum install -y git adb
+```
+
+</details>
+
+2. 验证安装
+
+```bash
 # 检查 Adb 版本号
 adb --version
 
@@ -171,27 +200,10 @@ python gui.py
 wget --show-progress -O run_alas.sh https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Conda/run_alas.sh
 ```
 
-2. 编辑脚本文件
+2. 按注释编辑脚本文件
 
 ```bash
 nano run_alas.sh
-```
-
-```bash
-#!/bin/bash
-
-# 初始化 Conda
-source /root/miniforge3/bin/activate
-
-# 激活 alas 环境
-conda activate alas
-
-# 切换到 ALAS 目录
-cd /root/AzurLaneAutoScript
-# 手动修改该行中的路径为 ALAS 目录，例：/root/AzurLaneAutoScript 或 /home/neanc/AzurLaneAutoScript
-
-# 运行 gui.py
-python gui.py
 ```
 
 3. 修改脚本文件权限
@@ -224,7 +236,7 @@ chmod +x run_alas.sh
 # 下载预设的 run_alas.service 文件
 wget --show-progress -O /etc/systemd/system/run_alas.service https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Conda/run_alas.service
 
-# 修改 run_alas.service 文件中的路径为实际路径，例如 /root/run_alas.sh 或 /home/neanc/run_alas.sh
+# 按注释修改配置文件
 nano /etc/systemd/system/run_alas.service
 
 # 修改权限

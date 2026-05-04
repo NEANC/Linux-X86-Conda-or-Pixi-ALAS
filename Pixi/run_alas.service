@@ -1,6 +1,7 @@
 [Unit]
 Description=run_alas
 After=network.target
+Wants=network-online.target
 
 [Service]
 # 运行服务的用户与用户组（根据实际情况修改，使用 id 命令查询）
@@ -17,6 +18,10 @@ ExecStart=/root/.pixi/bin/pixi run start
 # 自动重启策略
 Restart=always
 RestartSec=5
+
+# 日志输出到指定文件，也可通过journalctl查看
+StandardOutput=append:/var/log/run_alas.log
+StandardError=append:/var/log/run_alas.log
 
 [Install]
 WantedBy=multi-user.target

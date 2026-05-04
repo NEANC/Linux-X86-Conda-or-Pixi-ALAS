@@ -1,27 +1,23 @@
 [Unit]
-# 服务描述，自定义
 Description=run_alas
-# 启动依赖：网络就绪后再执行，不需要可删除；强依赖用Requires，弱依赖用Wants
 After=network.target
 Wants=network-online.target
-# 定义启动场景
-Wants=multi-user.target
 
 [Service]
-# 服务类型：simple=持续运行的程序；oneshot=执行一次就退出的脚本（需搭配RemainAfterExit=yes）
 Type=simple
-# 执行脚本的用户，root权限写root，非root按需修改
+# 运行服务的用户与用户组（根据实际情况修改，使用 id 命令查询）
 User=root
-# 核心：脚本的绝对路径，必须修改为你的脚本路径
+Group=root
+# 脚本的绝对路径（根据实际情况修改，使用 id 命令查询）
 ExecStart=/root/run_alas.sh
-# 可选：脚本异常退出时自动重启
+
+# 自动重启策略
 Restart=on-failure
-# 可选：重启间隔
 RestartSec=5s
-# 可选：日志输出到指定文件，也可通过journalctl查看
+
+# 日志输出到指定文件，也可通过journalctl查看
 StandardOutput=append:/var/log/run_alas.log
 StandardError=append:/var/log/run_alas.log
-# 可选：手动定义环境变量，解决环境变量缺失问题
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 [Install]
