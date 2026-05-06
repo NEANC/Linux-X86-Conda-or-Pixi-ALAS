@@ -5,19 +5,16 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-# 运行服务的用户与用户组（根据实际情况修改，使用 id 命令查询）
+# 运行服务的用户与用户组（根据实际情况修改，使用 `id` 命令查询）
 User=root
 Group=root
-# 脚本的绝对路径（根据实际情况修改，使用 id 命令查询）
+# 脚本的绝对路径（根据实际情况修改，使用 `find / -name "run_alas.sh" 2>/dev/null` 命令查询）
 ExecStart=/root/run_alas.sh
 
 # 自动重启策略
 Restart=on-failure
 RestartSec=5s
 
-# 日志输出到指定文件，也可通过journalctl查看
-StandardOutput=append:/var/log/run_alas.log
-StandardError=append:/var/log/run_alas.log
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 [Install]

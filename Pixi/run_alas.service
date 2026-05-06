@@ -4,24 +4,20 @@ After=network.target
 Wants=network-online.target
 
 [Service]
-# 运行服务的用户与用户组（根据实际情况修改，使用 id 命令查询）
+# 运行服务的用户与用户组（根据实际情况修改，使用 `id` 命令查询）
 User=root
 Group=root
 
-# ALAS 目录，例：/root/AzurLaneAutoScript 或 /home/neanc/AzurLaneAutoScript
+# ALAS 目录，使用 `find / -name "AzurLaneAutoScript" -type d 2>/dev/null` 查询，例：`/root/AzurLaneAutoScript` 或 `/home/neanc/AzurLaneAutoScript`
 WorkingDirectory=/root/AzurLaneAutoScript
 
 # 启动命令，需附带 run start
-# 使用 `which pixi` 查询 pixi 绝对路径（例：/root/.pixi/bin/pixi run start 或 /home/neanc/.pixi/bin/pixi run start）
+# 使用 `which pixi` 查询 pixi 绝对路径，例：`/root/.pixi/bin/pixi run start` 或 `/home/neanc/.pixi/bin/pixi run start`
 ExecStart=/root/.pixi/bin/pixi run start
 
 # 自动重启策略
 Restart=always
 RestartSec=5
-
-# 日志输出到指定文件，也可通过journalctl查看
-StandardOutput=append:/var/log/run_alas.log
-StandardError=append:/var/log/run_alas.log
 
 [Install]
 WantedBy=multi-user.target
