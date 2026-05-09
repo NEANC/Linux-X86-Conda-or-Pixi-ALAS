@@ -1,6 +1,6 @@
 #!/bin/bash
 #==============================================================================
-# AzurLaneAutoScript Conda 一键部署脚本
+# AzurLaneAutoScript macOS ARM Conda 一键部署脚本
 # 特性：
 #   - 静默执行，系统信息面板，步骤反馈
 #==============================================================================
@@ -34,7 +34,6 @@ ICON_CPU="🧠"
 ICON_DISK="💾"
 ICON_RAM="🧮"
 ICON_USER="🆔"
-ICON_KERNEL="🐧"
 
 # ---------------------------- 颜色定义 ----------------------------
 RED='\033[0;31m'
@@ -46,19 +45,18 @@ WHITE='\033[37m'
 NC='\033[0m'
 
 # ---------------------------- 全局变量 ----------------------------
-SKIP_SERVICE=false
-UNINSTALL=false
+INSTALL_DIR="${HOME}/AzurLaneAutoScript"
+SCRIPT_OUT_DIR="${HOME}/AzurLaneAutoScript"
 DEPLOY_TEMPLATE="config/deploy.template-linux.yaml"
 USE_CN_MIRROR=false
 GH_PROXY=""
-INSTALL_DIR="${HOME}/AzurLaneAutoScript"
-SCRIPT_OUT_DIR="${HOME}/AzurLaneAutoScript"
 WORK_DIR=""
 ALAS_DIR=""
 CONDA_BIN=""
-USER_NAME="${SUDO_USER:-$(whoami)}"
-USER_GROUP=$(id -gn "${USER_NAME}")
+USER_NAME="$(whoami)"
 _SPINNER_PID=""
+SKIP_SERVICE=false
+UNINSTALL=false
 
 # ---------------------------- 帮助 ----------------------------
 usage() {
@@ -69,7 +67,7 @@ usage() {
   -d, --dir DIR          指定 ALAS 安装目录 (默认: ~/AzurLaneAutoScript)
   -s, --script-dir DIR   指定脚本输出目录 (默认: ~/AzurLaneAutoScript)
   -t TEMPLATE            控制使用的 deploy 模板与国内镜像源
-  -S, --skip-service     跳过 systemd 开机自启服务配置
+  -S, --skip-service     跳过开机自启服务配置
   --uninstall            反向安装：停止并删除 ALAS、虚拟环境、开机自启
   -h, --help             显示帮助信息
 EOF
@@ -113,7 +111,7 @@ start_step() {
         while true; do
             printf "\r${YELLOW}%s  %s${NC}\033[K" "${spin_chars[$idx]}" "$msg"
             idx=$(( (idx + 1) % 10 ))
-            sleep 0.35 2>/dev/null || true
+            sleep 0.30 2>/dev/null || true
         done
     } &
     _SPINNER_PID=$!
@@ -168,23 +166,23 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# ---------------------------- 权限检查 ----------------------------
-if [[ "$(id -u)" -ne 0 ]]; then
-    echo -e "${RED}请使用 root 权限运行此脚本 (sudo bash $0)${NC}"
+# ---------------------------- 平台检查 ----------------------------
+if [[ "$(uname)" != "Darwin" ]]; then
+    echo -e "${RED}本脚本仅适用于 arm 架构的 macOS 系统${NC}"
     exit 1
 fi
 
 # ---------------------------- 系统信息收集 ----------------------------
 gather_system_info() {
-    NET_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+    NET_IP=$(ifconfig 2>/dev/null | grep "inet " | grep -Fv 127.0.0.1 | awk '{print $2}' | head -1 || echo "未获取")
     [[ -z "${NET_IP}" ]] && NET_IP="未获取"
-    KERNEL=$(uname -r)
-    CPU_MODEL=$(lscpu | grep "Model name" | sed 's/Model name:\s*//' || echo "未知")
-    CPU_CORES=$(nproc)
-    DISK_AVAIL=$(df -h / | awk 'NR==2{print $4}')
-    DISK_USED=$(df -h / | awk 'NR==2{print $3}')
+    MACOS_VER=$(sw_vers -productVersion 2>/dev/null || echo "未知")
+    CPU_MODEL=$(sysctl -n machdep.cpu.brand_string 2>/dev/null || echo "未知")
+    CPU_CORES=$(sysctl -n hw.ncpu 2>/dev/null || echo "未知")
+    DISK_AVAIL=$(df -h / | awk 'NR==2{print $4}' || echo "未知")
+    DISK_USED=$(df -h / | awk 'NR==2{print $3}' || echo "未知")
     DISK_INFO="可用: ${DISK_AVAIL}  已用: ${DISK_USED}"
-    RAM_SIZE_MIB=$(free -m | awk '/Mem:/{print $2}')
+    RAM_SIZE_MIB=$(sysctl -n hw.memsize 2>/dev/null | awk '{printf "%.0f", $1/1024/1024}' || echo "未知")
 }
 
 # ---------------------------- 打印标题与系统面板 ----------------------------
@@ -197,150 +195,96 @@ print_header() {
     echo_line " / ___ |/ /___/ ___ |___/ / "
     echo_line "/_/  |_/_____/_/  |_/____/  "
     echo_line "${NC}"
-    echo_line "  ${ICON_COMPUTER}  X86-64 Linux 中基于 Conda 的 ALAS 部署脚本"
+    echo_line "  ${ICON_COMPUTER}  ARM macOS 中基于 Conda 的 ALAS 部署脚本"
     echo_line "  ─────────────────────────────────────────────────"
     echo_line "  ${ICON_INFO}  当前局域网 IP  : ${BLUE}${NET_IP}${NC}"
-    echo_line "  ${ICON_GEAR}  系统发行版     : ${GREEN}${OS_ID} ${OS_VERSION}${NC}"
-    echo_line "  ${ICON_KERNEL}  内核版本       : ${GREEN}${KERNEL}${NC}"
-    echo_line "  ${ICON_COMPUTER}  CPU 型号       : ${GREEN}${CPU_MODEL}${NC}"
+    echo_line "  ${ICON_GEAR}   macOS 版本     : ${GREEN}${MACOS_VER}${NC}"
+    echo_line "  ${ICON_COMPUTER}   CPU 型号       : ${GREEN}${CPU_MODEL}${NC}"
     echo_line "  ${ICON_CPU}  CPU 核心数     : ${GREEN}${CPU_CORES}${NC}"
     echo_line "  ${ICON_DISK}  磁盘大小       : ${BLUE}${DISK_INFO}${NC}"
 
     local ram_color="${GREEN}"
-    if [[ "${RAM_SIZE_MIB}" -lt 1000 ]]; then
+    if [[ "${RAM_SIZE_MIB}" -lt 8000 ]]; then
         ram_color="${YELLOW}"
-    elif [[ "${RAM_SIZE_MIB}" -lt 2000 ]]; then
+    elif [[ "${RAM_SIZE_MIB}" -lt 16000 ]]; then
         ram_color="${BLUE}"
     fi
     echo_line "  ${ICON_RAM}  内存大小       : ${ram_color}${RAM_SIZE_MIB} MiB${NC}"
 
-    local user_color="${GREEN}"
-    if [[ "${USER_NAME}" == "root" && "${USER_GROUP}" == "root" ]]; then
-        user_color="${YELLOW}"
-    fi
-    echo_line "  ${ICON_USER}  当前用户/组    : ${user_color}${USER_NAME} / ${USER_GROUP}${NC}"
+    echo_line "  ${ICON_USER}  当前用户       : ${GREEN}${USER_NAME}${NC}"
     echo_line ""
 }
 
-# ---------------------------- 发行版检测 ----------------------------
-detect_os() {
-    if [[ -f /etc/os-release ]]; then
-        . /etc/os-release
-        OS_ID="${ID}"
-        OS_VERSION="${VERSION_ID}"
+# ---------------------------- 第1步: 安装 Homebrew ----------------------------
+install_homebrew() {
+    start_step "正在检查 Homebrew..."
+
+    if command -v brew &>/dev/null; then
+        BREW_VER=$(brew --version 2>/dev/null | head -n1 | awk '{print $NF}' || echo '版本获取失败')
+        end_step "${ICON_OK}" "Homebrew 已就绪: ${BREW_VER}"
+        return
+    fi
+
+    /bin/bash -c "$(curl -fsSL ${GH_PROXY}https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" >> "$LOGFILE" 2>&1
+
+    if [[ -x /opt/homebrew/bin/brew ]]; then
+        eval "$(/opt/homebrew/bin/brew shellenv)"
+    elif [[ -x /usr/local/bin/brew ]]; then
+        eval "$(/usr/local/bin/brew shellenv)"
+    fi
+
+    if command -v brew &>/dev/null; then
+        BREW_VER=$(brew --version 2>/dev/null | head -n1 | awk '{print $NF}' || echo '版本获取失败')
+        end_step "${ICON_OK}" "Homebrew 已安装: ${BREW_VER}"
     else
-        log_error "无法检测 Linux 发行版"
+        end_step "${ICON_ERROR}" "Homebrew 安装失败，请查看日志: ${LOGFILE}" "${RED}"
         exit 1
     fi
 }
 
-# ---------------------------- 第1步: 安装/激活 Miniforge ----------------------------
-install_miniforge() {
-    start_step "正在检查 Miniforge..."
-
-    CONDA_BIN="${HOME}/miniforge3/bin/conda"
-    if command -v conda &>/dev/null; then
-        CONDA_VER=$(conda --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')
-        CONDA_BIN=$(command -v conda)
-        end_step "${ICON_OK}" "Conda 已就绪: ${CONDA_VER}"
-        return
-    fi
-
-    if [[ -x "${CONDA_BIN}" ]]; then
-        CONDA_VER=$("${CONDA_BIN}" --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')
-        end_step "${ICON_OK}" "Conda 已安装: ${CONDA_VER}"
-        return
-    fi
-
-    wget -q -O /tmp/Miniforge3-Linux-x86_64.sh \
-        "${GH_PROXY}https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh" >> "$LOGFILE" 2>&1
-
-    bash /tmp/Miniforge3-Linux-x86_64.sh -b >> "$LOGFILE" 2>&1
-    rm -f /tmp/Miniforge3-Linux-x86_64.sh
-
-    if [[ -x "${CONDA_BIN}" ]]; then
-        CONDA_VER=$("${CONDA_BIN}" --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')
-        end_step "${ICON_OK}" "Miniforge 已安装: ${CONDA_VER}"
-    else
-        end_step "${ICON_ERROR}" "Miniforge 安装失败，请查看日志: ${LOGFILE}" "${RED}"
-        exit 1
-    fi
-}
-
-# ---------------------------- 第2步: 安装 Git 和 ADB 及相关依赖库 ----------------------------
-install_git_adb() {
+# ---------------------------- 第2步: 安装 Miniforge、Git 和 ADB ----------------------------
+install_packages() {
     start_step "正在检查依赖库..."
 
-    local missing_pkgs=()
+    local missing_formulae=()
+    local check_list=(miniforge git android-platform-tools)
 
-    case "${OS_ID}" in
-        debian|ubuntu)
-            local check_list=(git adb libgomp1 libgl1 libglib2.0-0t64 libsm6 libxrender1 libxext6)
-            for pkg in "${check_list[@]}"; do
-                if dpkg -s "$pkg" &>/dev/null; then
-                    echo "$(date '+%Y-%m-%d %H:%M:%S')   ${ICON_OK} ${pkg} 已安装" >> "$LOGFILE"
-                else
-                    echo "$(date '+%Y-%m-%d %H:%M:%S')   ${ICON_WARN} ${pkg} 未安装" >> "$LOGFILE"
-                    missing_pkgs+=("$pkg")
-                fi
-            done
-            ;;
-        arch)
-            local check_list=(git android-tools)
-            for pkg in "${check_list[@]}"; do
-                if pacman -Q "$pkg" &>/dev/null; then
-                    echo "$(date '+%Y-%m-%d %H:%M:%S')   ${ICON_OK} ${pkg} 已安装" >> "$LOGFILE"
-                else
-                    echo "$(date '+%Y-%m-%d %H:%M:%S')   ${ICON_WARN} ${pkg} 未安装" >> "$LOGFILE"
-                    missing_pkgs+=("$pkg")
-                fi
-            done
-            ;;
-        centos|rhel|fedora)
-            local check_list=(git adb libgomp mesa-libGL glib2 libSM libXrender libXext)
-            for pkg in "${check_list[@]}"; do
-                if rpm -q "$pkg" &>/dev/null; then
-                    echo "$(date '+%Y-%m-%d %H:%M:%S')   ${ICON_OK} ${pkg} 已安装" >> "$LOGFILE"
-                else
-                    echo "$(date '+%Y-%m-%d %H:%M:%S')   ${ICON_WARN} ${pkg} 未安装" >> "$LOGFILE"
-                    missing_pkgs+=("$pkg")
-                fi
-            done
-            ;;
-        *)
-            end_step "${ICON_ERROR}" "不支持的发行版: ${OS_ID}" "${RED}"
-            exit 1 ;;
-    esac
+    for pkg in "${check_list[@]}"; do
+        if brew list --formula "$pkg" &>/dev/null; then
+            echo "$(date '+%Y-%m-%d %H:%M:%S')   ${ICON_OK} ${pkg} 已安装" >> "$LOGFILE"
+        else
+            echo "$(date '+%Y-%m-%d %H:%M:%S')   ${ICON_WARN} ${pkg} 未安装" >> "$LOGFILE"
+            missing_formulae+=("$pkg")
+        fi
+    done
 
-    if [[ ${#missing_pkgs[@]} -eq 0 ]]; then
+    if [[ ${#missing_formulae[@]} -eq 0 ]]; then
         end_step "${ICON_OK}" "Git 已安装: $(git --version 2>/dev/null | awk '{print $NF}')"
         end_step "${ICON_OK}" "ADB 已安装: $(adb --version 2>/dev/null | head -n1 | awk '{print $NF}')"
+        CONDA_BIN=$(command -v conda 2>/dev/null || echo "${HOME}/miniforge3/bin/conda")
+        end_step "${ICON_OK}" "Conda 已就绪: $(conda --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')"
         echo "$(date '+%Y-%m-%d %H:%M:%S')   Git: $(git --version 2>/dev/null)" >> "$LOGFILE"
         echo "$(date '+%Y-%m-%d %H:%M:%S')   ADB: $(adb --version 2>/dev/null | head -n1)" >> "$LOGFILE"
+        echo "$(date '+%Y-%m-%d %H:%M:%S')   Conda: $(conda --version 2>/dev/null)" >> "$LOGFILE"
         return
     fi
 
     start_step "正在安装缺失的依赖..."
 
-    case "${OS_ID}" in
-        debian|ubuntu)
-            apt-get -qq update >> "$LOGFILE" 2>&1
-            apt-get -qq install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1 ;;
-        arch)
-            pacman -Syy --noconfirm "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1 ;;
-        centos|rhel|fedora)
-            if command -v dnf &>/dev/null; then
-                dnf -q makecache >> "$LOGFILE" 2>&1
-                dnf -q install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1
-            else
-                yum -q install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1
-            fi ;;
-    esac
+    brew install "${missing_formulae[@]}" >> "$LOGFILE" 2>&1
+
+    # 激活 miniforge
+    if [[ -x /opt/homebrew/bin/brew ]]; then
+        eval "$(/opt/homebrew/bin/brew shellenv)" 2>/dev/null || true
+    fi
 
     end_step "${ICON_OK}" "Git 已安装: $(git --version 2>/dev/null | awk '{print $NF}')"
     end_step "${ICON_OK}" "ADB 已安装: $(adb --version 2>/dev/null | head -n1 | awk '{print $NF}')"
+    CONDA_BIN=$(command -v conda 2>/dev/null || echo "${HOME}/miniforge3/bin/conda")
+    end_step "${ICON_OK}" "Conda 已就绪: $(conda --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')"
     echo "$(date '+%Y-%m-%d %H:%M:%S')   Git: $(git --version 2>/dev/null)" >> "$LOGFILE"
     echo "$(date '+%Y-%m-%d %H:%M:%S')   ADB: $(adb --version 2>/dev/null | head -n1)" >> "$LOGFILE"
+    echo "$(date '+%Y-%m-%d %H:%M:%S')   Conda: $(conda --version 2>/dev/null)" >> "$LOGFILE"
 }
 
 # ---------------------------- 第3步: 克隆仓库 ----------------------------
@@ -373,9 +317,9 @@ setup_conda_env() {
         cp environment.yml environment.yml.bak
     fi
 
-    ENV_URL="https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Conda/environment.yml"
+    ENV_URL="https://raw.githubusercontent.com/Dreamry2C/MAC-arm-conda-alas/master/environment.yml"
 
-    wget -q -O environment.yml "${GH_PROXY}${ENV_URL}" >> "$LOGFILE" 2>&1
+    curl -fsSL -o environment.yml "${GH_PROXY}${ENV_URL}" >> "$LOGFILE" 2>&1
 
     eval "$("${CONDA_BIN}" shell.bash hook)" >> "$LOGFILE" 2>&1
 
@@ -402,7 +346,6 @@ setup_conda_env() {
 
     unset PIP_INDEX_URL PIP_EXTRA_INDEX_URL
 
-    # 检查是否有依赖缺失，如有则逐条尝试独立安装
     if ! conda run -n alas python -c "import alas_webapp" >> "$LOGFILE" 2>&1; then
         echo "$(date '+%Y-%m-%d %H:%M:%S')   尝试修复缺失依赖..." >> "$LOGFILE"
         conda env update -n alas --file environment.yml >> "$LOGFILE" 2>&1 || true
@@ -411,9 +354,9 @@ setup_conda_env() {
     end_step "${ICON_OK}" "虚拟环境已构建"
 }
 
-# ---------------------------- 第5步: 配置 config/deploy.yaml ----------------------------
+# ---------------------------- 第5步: 配置 deploy.yaml ----------------------------
 configure_deploy() {
-    start_step "配置 config/deploy.yaml"
+    start_step "复制 deploy.yaml..."
 
     cd "${ALAS_DIR}"
     if [[ -f config/deploy.yaml ]]; then
@@ -424,9 +367,9 @@ configure_deploy() {
 
     if [[ -f "${TEMPLATE}" ]]; then
         cp "${TEMPLATE}" config/deploy.yaml
-        end_step "${ICON_OK}" "cp deploy.template-linux.yaml config/deploy.yaml"
+        end_step "${ICON_OK}" "deploy.yaml 已复制"
     else
-        end_step "${ICON_WARN}" "模板文件 ${TEMPLATE} 不存在，请手动执行 cp deploy.template-linux-cn.yaml config/deploy.yaml" "${YELLOW}"
+        end_step "${ICON_WARN}" "模板文件 ${TEMPLATE} 不存在，请手动重命名 deploy.yaml-linux.yaml" "${YELLOW}"
     fi
 }
 
@@ -436,9 +379,13 @@ create_launcher() {
 
     cat > "${SCRIPT_OUT_DIR}/run_alas.sh" <<EOF
 #!/bin/bash
+
+osascript -e 'tell application "Terminal" to set miniaturized of front window to true'
+
 eval "\$(${CONDA_BIN} shell.bash hook)"
 conda activate alas
 cd ${ALAS_DIR}
+(sleep 2 && open http://127.0.0.1:22267) &
 python gui.py
 EOF
     chmod +x "${SCRIPT_OUT_DIR}/run_alas.sh"
@@ -446,41 +393,44 @@ EOF
     end_step "${ICON_OK}" "启动脚本已生成: ${SCRIPT_OUT_DIR}/run_alas.sh"
 }
 
-# ---------------------------- 第7步: systemd 服务 ----------------------------
+# ---------------------------- 第7步: 开机自启 (LaunchAgent) ----------------------------
 configure_service() {
     if [[ "${SKIP_SERVICE}" == true ]]; then
-        end_step "${ICON_INFO}" "已跳过 systemd 服务配置"
+        end_step "${ICON_INFO}" "已跳过开机自启服务配置"
         return
     fi
 
-    start_step "正在配置 systemd 开机自启..."
+    start_step "正在配置开机自启..."
 
-    cat > /etc/systemd/system/run_alas.service <<EOF
-[Unit]
-Description=ALAS Auto Script
-After=network.target
-Wants=network-online.target
+    local plist_dir="${HOME}/Library/LaunchAgents"
+    mkdir -p "${plist_dir}"
 
-[Service]
-User=${USER_NAME}
-Group=${USER_GROUP}
-WorkingDirectory=${ALAS_DIR}
-ExecStart=${SCRIPT_OUT_DIR}/run_alas.sh
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
+    cat > "${plist_dir}/com.alas.run.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.alas.run</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>${SCRIPT_OUT_DIR}/run_alas.sh</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <false/>
+</dict>
+</plist>
 EOF
-    chmod 644 /etc/systemd/system/run_alas.service
-    systemctl daemon-reload >> "$LOGFILE" 2>&1
-    systemctl enable run_alas.service >> "$LOGFILE" 2>&1
-    systemctl start run_alas.service >> "$LOGFILE" 2>&1
 
-    if systemctl is-active --quiet run_alas.service; then
-        end_step "${ICON_OK}" "systemd 服务已启动并设为开机自启"
+    launchctl bootout "gui/$(id -u)/com.alas.run" 2>/dev/null || true
+    launchctl bootstrap "gui/$(id -u)" "${plist_dir}/com.alas.run.plist"
+
+    if launchctl list 2>/dev/null | grep -q "com.alas.run"; then
+        end_step "${ICON_OK}" "开机自启服务已配置"
     else
-        end_step "${ICON_ERROR}" "systemd 服务启动失败，请查看日志: ${LOGFILE}" "${RED}"
+        end_step "${ICON_WARN}" "服务配置已完成，请重启后验证" "${YELLOW}"
     fi
 }
 
@@ -494,12 +444,12 @@ print_completion() {
 # ---------------------------- 反向安装（卸载） ----------------------------
 do_uninstall() {
     echo_line ""
-    echo_line "  ${ICON_WARN}  ${YELLOW}  即将执行 ALAS 卸载，将删除以下内容：${NC}"
+    echo_line "  ${ICON_WARN}  ${YELLOW}即将执行 ALAS 卸载，将删除以下内容：${NC}"
     echo_line "  ${ICON_WARN}  ${YELLOW}  - 开机自启服务${NC}"
     echo_line "  ${ICON_WARN}  ${YELLOW}  - Conda 虚拟环境 (alas)${NC}"
     echo_line "  ${ICON_WARN}  ${YELLOW}  - ALAS 目录: ${INSTALL_DIR}${NC}"
     echo_line "  ${ICON_WARN}  ${YELLOW}  - 启动脚本: ${SCRIPT_OUT_DIR}/run_alas.sh${NC}"
-    echo_line "  ${ICON_INFO}  ${GREEN}  依赖库 (git, adb, conda) 不会被删除${NC}"
+    echo_line "  ${ICON_INFO}  ${GREEN}  依赖库 (brew, git, adb, conda) 不会被删除${NC}"
     echo_line ""
     echo -n "  确认？[yes/NO] "
     read -r CONFIRM
@@ -511,16 +461,8 @@ do_uninstall() {
     echo_line ""
 
     start_step "正在停止 ALAS 服务..."
-    if systemctl is-active --quiet run_alas.service 2>/dev/null; then
-        systemctl stop run_alas.service >> "$LOGFILE" 2>&1
-    fi
-    if systemctl is-enabled --quiet run_alas.service 2>/dev/null; then
-        systemctl disable run_alas.service >> "$LOGFILE" 2>&1
-    fi
-    if [[ -f /etc/systemd/system/run_alas.service ]]; then
-        rm -f /etc/systemd/system/run_alas.service
-        systemctl daemon-reload >> "$LOGFILE" 2>&1
-    fi
+    launchctl bootout "gui/$(id -u)/com.alas.run" 2>/dev/null || true
+    rm -f "${HOME}/Library/LaunchAgents/com.alas.run.plist"
     end_step "${ICON_OK}" "服务已停止并移除"
 
     start_step "正在清理 Conda 虚拟环境..."
@@ -554,12 +496,11 @@ main() {
         exit 0
     fi
 
-    detect_os
     gather_system_info
     print_header
 
-    install_miniforge
-    install_git_adb
+    install_homebrew
+    install_packages
     clone_alas
     setup_conda_env
     configure_deploy

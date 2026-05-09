@@ -26,6 +26,8 @@
 
 ## Shell 脚本
 
+详细请阅读 [Shell 脚本库 README](./Shell/README.md)
+
 ```bash
 # Pixi 版部署脚本
 curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/pixi_alas_install.sh | bash
