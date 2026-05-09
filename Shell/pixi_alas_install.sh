@@ -242,9 +242,9 @@ install_pixi() {
     fi
 }
 
-# ---------------------------- 第2步: 安装 Git 和 ADB ----------------------------
+# ---------------------------- 第2步: 安装 Git 和 ADB 及相关依赖库 ----------------------------
 install_git_adb() {
-    start_step "正在检查 Git 和 ADB..."
+    start_step "正在检查依赖库..."
 
     local missing_pkgs=()
 
@@ -252,19 +252,34 @@ install_git_adb() {
         debian|ubuntu)
             local check_list=(git adb libgomp1 libgl1 libglib2.0-0t64 libsm6 libxrender1 libxext6)
             for pkg in "${check_list[@]}"; do
-                dpkg -s "$pkg" &>/dev/null || missing_pkgs+=("$pkg")
+                if dpkg -s "$pkg" &>/dev/null; then
+                    echo "$(date '+%Y-%m-%d %H:%M:%S')   ${ICON_OK} ${pkg} 已安装" >> "$LOGFILE"
+                else
+                    echo "$(date '+%Y-%m-%d %H:%M:%S')   ${ICON_WARN} ${pkg} 未安装" >> "$LOGFILE"
+                    missing_pkgs+=("$pkg")
+                fi
             done
             ;;
         arch)
             local check_list=(git android-tools)
             for pkg in "${check_list[@]}"; do
-                pacman -Q "$pkg" &>/dev/null || missing_pkgs+=("$pkg")
+                if pacman -Q "$pkg" &>/dev/null; then
+                    echo "$(date '+%Y-%m-%d %H:%M:%S')   ${ICON_OK} ${pkg} 已安装" >> "$LOGFILE"
+                else
+                    echo "$(date '+%Y-%m-%d %H:%M:%S')   ${ICON_WARN} ${pkg} 未安装" >> "$LOGFILE"
+                    missing_pkgs+=("$pkg")
+                fi
             done
             ;;
         centos|rhel|fedora)
             local check_list=(git adb libgomp mesa-libGL glib2 libSM libXrender libXext)
             for pkg in "${check_list[@]}"; do
-                rpm -q "$pkg" &>/dev/null || missing_pkgs+=("$pkg")
+                if rpm -q "$pkg" &>/dev/null; then
+                    echo "$(date '+%Y-%m-%d %H:%M:%S')   ${ICON_OK} ${pkg} 已安装" >> "$LOGFILE"
+                else
+                    echo "$(date '+%Y-%m-%d %H:%M:%S')   ${ICON_WARN} ${pkg} 未安装" >> "$LOGFILE"
+                    missing_pkgs+=("$pkg")
+                fi
             done
             ;;
         *)
