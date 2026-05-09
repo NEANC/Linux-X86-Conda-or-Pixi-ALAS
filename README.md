@@ -16,6 +16,23 @@
 
 1. [Pixi 版本](./Pixi/README.md)
 2. [Conda 版本](./Conda/README.md)
+3. [Shell 脚本](./Shell/README.md)
+
+---
+
+> [!TIP]
+> 现提供一键安装 Shell 脚本
+> 脚本已通过 PVE 下的 LXC Debian 13 X86_64 中测试，若有错误请提交 issues
+
+## Shell 脚本
+
+```bash
+# Pixi 版部署脚本
+curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/pixi_alas_install.sh | bash
+
+# Conda 版部署脚本
+curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/conda_alas_install.sh | bash
+```
 
 ---
 
@@ -29,8 +46,7 @@
 
 ## License
 
-This work is licensed under a
-[Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License][cc-by-nc-sa].
+MIT License 与 [Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License][cc-by-nc-sa] 共同使用，其中代码部分为 MIT License，文档部分为 [CC BY-NC-SA 4.0][cc-by-nc-sa]
 
 [![CC BY-NC-SA 4.0][cc-by-nc-sa-image]][cc-by-nc-sa]
 
