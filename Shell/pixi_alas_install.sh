@@ -408,9 +408,9 @@ setup_pixi_env() {
     end_step "${ICON_OK}" "虚拟环境已构建"
 }
 
-# ---------------------------- 第5步: 配置 deploy.yaml ----------------------------
+# ---------------------------- 第5步: 配置 config/deploy.yaml ----------------------------
 configure_deploy() {
-    start_step "正在生成 deploy.yaml..."
+    start_step "配置 config/deploy.yaml"
 
     cd "${ALAS_DIR}"
     if [[ -f config/deploy.yaml ]]; then
@@ -421,9 +421,9 @@ configure_deploy() {
 
     if [[ -f "${TEMPLATE}" ]]; then
         cp "${TEMPLATE}" config/deploy.yaml
-        end_step "${ICON_OK}" "deploy.yaml 已配置"
+        end_step "${ICON_OK}" "cp deploy.template-linux.yaml config/deploy.yaml"
     else
-        end_step "${ICON_WARN}" "模板文件 ${TEMPLATE} 不存在，请手动配置" "${YELLOW}"
+        end_step "${ICON_WARN}" "模板文件 ${TEMPLATE} 不存在，请手动执行 cp deploy.template-linux-cn.yaml config/deploy.yaml" "${YELLOW}"
     fi
 }
 
