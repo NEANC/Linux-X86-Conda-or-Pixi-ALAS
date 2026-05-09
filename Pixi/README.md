@@ -27,9 +27,9 @@ pixi --version
 > [!NOTE]
 > [Git](https://git-scm.com/) 和 [Adb](https://developer.android.google.cn/tools/adb) 是 ALAS 运行所需工具
 
-## 2. 安装 Git 及 Adb
+## 2. 安装 Git 及 Adb，及相关依赖库
 
-1. 安装 Git 和 Adb
+1. 安装 Git 和 Adb，及相关依赖库
 
 <details open>
   <summary> Debian/Ubuntu </summary>

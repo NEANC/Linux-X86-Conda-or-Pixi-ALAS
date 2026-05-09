@@ -21,8 +21,8 @@
 ---
 
 > [!TIP]
-> 现提供一键安装 Shell 脚本
-> 脚本已通过 PVE 下的 LXC Debian 13 X86_64 中测试，若有错误请提交 issues
+> 现提供一键安装 Shell 脚本  
+> 脚本已通过 PVE 下的 LXC Debian 13 X86_64 中测试，若有错误请提交 Issues
 
 ## Shell 脚本
 
