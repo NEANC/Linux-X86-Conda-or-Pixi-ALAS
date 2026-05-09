@@ -7,11 +7,17 @@
 
 set -euo pipefail
 
-# ---------------------------- 脚本目录 ----------------------------
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# ---------------------------- 脚本目录（支持管道执行） ----------------------------
+if [[ -n "${BASH_SOURCE[0]:-}" && "${BASH_SOURCE[0]}" != "bash" && "${BASH_SOURCE[0]}" != "-bash" ]]; then
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+elif [[ "$0" != "bash" && "$0" != "-bash" ]]; then
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+else
+    SCRIPT_DIR="$PWD"
+fi
 
 # ---------------------------- 日志文件 ----------------------------
-LOGFILE="/var/log/pixi_alas_install.log"
+LOGFILE="/tmp/alas_install.log"
 touch "$LOGFILE" || { echo "无法创建日志文件 $LOGFILE"; exit 1; }
 
 # ---------------------------- 加载图标 ----------------------------
@@ -41,6 +47,12 @@ NC='\033[0m'
 
 # ---------------------------- 全局变量 ----------------------------
 SKIP_SERVICE=false
+UNINSTALL=false
+USE_CN_MIRROR=false
+GH_PROXY=""
+DEPLOY_TEMPLATE="config/deploy.template-linux.yaml"
+INSTALL_DIR="${HOME}/AzurLaneAutoScript"
+SCRIPT_OUT_DIR="${HOME}/AzurLaneAutoScript"
 WORK_DIR=""
 ALAS_DIR=""
 PIXI_BIN_PATH=""
@@ -54,12 +66,12 @@ usage() {
 用法: $0 [选项]
 
 选项:
-  -s, --skip-service   跳过 systemd 开机自启服务配置
-  -h, --help           显示本帮助信息
-
-示例:
-  sudo bash $0
-  sudo bash $0 --skip-service
+  -d, --dir DIR          指定 ALAS 安装目录 (默认: ~/AzurLaneAutoScript)
+  -s, --script-dir DIR   指定脚本输出目录 (默认: ~/AzurLaneAutoScript)
+  -t TEMPLATE            控制使用的 deploy 模板与国内镜像源
+  -S, --skip-service     跳过 systemd 开机自启服务配置
+  --uninstall            反向安装：停止并删除 ALAS、虚拟环境、开机自启
+  -h, --help             显示帮助信息
 EOF
 }
 
@@ -103,7 +115,7 @@ start_step() {
         while true; do
             printf "\r${YELLOW}%s  %s${NC}\033[K" "${spin_chars[$idx]}" "$msg"
             idx=$(( (idx + 1) % 10 ))
-            sleep 0.15 2>/dev/null || true
+            sleep 0.35 2>/dev/null || true
         done
     } &
     _SPINNER_PID=$!
@@ -140,7 +152,19 @@ trap 'error_handler ${LINENO} $?' ERR
 # ---------------------------- 参数解析 ----------------------------
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        -s|--skip-service) SKIP_SERVICE=true; shift ;;
+        -d|--dir) INSTALL_DIR="$2"; shift 2 ;;
+        -s|--script-dir) SCRIPT_OUT_DIR="$2"; shift 2 ;;
+        -t|--template)
+            if [[ "$2" =~ ^[Cc][Nn]$ ]]; then
+                DEPLOY_TEMPLATE="config/deploy.template-linux-cn.yaml"
+                USE_CN_MIRROR=true
+                GH_PROXY="https://ghfast.top/"
+            else
+                DEPLOY_TEMPLATE="$2"
+            fi
+            shift 2 ;;
+        --uninstall) UNINSTALL=true; shift ;;
+        -S|--skip-service) SKIP_SERVICE=true; shift ;;
         -h|--help) usage; exit 0 ;;
         *) log_error "未知参数: $1"; usage; exit 1 ;;
     esac
@@ -175,7 +199,7 @@ print_header() {
     echo_line " / ___ |/ /___/ ___ |___/ / "
     echo_line "/_/  |_/_____/_/  |_/____/  "
     echo_line "${NC}"
-    echo_line "  ${ICON_COMPUTER}  基于 Pixi 的 ALAS 部署脚本"
+    echo_line "  ${ICON_COMPUTER}  X86-64 Linux 中基于 Pixi 的 ALAS 部署脚本"
     echo_line "  ─────────────────────────────────────────────────"
     echo_line "  ${ICON_INFO}  当前局域网 IP  : ${BLUE}${NET_IP}${NC}"
     echo_line "  ${ICON_GEAR}  系统发行版     : ${GREEN}${OS_ID} ${OS_VERSION}${NC}"
@@ -322,7 +346,7 @@ install_git_adb() {
 clone_alas() {
     start_step "正在克隆 AzurLaneAutoScript 仓库..."
 
-    WORK_DIR="${HOME}/AzurLaneAutoScript"
+    WORK_DIR="${INSTALL_DIR}"
     if [[ -d "${WORK_DIR}" ]]; then
         end_step "${ICON_WARN}" "ALAS 目录已存在，跳过克隆" "${YELLOW}"
         cd "${WORK_DIR}"
@@ -332,7 +356,7 @@ clone_alas() {
 
     REPO_URL="https://github.com/LmeSzinc/AzurLaneAutoScript.git"
 
-    git clone "${REPO_URL}" "${WORK_DIR}" >> "$LOGFILE" 2>&1
+    git clone "${GH_PROXY}${REPO_URL}" "${WORK_DIR}" >> "$LOGFILE" 2>&1
     cd "${WORK_DIR}"
     ALAS_DIR="${WORK_DIR}"
 
@@ -350,7 +374,7 @@ setup_pixi_env() {
 
     TOML_URL="https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Pixi/pixi.toml"
 
-    wget -q -O pixi.toml "${TOML_URL}" >> "$LOGFILE" 2>&1
+    wget -q -O pixi.toml "${GH_PROXY}${TOML_URL}" >> "$LOGFILE" 2>&1
 
     if [[ -d ".pixi/envs/alas" || -f "pixi.lock" ]]; then
         pixi clean --environment alas >> "$LOGFILE" 2>&1 || \
@@ -358,7 +382,28 @@ setup_pixi_env() {
         rm -rf .pixi pixi.lock >> "$LOGFILE" 2>&1
     fi
 
+    if [[ "${USE_CN_MIRROR}" == true ]]; then
+        local PIXI_CONF="${HOME}/.pixi/config.toml"
+        local PIXI_CONF_BAK="${PIXI_CONF}.bak"
+
+        if [[ -f "${PIXI_CONF_BAK}" ]]; then
+            cp "${PIXI_CONF}" /tmp/pixi_config.toml.live 2>/dev/null || true
+            cp "${PIXI_CONF_BAK}" /tmp/pixi_config.toml.bak 2>/dev/null || true
+        elif [[ -f "${PIXI_CONF}" ]]; then
+            cp "${PIXI_CONF}" "${PIXI_CONF_BAK}"
+        fi
+
+        pixi config set --global pypi-config.index-url "https://mirror.nju.edu.cn/pypi/web/simple/" >> "$LOGFILE" 2>&1
+        pixi config set --global default-channels '["https://pypi.mirrors.ustc.edu.cn/simple/"]' >> "$LOGFILE" 2>&1
+    fi
+
     pixi install --manifest-path pixi.toml >> "$LOGFILE" 2>&1
+
+    if [[ "${USE_CN_MIRROR}" == true ]]; then
+        if [[ -f "${PIXI_CONF_BAK}" ]]; then
+            mv -f "${PIXI_CONF_BAK}" "${PIXI_CONF}" >> "$LOGFILE" 2>&1
+        fi
+    fi
 
     end_step "${ICON_OK}" "虚拟环境已构建"
 }
@@ -372,7 +417,7 @@ configure_deploy() {
         cp config/deploy.yaml config/deploy.yaml.bak
     fi
 
-    TEMPLATE="config/deploy.template-linux.yaml"
+    TEMPLATE="${DEPLOY_TEMPLATE}"
 
     if [[ -f "${TEMPLATE}" ]]; then
         cp "${TEMPLATE}" config/deploy.yaml
@@ -428,8 +473,68 @@ print_completion() {
     echo_line ""
 }
 
+# ---------------------------- 反向安装（卸载） ----------------------------
+do_uninstall() {
+    echo_line ""
+    echo_line "  ${ICON_WARN}  ${YELLOW}即将执行 ALAS 卸载，将删除以下内容：${NC}"
+    echo_line "  ${ICON_WARN}  ${YELLOW}  - 开机自启服务${NC}"
+    echo_line "  ${ICON_WARN}  ${YELLOW}  - Pixi 虚拟环境${NC}"
+    echo_line "  ${ICON_WARN}  ${YELLOW}  - ALAS 目录: ${INSTALL_DIR}${NC}"
+    echo_line "  ${ICON_WARN}  ${YELLOW}  - 启动脚本: ${SCRIPT_OUT_DIR}/run_alas.sh${NC}"
+    echo_line "  ${ICON_INFO}  ${GREEN}  依赖库 (git, adb, pixi) 不会被删除${NC}"
+    echo_line ""
+    echo -n "  确认？[yes/NO] "
+    read -r CONFIRM
+    if [[ "${CONFIRM}" != "yes" && "${CONFIRM}" != "YES" ]]; then
+        echo_line "  ${ICON_INFO}  已取消卸载"
+        exit 0
+    fi
+
+    echo_line ""
+
+    start_step "正在停止 ALAS 服务..."
+    if systemctl is-active --quiet run_alas.service 2>/dev/null; then
+        systemctl stop run_alas.service >> "$LOGFILE" 2>&1
+    fi
+    if systemctl is-enabled --quiet run_alas.service 2>/dev/null; then
+        systemctl disable run_alas.service >> "$LOGFILE" 2>&1
+    fi
+    if [[ -f /etc/systemd/system/run_alas.service ]]; then
+        rm -f /etc/systemd/system/run_alas.service
+        systemctl daemon-reload >> "$LOGFILE" 2>&1
+    fi
+    end_step "${ICON_OK}" "服务已停止并移除"
+
+    start_step "正在清理 Pixi 虚拟环境..."
+    cd "${INSTALL_DIR}"
+    if [[ -d ".pixi" || -f "pixi.lock" ]]; then
+        pixi clean --environment alas >> "$LOGFILE" 2>&1 || \
+        pixi clean >> "$LOGFILE" 2>&1 || \
+        rm -rf .pixi pixi.lock >> "$LOGFILE" 2>&1
+    fi
+    end_step "${ICON_OK}" "虚拟环境已清理"
+
+    start_step "正在删除 ALAS 目录..."
+    rm -rf "${INSTALL_DIR}"
+    end_step "${ICON_OK}" "目录已删除"
+
+    start_step "正在删除启动脚本..."
+    rm -f "${SCRIPT_OUT_DIR}/run_alas.sh"
+    end_step "${ICON_OK}" "启动脚本已删除"
+
+    echo_line ""
+    echo_line "${ICON_OK}  ${GREEN}ALAS 卸载完成${NC}"
+    echo_line ""
+}
+
 # ---------------------------- 主流程 ----------------------------
 main() {
+    if [[ "${UNINSTALL}" == true ]]; then
+        do_uninstall
+        rm -f "$LOGFILE"
+        exit 0
+    fi
+
     detect_os
     gather_system_info
     print_header

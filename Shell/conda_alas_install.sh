@@ -7,11 +7,17 @@
 
 set -euo pipefail
 
-# ---------------------------- 脚本目录 ----------------------------
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# ---------------------------- 脚本目录（支持管道执行） ----------------------------
+if [[ -n "${BASH_SOURCE[0]:-}" && "${BASH_SOURCE[0]}" != "bash" && "${BASH_SOURCE[0]}" != "-bash" ]]; then
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+elif [[ "$0" != "bash" && "$0" != "-bash" ]]; then
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+else
+    SCRIPT_DIR="$PWD"
+fi
 
 # ---------------------------- 日志文件 ----------------------------
-LOGFILE="/var/log/conda_alas_install.log"
+LOGFILE="/tmp/alas_install.log"
 touch "$LOGFILE" || { echo "无法创建日志文件 $LOGFILE"; exit 1; }
 
 # ---------------------------- 加载图标 ----------------------------
@@ -41,6 +47,12 @@ NC='\033[0m'
 
 # ---------------------------- 全局变量 ----------------------------
 SKIP_SERVICE=false
+UNINSTALL=false
+DEPLOY_TEMPLATE="config/deploy.template-linux.yaml"
+USE_CN_MIRROR=false
+GH_PROXY=""
+INSTALL_DIR="${HOME}/AzurLaneAutoScript"
+SCRIPT_OUT_DIR="${HOME}/AzurLaneAutoScript"
 WORK_DIR=""
 ALAS_DIR=""
 CONDA_BIN=""
@@ -54,12 +66,12 @@ usage() {
 用法: $0 [选项]
 
 选项:
-  -s, --skip-service   跳过 systemd 开机自启服务配置
-  -h, --help           显示本帮助信息
-
-示例:
-  sudo bash $0
-  sudo bash $0 --skip-service
+  -d, --dir DIR          指定 ALAS 安装目录 (默认: ~/AzurLaneAutoScript)
+  -s, --script-dir DIR   指定脚本输出目录 (默认: ~/AzurLaneAutoScript)
+  -t TEMPLATE            控制使用的 deploy 模板与国内镜像源
+  -S, --skip-service     跳过 systemd 开机自启服务配置
+  --uninstall            反向安装：停止并删除 ALAS、虚拟环境、开机自启
+  -h, --help             显示帮助信息
 EOF
 }
 
@@ -101,7 +113,7 @@ start_step() {
         while true; do
             printf "\r${YELLOW}%s  %s${NC}\033[K" "${spin_chars[$idx]}" "$msg"
             idx=$(( (idx + 1) % 10 ))
-            sleep 0.15 2>/dev/null || true
+            sleep 0.35 2>/dev/null || true
         done
     } &
     _SPINNER_PID=$!
@@ -138,7 +150,19 @@ trap 'error_handler ${LINENO} $?' ERR
 # ---------------------------- 参数解析 ----------------------------
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        -s|--skip-service) SKIP_SERVICE=true; shift ;;
+        -d|--dir) INSTALL_DIR="$2"; shift 2 ;;
+        -s|--script-dir) SCRIPT_OUT_DIR="$2"; shift 2 ;;
+        -t|--template)
+            if [[ "$2" =~ ^[Cc][Nn]$ ]]; then
+                DEPLOY_TEMPLATE="config/deploy.template-linux-cn.yaml"
+                USE_CN_MIRROR=true
+                GH_PROXY="https://ghfast.top/"
+            else
+                DEPLOY_TEMPLATE="$2"
+            fi
+            shift 2 ;;
+        --uninstall) UNINSTALL=true; shift ;;
+        -S|--skip-service) SKIP_SERVICE=true; shift ;;
         -h|--help) usage; exit 0 ;;
         *) log_error "未知参数: $1"; usage; exit 1 ;;
     esac
@@ -173,7 +197,7 @@ print_header() {
     echo_line " / ___ |/ /___/ ___ |___/ / "
     echo_line "/_/  |_/_____/_/  |_/____/  "
     echo_line "${NC}"
-    echo_line "  ${ICON_COMPUTER}  基于 Conda 的 ALAS 部署脚本"
+    echo_line "  ${ICON_COMPUTER}  X86-64 Linux 中基于 Conda 的 ALAS 部署脚本"
     echo_line "  ─────────────────────────────────────────────────"
     echo_line "  ${ICON_INFO}  当前局域网 IP  : ${BLUE}${NET_IP}${NC}"
     echo_line "  ${ICON_GEAR}  系统发行版     : ${GREEN}${OS_ID} ${OS_VERSION}${NC}"
@@ -229,7 +253,7 @@ install_miniforge() {
     fi
 
     wget -q -O /tmp/Miniforge3-Linux-x86_64.sh \
-        https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh >> "$LOGFILE" 2>&1
+        "${GH_PROXY}https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh" >> "$LOGFILE" 2>&1
 
     bash /tmp/Miniforge3-Linux-x86_64.sh -b >> "$LOGFILE" 2>&1
     rm -f /tmp/Miniforge3-Linux-x86_64.sh
@@ -323,7 +347,7 @@ install_git_adb() {
 clone_alas() {
     start_step "正在克隆 AzurLaneAutoScript 仓库..."
 
-    WORK_DIR="${HOME}/AzurLaneAutoScript"
+    WORK_DIR="${INSTALL_DIR}"
     if [[ -d "${WORK_DIR}" ]]; then
         end_step "${ICON_WARN}" "ALAS 目录已存在，跳过克隆" "${YELLOW}"
         cd "${WORK_DIR}"
@@ -333,7 +357,7 @@ clone_alas() {
 
     REPO_URL="https://github.com/LmeSzinc/AzurLaneAutoScript.git"
 
-    git clone "${REPO_URL}" "${WORK_DIR}" >> "$LOGFILE" 2>&1
+    git clone "${GH_PROXY}${REPO_URL}" "${WORK_DIR}" >> "$LOGFILE" 2>&1
     cd "${WORK_DIR}"
     ALAS_DIR="${WORK_DIR}"
 
@@ -351,9 +375,23 @@ setup_conda_env() {
 
     ENV_URL="https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Conda/environment.yml"
 
-    wget -q -O environment.yml "${ENV_URL}" >> "$LOGFILE" 2>&1
+    wget -q -O environment.yml "${GH_PROXY}${ENV_URL}" >> "$LOGFILE" 2>&1
 
     eval "$("${CONDA_BIN}" shell.bash hook)" >> "$LOGFILE" 2>&1
+
+    if [[ "${USE_CN_MIRROR}" == true ]]; then
+        conda config --prepend channels https://mirror.nju.edu.cn/anaconda/cloud/conda-forge/ >> "$LOGFILE" 2>&1
+        conda config --prepend channels https://mirror.nju.edu.cn/anaconda/pkgs/main/ >> "$LOGFILE" 2>&1
+        conda config --append channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge/ >> "$LOGFILE" 2>&1
+        conda config --append channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/main/ >> "$LOGFILE" 2>&1
+        conda config --append channels https://mirror.sjtu.edu.cn/anaconda/cloud/conda-forge/ >> "$LOGFILE" 2>&1
+        conda config --append channels https://mirror.sjtu.edu.cn/anaconda/pkgs/main/ >> "$LOGFILE" 2>&1
+
+        export PIP_INDEX_URL="https://pypi.mirrors.ustc.edu.cn/simple/"
+        export PIP_EXTRA_INDEX_URL="https://mirrors.aliyun.com/pypi/simple/ https://pypi.tuna.tsinghua.edu.cn/simple/"
+        export PIP_TRUSTED_HOST="pypi.mirrors.ustc.edu.cn mirrors.aliyun.com pypi.tuna.tsinghua.edu.cn"
+        export PIP_TIMEOUT=60
+    fi
 
     if conda env list 2>/dev/null | grep -q "^alas "; then
         conda env remove -n alas -y >> "$LOGFILE" 2>&1 || \
@@ -361,6 +399,8 @@ setup_conda_env() {
     fi
 
     conda env create -f environment.yml >> "$LOGFILE" 2>&1
+
+    unset PIP_INDEX_URL PIP_EXTRA_INDEX_URL
 
     # 检查是否有依赖缺失，如有则逐条尝试独立安装
     if ! conda run -n alas python -c "import alas_webapp" >> "$LOGFILE" 2>&1; then
@@ -380,7 +420,7 @@ configure_deploy() {
         cp config/deploy.yaml config/deploy.yaml.bak
     fi
 
-    TEMPLATE="config/deploy.template-linux-cn.yaml"
+    TEMPLATE="${DEPLOY_TEMPLATE}"
 
     if [[ -f "${TEMPLATE}" ]]; then
         cp "${TEMPLATE}" config/deploy.yaml
@@ -394,16 +434,16 @@ configure_deploy() {
 create_launcher() {
     start_step "正在生成启动脚本..."
 
-    cat > "${HOME}/run_alas.sh" <<EOF
+    cat > "${SCRIPT_OUT_DIR}/run_alas.sh" <<EOF
 #!/bin/bash
 eval "\$(${CONDA_BIN} shell.bash hook)"
 conda activate alas
 cd ${ALAS_DIR}
 python gui.py
 EOF
-    chmod +x "${HOME}/run_alas.sh"
+    chmod +x "${SCRIPT_OUT_DIR}/run_alas.sh"
 
-    end_step "${ICON_OK}" "启动脚本已生成"
+    end_step "${ICON_OK}" "启动脚本已生成: ${SCRIPT_OUT_DIR}/run_alas.sh"
 }
 
 # ---------------------------- 第7步: systemd 服务 ----------------------------
@@ -425,7 +465,7 @@ Wants=network-online.target
 User=${USER_NAME}
 Group=${USER_GROUP}
 WorkingDirectory=${ALAS_DIR}
-ExecStart=${HOME}/run_alas.sh
+ExecStart=${SCRIPT_OUT_DIR}/run_alas.sh
 Restart=always
 RestartSec=5
 
@@ -451,8 +491,69 @@ print_completion() {
     echo_line ""
 }
 
+# ---------------------------- 反向安装（卸载） ----------------------------
+do_uninstall() {
+    echo_line ""
+    echo_line "  ${ICON_WARN}  ${YELLOW}  即将执行 ALAS 卸载，将删除以下内容：${NC}"
+    echo_line "  ${ICON_WARN}  ${YELLOW}  - 开机自启服务${NC}"
+    echo_line "  ${ICON_WARN}  ${YELLOW}  - Conda 虚拟环境 (alas)${NC}"
+    echo_line "  ${ICON_WARN}  ${YELLOW}  - ALAS 目录: ${INSTALL_DIR}${NC}"
+    echo_line "  ${ICON_WARN}  ${YELLOW}  - 启动脚本: ${SCRIPT_OUT_DIR}/run_alas.sh${NC}"
+    echo_line "  ${ICON_INFO}  ${GREEN}  依赖库 (git, adb, conda) 不会被删除${NC}"
+    echo_line ""
+    echo -n "  确认？[yes/NO] "
+    read -r CONFIRM
+    if [[ "${CONFIRM}" != "yes" && "${CONFIRM}" != "YES" ]]; then
+        echo_line "  ${ICON_INFO}  已取消卸载"
+        exit 0
+    fi
+
+    echo_line ""
+
+    start_step "正在停止 ALAS 服务..."
+    if systemctl is-active --quiet run_alas.service 2>/dev/null; then
+        systemctl stop run_alas.service >> "$LOGFILE" 2>&1
+    fi
+    if systemctl is-enabled --quiet run_alas.service 2>/dev/null; then
+        systemctl disable run_alas.service >> "$LOGFILE" 2>&1
+    fi
+    if [[ -f /etc/systemd/system/run_alas.service ]]; then
+        rm -f /etc/systemd/system/run_alas.service
+        systemctl daemon-reload >> "$LOGFILE" 2>&1
+    fi
+    end_step "${ICON_OK}" "服务已停止并移除"
+
+    start_step "正在清理 Conda 虚拟环境..."
+    CONDA_BIN="${HOME}/miniforge3/bin/conda"
+    command -v conda &>/dev/null && CONDA_BIN=$(command -v conda)
+    eval "$("${CONDA_BIN}" shell.bash hook)" >> "$LOGFILE" 2>&1
+    if conda env list 2>/dev/null | grep -q "^alas "; then
+        conda env remove -n alas -y >> "$LOGFILE" 2>&1 || \
+        rm -rf "$(conda info --base 2>/dev/null)/envs/alas" >> "$LOGFILE" 2>&1
+    fi
+    end_step "${ICON_OK}" "虚拟环境已清理"
+
+    start_step "正在删除 ALAS 目录..."
+    rm -rf "${INSTALL_DIR}"
+    end_step "${ICON_OK}" "目录已删除"
+
+    start_step "正在删除启动脚本..."
+    rm -f "${SCRIPT_OUT_DIR}/run_alas.sh"
+    end_step "${ICON_OK}" "启动脚本已删除"
+
+    rm -f "$LOGFILE"
+    echo_line ""
+    echo_line "${ICON_OK}  ${GREEN}ALAS 卸载完成${NC}"
+    echo_line ""
+}
+
 # ---------------------------- 主流程 ----------------------------
 main() {
+    if [[ "${UNINSTALL}" == true ]]; then
+        do_uninstall
+        exit 0
+    fi
+
     detect_os
     gather_system_info
     print_header
