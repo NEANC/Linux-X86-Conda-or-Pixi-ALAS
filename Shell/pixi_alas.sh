@@ -244,25 +244,57 @@ install_pixi() {
 
 # ---------------------------- 第2步: 安装 Git 和 ADB ----------------------------
 install_git_adb() {
-    start_step "正在安装 Git 和 ADB..."
+    start_step "正在检查 Git 和 ADB..."
+
+    local missing_pkgs=()
+
+    case "${OS_ID}" in
+        debian|ubuntu)
+            local check_list=(git adb libgomp1 libgl1 libglib2.0-0t64 libsm6 libxrender1 libxext6)
+            for pkg in "${check_list[@]}"; do
+                dpkg -s "$pkg" &>/dev/null || missing_pkgs+=("$pkg")
+            done
+            ;;
+        arch)
+            local check_list=(git android-tools)
+            for pkg in "${check_list[@]}"; do
+                pacman -Q "$pkg" &>/dev/null || missing_pkgs+=("$pkg")
+            done
+            ;;
+        centos|rhel|fedora)
+            local check_list=(git adb libgomp mesa-libGL glib2 libSM libXrender libXext)
+            for pkg in "${check_list[@]}"; do
+                rpm -q "$pkg" &>/dev/null || missing_pkgs+=("$pkg")
+            done
+            ;;
+        *)
+            end_step "${ICON_ERROR}" "不支持的发行版: ${OS_ID}" "${RED}"
+            exit 1 ;;
+    esac
+
+    if [[ ${#missing_pkgs[@]} -eq 0 ]]; then
+        end_step "${ICON_OK}" "Git 已安装: $(git --version 2>/dev/null | awk '{print $NF}')"
+        end_step "${ICON_OK}" "ADB 已安装: $(adb --version 2>/dev/null | head -n1 | awk '{print $NF}')"
+        echo "$(date '+%Y-%m-%d %H:%M:%S')   Git: $(git --version 2>/dev/null)" >> "$LOGFILE"
+        echo "$(date '+%Y-%m-%d %H:%M:%S')   ADB: $(adb --version 2>/dev/null | head -n1)" >> "$LOGFILE"
+        return
+    fi
+
+    start_step "正在安装缺失的依赖..."
 
     case "${OS_ID}" in
         debian|ubuntu)
             apt-get -qq update >> "$LOGFILE" 2>&1
-            apt-get -qq install -y git adb >> "$LOGFILE" 2>&1 ;;
+            apt-get -qq install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1 ;;
         arch)
-            pacman -Syy --noconfirm git android-tools >> "$LOGFILE" 2>&1 ;;
+            pacman -Syy --noconfirm "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1 ;;
         centos|rhel|fedora)
             if command -v dnf &>/dev/null; then
-                dnf -q update -y >> "$LOGFILE" 2>&1
-                dnf -q install -y git adb >> "$LOGFILE" 2>&1
+                dnf -q makecache >> "$LOGFILE" 2>&1
+                dnf -q install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1
             else
-                yum -q update -y >> "$LOGFILE" 2>&1
-                yum -q install -y git adb >> "$LOGFILE" 2>&1
+                yum -q install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1
             fi ;;
-        *)
-            end_step "${ICON_ERROR}" "不支持的发行版: ${OS_ID}" "${RED}"
-            exit 1 ;;
     esac
 
     end_step "${ICON_OK}" "Git 已安装: $(git --version 2>/dev/null | awk '{print $NF}')"
