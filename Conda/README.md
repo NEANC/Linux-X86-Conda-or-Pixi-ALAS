@@ -57,7 +57,7 @@ rm Miniforge3-Linux-x86_64.sh
 
 ```bash
 # 更新软件包列表并安装 Git 和 Adb，及相关依赖库
-apt update && apt install -y git adb libgomp1 libgl1 libglib2.0-0t64 libgomp1 libsm6 libxrender1 libxext6
+apt update && apt install -y git adb libgomp1 libgl1 libglib2.0-0t64 libsm6 libxrender1 libxext6
 ```
 
 </details>
