@@ -75,6 +75,8 @@ pacman -Syy --noconfirm git android-tools libgomp mesa glib2 libsm libxrender li
   <summary> CentOS/RHEL/Fedora </summary>
 
 ```bash
+dnf -q makecache && dnf -y install git android-tools libgomp mesa-libGL glib2 libSM libXrender libXext
+
 yum install -y git android-tools libgomp mesa-libGL glib2 libSM libXrender libXext
 ```
 
