@@ -56,8 +56,8 @@ rm Miniforge3-Linux-x86_64.sh
   <summary> Debian/Ubuntu </summary>
 
 ```bash
-# 更新软件包列表并安装 Git 和 Adb
-apt update && apt install -y git adb
+# 更新软件包列表并安装 Git 和 Adb，及相关依赖库
+apt update && apt install -y git adb libgomp1 libgl1 libglib2.0-0t64 libgomp1 libsm6 libxrender1 libxext6
 ```
 
 </details>
@@ -66,7 +66,7 @@ apt update && apt install -y git adb
   <summary> Arch Linux </summary>
 
 ```bash
-pacman -Syy --noconfirm git android-tools
+pacman -Syy --noconfirm git android-tools libgomp mesa glib2 libsm libxrender libxext
 ```
 
 </details>
@@ -75,7 +75,7 @@ pacman -Syy --noconfirm git android-tools
   <summary> CentOS/RHEL/Fedora </summary>
 
 ```bash
-yum update && yum install -y git adb
+yum install -y git android-tools libgomp mesa-libGL glib2 libSM libXrender libXext
 ```
 
 </details>
