@@ -116,7 +116,7 @@ start_step() {
         while true; do
             printf "\r${YELLOW}%s  %s${NC}\033[K" "${spin_chars[$idx]}" "$msg"
             idx=$(( (idx + 1) % 10 ))
-            sleep 0.30 2>/dev/null || true
+            sleep 0.20 2>/dev/null || true
         done
     } &
     _SPINNER_PID=$!
@@ -252,7 +252,7 @@ install_homebrew() {
 
 # ---------------------------- 第2步: 安装 Miniforge、Git 和 ADB ----------------------------
 install_packages() {
-    start_step "正在检查依赖库..."
+    start_step "正在检查依赖..."
 
     local missing_formulae=()
     local check_list=(miniforge git android-platform-tools)
@@ -280,7 +280,7 @@ install_packages() {
     start_step "正在安装缺失的依赖..."
 
     if ! brew install "${missing_formulae[@]}" >> "$LOGFILE" 2>&1; then
-        end_step "${ICON_ERROR}" "依赖库安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+        end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
         exit 1
     fi
 
@@ -684,12 +684,15 @@ do_uninstall() {
     echo_line "  ${ICON_WARN}  ${YELLOW}  - 启动脚本: ${SCRIPT_OUT_DIR}/run_alas.sh${NC}"
     echo_line "  ${ICON_INFO}  ${GREEN}  依赖库 (brew, git, adb, conda) 不会被删除${NC}"
     echo_line ""
-    echo -n "  确认？[yes/NO] "
-    read -r CONFIRM < /dev/tty
-    if [[ "${CONFIRM}" != "yes" && "${CONFIRM}" != "YES" ]]; then
-        echo_line "  ${ICON_INFO}  已取消卸载"
-        exit 0
-    fi
+    while true; do
+        echo -n "  确认继续吗？ [yes/N] ："
+        read -r CONFIRM < /dev/tty
+        case "${CONFIRM}" in
+            yes|YES) break ;;
+            no|NO|n|N) echo_line "  ${ICON_INFO}  已取消卸载"; exit 0 ;;
+            *) echo_line "  ${ICON_WARN}  无效输入，请输入 yes 或 N" "${YELLOW}" ;;
+        esac
+    done
 
     echo_line ""
 

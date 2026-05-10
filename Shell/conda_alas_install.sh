@@ -118,7 +118,7 @@ start_step() {
         while true; do
             printf "\r${YELLOW}%s  %s${NC}\033[K" "${spin_chars[$idx]}" "$msg"
             idx=$(( (idx + 1) % 10 ))
-            sleep 0.35 2>/dev/null || true
+            sleep 0.20 2>/dev/null || true
         done
     } &
     _SPINNER_PID=$!
@@ -281,7 +281,7 @@ install_miniforge() {
 
 # ---------------------------- 第2步: 安装 Git 和 ADB ----------------------------
 install_git_adb() {
-    start_step "正在检查依赖库..."
+    start_step "正在检查依赖..."
 
     local missing_pkgs=()
 
@@ -586,12 +586,15 @@ do_uninstall() {
     echo_line "  ${ICON_WARN}  ${YELLOW}  - 启动脚本: ${SCRIPT_OUT_DIR}/run_alas.sh${NC}"
     echo_line "  ${ICON_INFO}  ${GREEN}  依赖库 (git, adb, conda) 不会被删除${NC}"
     echo_line ""
-    echo -n "  确认？[yes/NO] "
-    read -r CONFIRM < /dev/tty
-    if [[ "${CONFIRM}" != "yes" && "${CONFIRM}" != "YES" ]]; then
-        echo_line "  ${ICON_INFO}  已取消卸载"
-        exit 0
-    fi
+    while true; do
+        echo -n "  确认继续吗？ [yes/N] ："
+        read -r CONFIRM < /dev/tty
+        case "${CONFIRM}" in
+            yes|YES) break ;;
+            no|NO|n|N) echo_line "  ${ICON_INFO}  已取消卸载"; exit 0 ;;
+            *) echo_line "  ${ICON_WARN}  无效输入，请输入 yes 或 N" "${YELLOW}" ;;
+        esac
+    done
 
     echo_line ""
 
