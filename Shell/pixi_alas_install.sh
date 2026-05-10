@@ -451,8 +451,10 @@ pyzmq = "==22.3.0"
 PIXI_EOF
 
     if [[ -d ".pixi/envs/alas" || -f "pixi.lock" ]]; then
-        pixi clean cache >> "$LOGFILE" 2>&1 || true
-        pixi clean >> "$LOGFILE" 2>&1 || rm -rf .pixi pixi.lock >> "$LOGFILE" 2>&1
+        pixi clean cache -y >> "$LOGFILE" 2>&1 || true
+        pixi clean --environment default >> "$LOGFILE" 2>&1 ||
+        pixi clean >> "$LOGFILE" 2>&1 ||
+        rm -rf .pixi pixi.lock >> "$LOGFILE" 2>&1
     fi
 
     if [[ "${USE_CN_MIRROR}" == true ]]; then
