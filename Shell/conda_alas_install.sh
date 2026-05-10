@@ -415,6 +415,12 @@ channels:
 platforms:
   - linux-64
 dependencies:
+  - libglib
+  - libgomp
+  - libgl
+  - xorg-libsm
+  - xorg-libxrender
+  - xorg-libxext
   - python=3.7.6
   - av>=8.0.3,<9
   - numpy=1.16.6
