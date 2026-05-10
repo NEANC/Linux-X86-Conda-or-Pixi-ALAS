@@ -560,7 +560,7 @@ do_uninstall() {
     echo_line "  ${ICON_INFO}  ${GREEN}  依赖库 (git, adb, pixi) 不会被删除${NC}"
     echo_line ""
     echo -n "  确认？[yes/NO] "
-    read -r CONFIRM
+    read -r CONFIRM < /dev/tty
     if [[ "${CONFIRM}" != "yes" && "${CONFIRM}" != "YES" ]]; then
         echo_line "  ${ICON_INFO}  已取消卸载"
         exit 0
