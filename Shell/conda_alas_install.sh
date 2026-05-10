@@ -380,7 +380,50 @@ setup_conda_env() {
 
     ENV_URL="https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Conda/environment.yml"
 
-    wget -q -O environment.yml "${GH_PROXY}${ENV_URL}" >> "$LOGFILE" 2>&1
+    cat > environment.yml << 'YML_EOF'
+name: alas
+channels:
+  - conda-forge
+platforms:
+  - linux-64
+dependencies:
+  - python=3.7.6
+  - av>=8.0.3,<9
+  - numpy=1.16.6
+  - scipy=1.4.1
+  - pillow
+  - psutil=5.9.3
+  - pyyaml
+  - tqdm
+  - lz4
+  - pyzmq=22.3.0
+  - pip:
+    - opencv-python==4.5.5.62
+    - imageio==2.27.0
+    - adbutils==0.11.0
+    - uiautomator2==2.16.17
+    - uiautomator2cache==0.3.0.1
+    - wrapt==1.13.1
+    - retrying==1.3.3
+    - rich==11.2.0
+    - jellyfish==0.11.2
+    - inflection==0.5.1
+    - pydantic==1.9.2
+    - aiofiles==0.8.0
+    - prettytable==2.2.1
+    - anyio==1.3.1
+    - onepush==1.4.0
+    - pycryptodome==3.9.9
+    - pypresence==4.2.1
+    - cnocr==1.2.2
+    - mxnet==1.6.0
+    - pywebio==1.6.2
+    - starlette==0.14.2
+    - uvicorn==0.17.6
+    - websockets==10.4
+    - alas-webapp==0.3.7
+    - zerorpc==0.6.3
+YML_EOF
 
     eval "$("${CONDA_BIN}" shell.bash hook)" >> "$LOGFILE" 2>&1
 

@@ -379,7 +379,52 @@ setup_pixi_env() {
 
     TOML_URL="https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Pixi/pixi.toml"
 
-    wget -q -O pixi.toml "${GH_PROXY}${TOML_URL}" >> "$LOGFILE" 2>&1
+    cat > pixi.toml << 'PIXI_EOF'
+[workspace]
+channels = ["conda-forge"]
+name = "alas"
+platforms = ["linux-64"]
+version = "0.1.0"
+[tasks]
+start = "python gui.py"
+[dependencies]
+python = "==3.7.6"
+av = ">=8.0.3,<9"
+[pypi-dependencies]
+numpy = "==1.21.6"
+scipy = "==1.4.1"
+pillow = "*"
+opencv-python = "*"
+imageio = "==2.27.0"
+adbutils = "==0.11.0"
+uiautomator2 = "==2.16.17"
+uiautomator2cache = "==0.3.0.1"
+wrapt = "==1.13.1"
+retrying = "*"
+lz4 = "*"
+av = "*"
+psutil = "==5.9.3"
+rich = "==11.2.0"
+tqdm = "*"
+jellyfish = "==0.11.2"
+pyyaml = "*"
+inflection = "*"
+pydantic = "*"
+aiofiles = "*"
+prettytable = "==2.2.1"
+anyio = "==1.3.1"
+onepush = "==1.4.0"
+pycryptodome = "==3.9.9"
+pypresence = "==4.2.1"
+cnocr = "==2.0.0"
+mxnet = "==1.6.0"
+pywebio = "==1.6.2"
+starlette = "==0.14.2"
+uvicorn = { version = "==0.17.6", extras = ["standard"] }
+alas-webapp = "==0.3.7"
+zerorpc = "==0.6.3"
+pyzmq = "==22.3.0"
+PIXI_EOF
 
     if [[ -d ".pixi/envs/alas" || -f "pixi.lock" ]]; then
         pixi clean --environment alas >> "$LOGFILE" 2>&1 || \
