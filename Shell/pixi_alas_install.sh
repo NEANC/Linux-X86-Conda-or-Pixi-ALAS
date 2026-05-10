@@ -276,13 +276,13 @@ install_pixi() {
 
 # ---------------------------- 第2步: 安装 Git 和 ADB 及相关依赖库 ----------------------------
 install_git_adb() {
-    start_step "正在检查依赖库..."
+    start_step "正在检查依赖..."
 
     local missing_pkgs=()
 
     case "${OS_ID}" in
         debian|ubuntu)
-            local check_list=(git adb libgomp1 libgl1 libglib2.0-0t64 libsm6 libxrender1 libxext6)
+            local check_list=(git adb)
             for pkg in "${check_list[@]}"; do
                 if dpkg -s "$pkg" &>/dev/null; then
                     echo "$(date '+%Y-%m-%d %H:%M:%S')   ${ICON_OK} ${pkg} 已安装" >> "$LOGFILE"
@@ -304,7 +304,7 @@ install_git_adb() {
             done
             ;;
         centos|rhel|fedora)
-            local check_list=(git adb libgomp mesa-libGL glib2 libSM libXrender libXext)
+            local check_list=(git adb)
             for pkg in "${check_list[@]}"; do
                 if rpm -q "$pkg" &>/dev/null; then
                     echo "$(date '+%Y-%m-%d %H:%M:%S')   ${ICON_OK} ${pkg} 已安装" >> "$LOGFILE"
@@ -332,31 +332,31 @@ install_git_adb() {
     case "${OS_ID}" in
         debian|ubuntu)
             if ! apt-get -qq update >> "$LOGFILE" 2>&1; then
-                end_step "${ICON_ERROR}" "依赖库更新错误，详情请阅读日志：${LOGFILE}" "${RED}"
+                end_step "${ICON_ERROR}" "依赖更新错误，详情请阅读日志：${LOGFILE}" "${RED}"
                 exit 1
             fi
             if ! apt-get -qq install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
-                end_step "${ICON_ERROR}" "依赖库安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+                end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
                 exit 1
             fi ;;
         arch)
             if ! pacman -Syy --noconfirm "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
-                end_step "${ICON_ERROR}" "依赖库安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+                end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
                 exit 1
             fi ;;
         centos|rhel|fedora)
             if command -v dnf &>/dev/null; then
                 if ! dnf -q makecache >> "$LOGFILE" 2>&1; then
-                    end_step "${ICON_ERROR}" "依赖库更新错误，详情请阅读日志：${LOGFILE}" "${RED}"
+                    end_step "${ICON_ERROR}" "依赖更新错误，详情请阅读日志：${LOGFILE}" "${RED}"
                     exit 1
                 fi
                 if ! dnf -q install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
-                    end_step "${ICON_ERROR}" "依赖库安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+                    end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
                     exit 1
                 fi
             else
                 if ! yum -q install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
-                    end_step "${ICON_ERROR}" "依赖库安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+                    end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
                     exit 1
                 fi
             fi ;;
