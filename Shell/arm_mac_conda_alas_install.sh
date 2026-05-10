@@ -101,9 +101,7 @@ EOF
 
 # ---------------------------- 输出与日志函数 ----------------------------
 echo_line() {
-    local term_line="$1"
-    echo -e "$term_line"
-    echo -e "$(echo -e "$term_line" | sed 's/\x1b\[[0-9;]*m//g')" >> "$LOGFILE"
+    echo -e "$1"
 }
 
 log_out() {
@@ -130,7 +128,6 @@ _cleanup_spinner() {
 start_step() {
     _cleanup_spinner
     local msg="$1"
-    echo "$(date '+%Y-%m-%d %H:%M:%S') ${msg}" >> "$LOGFILE"
     local spin_chars=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
     local idx=0
     {
@@ -150,7 +147,6 @@ end_step() {
     local color="${3:-${GREEN}}"
     _cleanup_spinner
     printf "\r${icon}  ${color}%s${NC}\033[K\n" "$msg"
-    echo "$(date '+%Y-%m-%d %H:%M:%S') ${icon} ${msg}" >> "$LOGFILE"
 }
 
 # ---------------------------- 中断信号处理 ----------------------------
