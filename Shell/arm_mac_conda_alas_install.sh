@@ -20,8 +20,8 @@ fi
 LOGFILE="/tmp/alas_install.log"
 touch "$LOGFILE" || { echo "无法创建日志文件 $LOGFILE"; exit 1; }
 
-exec {TRACE_FD} >> "$LOGFILE"
-BASH_XTRACEFD=$TRACE_FD
+exec 3>>"$LOGFILE"
+BASH_XTRACEFD=3
 PS4='+$(date "+%H:%M:%S") | '
 set -x
 
