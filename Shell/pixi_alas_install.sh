@@ -18,6 +18,26 @@ fi
 
 # ---------------------------- 日志文件 ----------------------------
 LOGFILE="/tmp/alas_install.log"
+KEEP_LOG=false
+
+__pre_i=1
+while [[ $__pre_i -le $# ]]; do
+    case "${!__pre_i}" in
+        -l|--log)
+            KEEP_LOG=true
+            __pre_n=$((__pre_i + 1))
+            if [[ $__pre_n -le $# ]]; then
+                __pre_v="${!__pre_n}"
+                if [[ "${__pre_v}" != -* ]]; then
+                    LOGFILE="${__pre_v}"
+                    __pre_i=$__pre_n
+                fi
+            fi
+            ;;
+    esac
+    __pre_i=$((__pre_i + 1))
+done
+
 touch "$LOGFILE" || { echo "无法创建日志文件 $LOGFILE"; exit 1; }
 
 exec 3>>"$LOGFILE"
@@ -76,6 +96,7 @@ usage() {
   -t TEMPLATE            控制使用的 deploy 模板与国内镜像源
   -S, --skip-service     跳过 systemd 开机自启服务配置
   --uninstall            反向安装：停止并删除 ALAS、虚拟环境、开机自启
+  -l, --log [FILE]       保留安装日志，可选指定日志文件路径
   -h, --help             显示帮助信息
 EOF
 }
@@ -170,6 +191,7 @@ while [[ $# -gt 0 ]]; do
             fi
             shift 2 ;;
         --uninstall) UNINSTALL=true; shift ;;
+        -l|--log) KEEP_LOG=true; [[ -n "$2" && "$2" != -* ]] && shift; shift ;;
         -S|--skip-service) SKIP_SERVICE=true; shift ;;
         -h|--help) usage; exit 0 ;;
         *) log_error "未知参数: $1"; usage; exit 1 ;;
@@ -623,7 +645,9 @@ do_uninstall() {
 main() {
     if [[ "${UNINSTALL}" == true ]]; then
         do_uninstall
-        rm -f "$LOGFILE"
+        if [[ "${KEEP_LOG}" == false ]]; then
+            rm -f "$LOGFILE"
+        fi
         exit 0
     fi
 
@@ -639,7 +663,11 @@ main() {
     configure_service
 
     print_completion
-    rm -f "$LOGFILE"
+    if [[ "${KEEP_LOG}" == false ]]; then
+        rm -f "$LOGFILE"
+    else
+        echo_line "  ${ICON_INFO}  日志已保存至：${LOGFILE}"
+    fi
 }
 
 main
