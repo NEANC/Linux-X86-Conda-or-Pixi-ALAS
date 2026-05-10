@@ -126,12 +126,12 @@ _cleanup_spinner() {
 }
 
 start_step() {
+    set +x
     _cleanup_spinner
     local msg="$1"
     local spin_chars=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
     local idx=0
     {
-        set +x
         while true; do
             printf "\r${YELLOW}%s  %s${NC}\033[K" "${spin_chars[$idx]}" "$msg"
             idx=$(( (idx + 1) % 10 ))
@@ -139,14 +139,17 @@ start_step() {
         done
     } &
     _SPINNER_PID=$!
+    set -x
 }
 
 end_step() {
+    set +x
     local icon="$1"
     local msg="$2"
     local color="${3:-${GREEN}}"
     _cleanup_spinner
     printf "\r${icon}  ${color}%s${NC}\033[K\n" "$msg"
+    set -x
 }
 
 # ---------------------------- 中断信号处理 ----------------------------
