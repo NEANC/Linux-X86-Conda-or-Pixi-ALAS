@@ -20,7 +20,7 @@ fi
 LOGFILE="/tmp/alas_install.log"
 touch "$LOGFILE" || { echo "无法创建日志文件 $LOGFILE"; exit 1; }
 
-exec {TRACE_FD}>>"$LOGFILE"
+exec {TRACE_FD} >> "$LOGFILE"
 BASH_XTRACEFD=$TRACE_FD
 PS4='+$(date "+%H:%M:%S") | '
 set -x
@@ -230,7 +230,10 @@ install_homebrew() {
         return
     fi
 
-    /bin/bash -c "$(curl -fsSL ${GH_PROXY}https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" >> "$LOGFILE" 2>&1
+    if ! /bin/bash -c "$(curl -fsSL ${GH_PROXY}https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" >> "$LOGFILE" 2>&1; then
+        end_step "${ICON_ERROR}" "Homebrew 安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+        exit 1
+    fi
 
     if [[ -x /opt/homebrew/bin/brew ]]; then
         eval "$(/opt/homebrew/bin/brew shellenv)"
@@ -276,7 +279,10 @@ install_packages() {
 
     start_step "正在安装缺失的依赖..."
 
-    brew install "${missing_formulae[@]}" >> "$LOGFILE" 2>&1
+    if ! brew install "${missing_formulae[@]}" >> "$LOGFILE" 2>&1; then
+        end_step "${ICON_ERROR}" "依赖库安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+        exit 1
+    fi
 
     # 激活 miniforge
     if [[ -x /opt/homebrew/bin/brew ]]; then
@@ -306,7 +312,10 @@ clone_alas() {
 
     REPO_URL="https://github.com/LmeSzinc/AzurLaneAutoScript.git"
 
-    git clone "${GH_PROXY}${REPO_URL}" "${WORK_DIR}" >> "$LOGFILE" 2>&1
+    if ! git clone "${GH_PROXY}${REPO_URL}" "${WORK_DIR}" >> "$LOGFILE" 2>&1; then
+        end_step "${ICON_ERROR}" "仓库克隆错误，详情请阅读日志：${LOGFILE}" "${RED}"
+        exit 1
+    fi
     cd "${WORK_DIR}"
     ALAS_DIR="${WORK_DIR}"
 
@@ -563,7 +572,10 @@ YML_EOF
         rm -rf "$(conda info --base 2>/dev/null)/envs/alas" >> "$LOGFILE" 2>&1
     fi
 
-    conda env create -f environment.yml >> "$LOGFILE" 2>&1
+    if ! conda env create -f environment.yml >> "$LOGFILE" 2>&1; then
+        end_step "${ICON_ERROR}" "虚拟环境构建错误，详情请阅读日志：${LOGFILE}" "${RED}"
+        exit 1
+    fi
 
     unset PIP_INDEX_URL PIP_EXTRA_INDEX_URL
 

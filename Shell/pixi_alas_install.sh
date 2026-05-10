@@ -259,7 +259,10 @@ install_pixi() {
     fi
 
     # 官方安装方式，输出重定向到日志文件
-    curl -fsSL https://pixi.sh/install.sh | sh >> "$LOGFILE" 2>&1
+    if ! curl -fsSL https://pixi.sh/install.sh | sh >> "$LOGFILE" 2>&1; then
+        end_step "${ICON_ERROR}" "Pixi 安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+        exit 1
+    fi
 
     export PATH="${HOME}/.pixi/bin:${PATH}"
     if command -v pixi &>/dev/null; then
@@ -328,16 +331,34 @@ install_git_adb() {
 
     case "${OS_ID}" in
         debian|ubuntu)
-            apt-get -qq update >> "$LOGFILE" 2>&1
-            apt-get -qq install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1 ;;
+            if ! apt-get -qq update >> "$LOGFILE" 2>&1; then
+                end_step "${ICON_ERROR}" "依赖库更新错误，详情请阅读日志：${LOGFILE}" "${RED}"
+                exit 1
+            fi
+            if ! apt-get -qq install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
+                end_step "${ICON_ERROR}" "依赖库安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+                exit 1
+            fi ;;
         arch)
-            pacman -Syy --noconfirm "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1 ;;
+            if ! pacman -Syy --noconfirm "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
+                end_step "${ICON_ERROR}" "依赖库安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+                exit 1
+            fi ;;
         centos|rhel|fedora)
             if command -v dnf &>/dev/null; then
-                dnf -q makecache >> "$LOGFILE" 2>&1
-                dnf -q install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1
+                if ! dnf -q makecache >> "$LOGFILE" 2>&1; then
+                    end_step "${ICON_ERROR}" "依赖库更新错误，详情请阅读日志：${LOGFILE}" "${RED}"
+                    exit 1
+                fi
+                if ! dnf -q install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
+                    end_step "${ICON_ERROR}" "依赖库安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+                    exit 1
+                fi
             else
-                yum -q install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1
+                if ! yum -q install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
+                    end_step "${ICON_ERROR}" "依赖库安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+                    exit 1
+                fi
             fi ;;
     esac
 
@@ -361,7 +382,10 @@ clone_alas() {
 
     REPO_URL="https://github.com/LmeSzinc/AzurLaneAutoScript.git"
 
-    git clone "${GH_PROXY}${REPO_URL}" "${WORK_DIR}" >> "$LOGFILE" 2>&1
+    if ! git clone "${GH_PROXY}${REPO_URL}" "${WORK_DIR}" >> "$LOGFILE" 2>&1; then
+        end_step "${ICON_ERROR}" "仓库克隆错误，详情请阅读日志：${LOGFILE}" "${RED}"
+        exit 1
+    fi
     cd "${WORK_DIR}"
     ALAS_DIR="${WORK_DIR}"
 
@@ -427,9 +451,8 @@ pyzmq = "==22.3.0"
 PIXI_EOF
 
     if [[ -d ".pixi/envs/alas" || -f "pixi.lock" ]]; then
-        pixi clean cache >> "$LOGFILE" 2>&1 \
-        pixi clean >> "$LOGFILE" 2>&1 || \
-        rm -rf .pixi pixi.lock >> "$LOGFILE" 2>&1
+        pixi clean cache >> "$LOGFILE" 2>&1 || true
+        pixi clean >> "$LOGFILE" 2>&1 || rm -rf .pixi pixi.lock >> "$LOGFILE" 2>&1
     fi
 
     if [[ "${USE_CN_MIRROR}" == true ]]; then
@@ -447,7 +470,10 @@ PIXI_EOF
         pixi config set --global default-channels '["https://pypi.mirrors.ustc.edu.cn/simple/"]' >> "$LOGFILE" 2>&1
     fi
 
-    pixi install --manifest-path pixi.toml >> "$LOGFILE" 2>&1
+    if ! pixi install --manifest-path pixi.toml >> "$LOGFILE" 2>&1; then
+        end_step "${ICON_ERROR}" "虚拟环境构建错误，详情请阅读日志：${LOGFILE}" "${RED}"
+        exit 1
+    fi
 
     if [[ "${USE_CN_MIRROR}" == true ]]; then
         if [[ -f "${PIXI_CONF_BAK}" ]]; then

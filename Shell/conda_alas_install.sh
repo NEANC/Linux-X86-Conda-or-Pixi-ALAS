@@ -257,10 +257,17 @@ install_miniforge() {
         return
     fi
 
-    wget -q -O /tmp/Miniforge3-Linux-x86_64.sh \
-        "${GH_PROXY}https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh" >> "$LOGFILE" 2>&1
+    if ! wget -q -O /tmp/Miniforge3-Linux-x86_64.sh \
+        "${GH_PROXY}https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh" >> "$LOGFILE" 2>&1; then
+        end_step "${ICON_ERROR}" "Miniforge 下载错误，详情请阅读日志：${LOGFILE}" "${RED}"
+        exit 1
+    fi
 
-    bash /tmp/Miniforge3-Linux-x86_64.sh -b >> "$LOGFILE" 2>&1
+    if ! bash /tmp/Miniforge3-Linux-x86_64.sh -b >> "$LOGFILE" 2>&1; then
+        end_step "${ICON_ERROR}" "Miniforge 安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+        rm -f /tmp/Miniforge3-Linux-x86_64.sh
+        exit 1
+    fi
     rm -f /tmp/Miniforge3-Linux-x86_64.sh
 
     if [[ -x "${CONDA_BIN}" ]]; then
@@ -329,16 +336,34 @@ install_git_adb() {
 
     case "${OS_ID}" in
         debian|ubuntu)
-            apt-get -qq update >> "$LOGFILE" 2>&1
-            apt-get -qq install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1 ;;
+            if ! apt-get -qq update >> "$LOGFILE" 2>&1; then
+                end_step "${ICON_ERROR}" "依赖库更新错误，详情请阅读日志：${LOGFILE}" "${RED}"
+                exit 1
+            fi
+            if ! apt-get -qq install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
+                end_step "${ICON_ERROR}" "依赖库安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+                exit 1
+            fi ;;
         arch)
-            pacman -Syy --noconfirm "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1 ;;
+            if ! pacman -Syy --noconfirm "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
+                end_step "${ICON_ERROR}" "依赖库安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+                exit 1
+            fi ;;
         centos|rhel|fedora)
             if command -v dnf &>/dev/null; then
-                dnf -q makecache >> "$LOGFILE" 2>&1
-                dnf -q install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1
+                if ! dnf -q makecache >> "$LOGFILE" 2>&1; then
+                    end_step "${ICON_ERROR}" "依赖库更新错误，详情请阅读日志：${LOGFILE}" "${RED}"
+                    exit 1
+                fi
+                if ! dnf -q install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
+                    end_step "${ICON_ERROR}" "依赖库安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+                    exit 1
+                fi
             else
-                yum -q install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1
+                if ! yum -q install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
+                    end_step "${ICON_ERROR}" "依赖库安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+                    exit 1
+                fi
             fi ;;
     esac
 
@@ -362,7 +387,10 @@ clone_alas() {
 
     REPO_URL="https://github.com/LmeSzinc/AzurLaneAutoScript.git"
 
-    git clone "${GH_PROXY}${REPO_URL}" "${WORK_DIR}" >> "$LOGFILE" 2>&1
+    if ! git clone "${GH_PROXY}${REPO_URL}" "${WORK_DIR}" >> "$LOGFILE" 2>&1; then
+        end_step "${ICON_ERROR}" "仓库克隆错误，详情请阅读日志：${LOGFILE}" "${RED}"
+        exit 1
+    fi
     cd "${WORK_DIR}"
     ALAS_DIR="${WORK_DIR}"
 
@@ -446,7 +474,10 @@ YML_EOF
         rm -rf "$(conda info --base 2>/dev/null)/envs/alas" >> "$LOGFILE" 2>&1
     fi
 
-    conda env create -f environment.yml >> "$LOGFILE" 2>&1
+    if ! conda env create -f environment.yml >> "$LOGFILE" 2>&1; then
+        end_step "${ICON_ERROR}" "虚拟环境构建错误，详情请阅读日志：${LOGFILE}" "${RED}"
+        exit 1
+    fi
 
     unset PIP_INDEX_URL PIP_EXTRA_INDEX_URL
 
