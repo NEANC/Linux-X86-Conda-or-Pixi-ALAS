@@ -188,7 +188,7 @@ while [[ $# -gt 0 ]]; do
             fi
             shift 2 ;;
         --uninstall) UNINSTALL=true; shift ;;
-        -l|--log) KEEP_LOG=true; [[ -n "$2" && "$2" != -* ]] && shift; shift ;;
+        -l|--log) KEEP_LOG=true; [[ -n "${2:-}" && "${2:-}" != -* ]] && shift; shift ;;
         -S|--skip-service) SKIP_SERVICE=true; shift ;;
         -h|--help) usage; exit 0 ;;
         *) log_error "未知参数: $1"; usage; exit 1 ;;
