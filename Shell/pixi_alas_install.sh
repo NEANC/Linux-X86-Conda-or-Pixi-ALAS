@@ -742,6 +742,10 @@ do_uninstall() {
     _log_message "OK" "✓ 启动脚本已删除"
     end_step "${ICON_OK}" "启动脚本已删除"
 
+    if [[ "${KEEP_LOG}" == false ]]; then
+        _log_message "INFO" "清理日志文件: ${LOGFILE}"
+        rm -f "$LOGFILE"
+    fi
     _log_message "OK" "ALAS 卸载完成"
     echo_line ""
     echo_line "${ICON_OK}  ${GREEN}ALAS 卸载完成${NC}"
@@ -752,7 +756,6 @@ do_uninstall() {
 main() {
     if [[ "${UNINSTALL}" == true ]]; then
         do_uninstall
-        rm -f "$LOGFILE"
         exit 0
     fi
 
