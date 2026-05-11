@@ -62,6 +62,7 @@ USER_NAME="$(whoami)"
 _SPINNER_PID=""
 SKIP_SERVICE=false
 UNINSTALL=false
+KEEP_LOG=false
 
 # ---------------------------- 帮助 ----------------------------
 usage() {
@@ -74,15 +75,14 @@ usage() {
   -t TEMPLATE            控制使用的 deploy 模板与国内镜像源
   -S, --skip-service     跳过开机自启服务配置
   --uninstall            反向安装：停止并删除 ALAS、虚拟环境、开机自启
+  -l, --log              保留安装日志，不自动删除
   -h, --help             显示帮助信息
 EOF
 }
 
 # ---------------------------- 输出与日志函数 ----------------------------
 echo_line() {
-    local term_line="$1"
-    echo -e "$term_line"
-    echo -e "$(echo -e "$term_line" | sed 's/\x1b\[[0-9;]*m//g')" >> "$LOGFILE"
+    echo -e "$1"
 }
 
 log_out() {
@@ -107,28 +107,30 @@ _cleanup_spinner() {
 }
 
 start_step() {
+    set +x
     _cleanup_spinner
     local msg="$1"
-    echo "$(date '+%Y-%m-%d %H:%M:%S') ${msg}" >> "$LOGFILE"
     local spin_chars=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
     local idx=0
     {
         while true; do
             printf "\r${YELLOW}%s  %s${NC}\033[K" "${spin_chars[$idx]}" "$msg"
             idx=$(( (idx + 1) % 10 ))
-            sleep 0.30 2>/dev/null || true
+            sleep 0.20 2>/dev/null || true
         done
     } &
     _SPINNER_PID=$!
+    set -x
 }
 
 end_step() {
+    set +x
     local icon="$1"
     local msg="$2"
     local color="${3:-${GREEN}}"
     _cleanup_spinner
     printf "\r${icon}  ${color}%s${NC}\033[K\n" "$msg"
-    echo "$(date '+%Y-%m-%d %H:%M:%S') ${icon} ${msg}" >> "$LOGFILE"
+    set -x
 }
 
 # ---------------------------- 中断信号处理 ----------------------------
@@ -165,6 +167,7 @@ while [[ $# -gt 0 ]]; do
             fi
             shift 2 ;;
         --uninstall) UNINSTALL=true; shift ;;
+        -l|--log) KEEP_LOG=true; shift ;;
         -S|--skip-service) SKIP_SERVICE=true; shift ;;
         -h|--help) usage; exit 0 ;;
         *) log_error "未知参数: $1"; usage; exit 1 ;;
@@ -252,7 +255,7 @@ install_homebrew() {
 
 # ---------------------------- 第2步: 安装 Miniforge、Git 和 ADB ----------------------------
 install_packages() {
-    start_step "正在检查依赖库..."
+    start_step "正在检查依赖..."
 
     local missing_formulae=()
     local check_list=(miniforge git android-platform-tools)
@@ -280,7 +283,7 @@ install_packages() {
     start_step "正在安装缺失的依赖..."
 
     if ! brew install "${missing_formulae[@]}" >> "$LOGFILE" 2>&1; then
-        end_step "${ICON_ERROR}" "依赖库安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+        end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
         exit 1
     fi
 
@@ -684,12 +687,15 @@ do_uninstall() {
     echo_line "  ${ICON_WARN}  ${YELLOW}  - 启动脚本: ${SCRIPT_OUT_DIR}/run_alas.sh${NC}"
     echo_line "  ${ICON_INFO}  ${GREEN}  依赖库 (brew, git, adb, conda) 不会被删除${NC}"
     echo_line ""
-    echo -n "  确认？[yes/NO] "
-    read -r CONFIRM < /dev/tty
-    if [[ "${CONFIRM}" != "yes" && "${CONFIRM}" != "YES" ]]; then
-        echo_line "  ${ICON_INFO}  已取消卸载"
-        exit 0
-    fi
+    while true; do
+        echo -n "  确认继续吗？ [yes/N] ："
+        read -r CONFIRM < /dev/tty
+        case "${CONFIRM}" in
+            yes|YES) break ;;
+            no|NO|n|N) echo_line "  ${ICON_INFO}  已取消卸载"; exit 0 ;;
+            *) echo_line "  ${ICON_WARN}  无效输入，请输入 yes 或 N" "${YELLOW}" ;;
+        esac
+    done
 
     echo_line ""
 
@@ -716,7 +722,9 @@ do_uninstall() {
     rm -f "${SCRIPT_OUT_DIR}/run_alas.sh"
     end_step "${ICON_OK}" "启动脚本已删除"
 
-    rm -f "$LOGFILE"
+    if [[ "${KEEP_LOG}" == false ]]; then
+        rm -f "$LOGFILE"
+    fi
     echo_line ""
     echo_line "${ICON_OK}  ${GREEN}ALAS 卸载完成${NC}"
     echo_line ""
@@ -741,7 +749,11 @@ main() {
     configure_service
 
     print_completion
-    rm -f "$LOGFILE"
+    if [[ "${KEEP_LOG}" == false ]]; then
+        rm -f "$LOGFILE"
+    else
+        echo_line "  ${ICON_INFO}  日志已保存至：${LOGFILE}"
+    fi
 }
 
 main

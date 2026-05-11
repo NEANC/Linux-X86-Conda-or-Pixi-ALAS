@@ -53,6 +53,7 @@ NC='\033[0m'
 # ---------------------------- 全局变量 ----------------------------
 SKIP_SERVICE=false
 UNINSTALL=false
+KEEP_LOG=false
 USE_CN_MIRROR=false
 GH_PROXY=""
 DEPLOY_TEMPLATE="config/deploy.template-linux.yaml"
@@ -76,17 +77,14 @@ usage() {
   -t TEMPLATE            控制使用的 deploy 模板与国内镜像源
   -S, --skip-service     跳过 systemd 开机自启服务配置
   --uninstall            反向安装：停止并删除 ALAS、虚拟环境、开机自启
+  -l, --log              保留安装日志，不自动删除
   -h, --help             显示帮助信息
 EOF
 }
 
 # ---------------------------- 输出与日志函数 ----------------------------
 echo_line() {
-    # 参数：终端输出字符串（可含颜色和图标）
-    local term_line="$1"
-    echo -e "$term_line"
-    # 写入日志前移除所有 ANSI 颜色码
-    echo -e "$(echo -e "$term_line" | sed 's/\x1b\[[0-9;]*m//g')" >> "$LOGFILE"
+    echo -e "$1"
 }
 
 log_out() {
@@ -111,28 +109,30 @@ _cleanup_spinner() {
 }
 
 start_step() {
+    set +x
     _cleanup_spinner
     local msg="$1"
-    echo "$(date '+%Y-%m-%d %H:%M:%S') ${msg}" >> "$LOGFILE"
     local spin_chars=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
     local idx=0
     {
         while true; do
             printf "\r${YELLOW}%s  %s${NC}\033[K" "${spin_chars[$idx]}" "$msg"
             idx=$(( (idx + 1) % 10 ))
-            sleep 0.35 2>/dev/null || true
+            sleep 0.20 2>/dev/null || true
         done
     } &
     _SPINNER_PID=$!
+    set -x
 }
 
 end_step() {
+    set +x
     local icon="$1"
     local msg="$2"
     local color="${3:-${GREEN}}"
     _cleanup_spinner
     printf "\r${icon}  ${color}%s${NC}\033[K\n" "$msg"
-    echo "$(date '+%Y-%m-%d %H:%M:%S') ${icon} ${msg}" >> "$LOGFILE"
+    set -x
 }
 
 # ---------------------------- 中断信号处理 ----------------------------
@@ -169,6 +169,7 @@ while [[ $# -gt 0 ]]; do
             fi
             shift 2 ;;
         --uninstall) UNINSTALL=true; shift ;;
+        -l|--log) KEEP_LOG=true; shift ;;
         -S|--skip-service) SKIP_SERVICE=true; shift ;;
         -h|--help) usage; exit 0 ;;
         *) log_error "未知参数: $1"; usage; exit 1 ;;
@@ -276,13 +277,13 @@ install_pixi() {
 
 # ---------------------------- 第2步: 安装 Git 和 ADB 及相关依赖库 ----------------------------
 install_git_adb() {
-    start_step "正在检查依赖库..."
+    start_step "正在检查依赖..."
 
     local missing_pkgs=()
 
     case "${OS_ID}" in
         debian|ubuntu)
-            local check_list=(git adb libgomp1 libgl1 libglib2.0-0t64 libsm6 libxrender1 libxext6)
+            local check_list=(git adb)
             for pkg in "${check_list[@]}"; do
                 if dpkg -s "$pkg" &>/dev/null; then
                     echo "$(date '+%Y-%m-%d %H:%M:%S')   ${ICON_OK} ${pkg} 已安装" >> "$LOGFILE"
@@ -304,7 +305,7 @@ install_git_adb() {
             done
             ;;
         centos|rhel|fedora)
-            local check_list=(git adb libgomp mesa-libGL glib2 libSM libXrender libXext)
+            local check_list=(git adb)
             for pkg in "${check_list[@]}"; do
                 if rpm -q "$pkg" &>/dev/null; then
                     echo "$(date '+%Y-%m-%d %H:%M:%S')   ${ICON_OK} ${pkg} 已安装" >> "$LOGFILE"
@@ -332,31 +333,31 @@ install_git_adb() {
     case "${OS_ID}" in
         debian|ubuntu)
             if ! apt-get -qq update >> "$LOGFILE" 2>&1; then
-                end_step "${ICON_ERROR}" "依赖库更新错误，详情请阅读日志：${LOGFILE}" "${RED}"
+                end_step "${ICON_ERROR}" "依赖更新错误，详情请阅读日志：${LOGFILE}" "${RED}"
                 exit 1
             fi
             if ! apt-get -qq install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
-                end_step "${ICON_ERROR}" "依赖库安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+                end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
                 exit 1
             fi ;;
         arch)
             if ! pacman -Syy --noconfirm "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
-                end_step "${ICON_ERROR}" "依赖库安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+                end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
                 exit 1
             fi ;;
         centos|rhel|fedora)
             if command -v dnf &>/dev/null; then
                 if ! dnf -q makecache >> "$LOGFILE" 2>&1; then
-                    end_step "${ICON_ERROR}" "依赖库更新错误，详情请阅读日志：${LOGFILE}" "${RED}"
+                    end_step "${ICON_ERROR}" "依赖更新错误，详情请阅读日志：${LOGFILE}" "${RED}"
                     exit 1
                 fi
                 if ! dnf -q install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
-                    end_step "${ICON_ERROR}" "依赖库安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+                    end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
                     exit 1
                 fi
             else
                 if ! yum -q install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
-                    end_step "${ICON_ERROR}" "依赖库安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+                    end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
                     exit 1
                 fi
             fi ;;
@@ -412,42 +413,52 @@ version = "0.1.0"
 [tasks]
 start = "python gui.py"
 [dependencies]
+libglib = "*"
+libgomp = "*"
+libgl = "*"
+xorg-libsm = "*"
+xorg-libxrender = "*"
+xorg-libxext = "*"
 python = "==3.7.6"
 av = ">=8.0.3,<9"
-[pypi-dependencies]
 numpy = "==1.21.6"
 scipy = "==1.4.1"
 pillow = "*"
-opencv-python = "*"
+opencv = "*"
 imageio = "==2.27.0"
-adbutils = "==0.11.0"
-uiautomator2 = "==2.16.17"
-uiautomator2cache = "==0.3.0.1"
 wrapt = "==1.13.1"
 retrying = "*"
 lz4 = "*"
-av = "*"
 psutil = "==5.9.3"
 rich = "==11.2.0"
 tqdm = "*"
-jellyfish = "==0.11.2"
 pyyaml = "*"
 inflection = "*"
-pydantic = "*"
-aiofiles = "*"
 prettytable = "==2.2.1"
-anyio = "==1.3.1"
-onepush = "==1.4.0"
 pycryptodome = "==3.9.9"
-pypresence = "==4.2.1"
-cnocr = "==2.0.0"
-mxnet = "==1.6.0"
-pywebio = "==1.6.2"
 starlette = "==0.14.2"
-uvicorn = { version = "==0.17.6", extras = ["standard"] }
-alas-webapp = "==0.3.7"
-zerorpc = "==0.6.3"
 pyzmq = "==22.3.0"
+aiofiles = "*"
+uvicorn = "==0.17.6"
+httptools = "*"
+uvloop = "*"
+websockets = "*"
+h11 = "*"
+python-dotenv = "*"
+[pypi-dependencies]
+anyio = "==1.3.1"
+adbutils = "==0.11.0"
+uiautomator2 = "==2.16.17"
+uiautomator2cache = "==0.3.0.1"
+onepush = "==1.4.0"
+pypresence = "==4.2.1"
+cnocr = "==1.2.3"
+mxnet = "==1.6.0"
+jellyfish = "==0.11.2"
+pydantic = "*"
+pywebio = "==1.6.2"
+zerorpc = "==0.6.3"
+alas-webapp = "==0.3.7"
 PIXI_EOF
 
     if [[ -d ".pixi/envs/alas" || -f "pixi.lock" ]]; then
@@ -561,12 +572,15 @@ do_uninstall() {
     echo_line "  ${ICON_WARN}  ${YELLOW}  - 启动脚本: ${SCRIPT_OUT_DIR}/run_alas.sh${NC}"
     echo_line "  ${ICON_INFO}  ${GREEN}  依赖库 (git, adb, pixi) 不会被删除${NC}"
     echo_line ""
-    echo -n "  确认？[yes/NO] "
-    read -r CONFIRM < /dev/tty
-    if [[ "${CONFIRM}" != "yes" && "${CONFIRM}" != "YES" ]]; then
-        echo_line "  ${ICON_INFO}  已取消卸载"
-        exit 0
-    fi
+    while true; do
+        echo -n "  确认继续吗？ [yes/N] ："
+        read -r CONFIRM < /dev/tty
+        case "${CONFIRM}" in
+            yes|YES) break ;;
+            no|NO|n|N) echo_line "  ${ICON_INFO}  已取消卸载"; exit 0 ;;
+            *) echo_line "  ${ICON_WARN}  无效输入，请输入 yes 或 N" "${YELLOW}" ;;
+        esac
+    done
 
     echo_line ""
 
@@ -609,7 +623,9 @@ do_uninstall() {
 main() {
     if [[ "${UNINSTALL}" == true ]]; then
         do_uninstall
-        rm -f "$LOGFILE"
+        if [[ "${KEEP_LOG}" == false ]]; then
+            rm -f "$LOGFILE"
+        fi
         exit 0
     fi
 
@@ -625,7 +641,11 @@ main() {
     configure_service
 
     print_completion
-    rm -f "$LOGFILE"
+    if [[ "${KEEP_LOG}" == false ]]; then
+        rm -f "$LOGFILE"
+    else
+        echo_line "  ${ICON_INFO}  日志已保存至：${LOGFILE}"
+    fi
 }
 
 main
