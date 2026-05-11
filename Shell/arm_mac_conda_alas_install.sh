@@ -20,7 +20,9 @@ fi
 LOGFILE="/tmp/alas_install.log"
 touch "$LOGFILE" || { echo "无法创建日志文件 $LOGFILE"; exit 1; }
 
-# 调试追踪 (set -x) 输出到 stderr (终端)，日志文件只接受 _log_message 的结构化记录
+# 调试追踪 (set -x) 输出到 /dev/null，终端和日志文件均不可见
+exec 9>/dev/null
+BASH_XTRACEFD=9
 PS4='+$(date "+%H:%M:%S.%3N | DEBUG  | ")'
 set -x
 
