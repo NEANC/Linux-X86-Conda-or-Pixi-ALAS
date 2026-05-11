@@ -48,16 +48,16 @@ rm Miniforge3-Linux-x86_64.sh
 > [!NOTE]
 > [Git](https://git-scm.com/) 和 [Adb](https://developer.android.google.cn/tools/adb) 是 ALAS 运行所需工具
 
-## 2. 安装 Git 及 Adb，及相关依赖库
+## 2. 安装 Git 及 Adb
 
-1. 安装 Git 和 Adb，及相关依赖库
+1. 安装 Git 和 Adb
 
 <details open>
   <summary> Debian/Ubuntu </summary>
 
 ```bash
-# 更新软件包列表并安装 Git 和 Adb，及相关依赖库
-apt update && apt install -y git adb libgomp1 libgl1 libglib2.0-0t64 libsm6 libxrender1 libxext6
+# 更新软件包列表并安装 Git 和 Adb
+apt update && apt install -y git adb
 ```
 
 </details>
@@ -66,7 +66,7 @@ apt update && apt install -y git adb libgomp1 libgl1 libglib2.0-0t64 libsm6 libx
   <summary> Arch Linux </summary>
 
 ```bash
-pacman -Syy --noconfirm git android-tools libgomp mesa glib2 libsm libxrender libxext
+pacman -Syy --noconfirm git android-tools
 ```
 
 </details>
@@ -75,9 +75,9 @@ pacman -Syy --noconfirm git android-tools libgomp mesa glib2 libsm libxrender li
   <summary> CentOS/RHEL/Fedora </summary>
 
 ```bash
-dnf -q makecache && dnf -y install git android-tools libgomp mesa-libGL glib2 libSM libXrender libXext
+dnf -q makecache && dnf -y install git android-tools
 
-yum install -y git android-tools libgomp mesa-libGL glib2 libSM libXrender libXext
+yum install -y git android-tools
 ```
 
 </details>

@@ -20,6 +20,37 @@ fi
 LOGFILE="/tmp/alas_install.log"
 touch "$LOGFILE" || { echo "无法创建日志文件 $LOGFILE"; exit 1; }
 
+# 调试追踪 (set -x) 输出到 stderr (终端)，日志文件只接受 _log_message 的结构化记录
+PS4='+$(date "+%H:%M:%S.%3N | DEBUG  | ")'
+set -x
+
+# ---------------------------- 日志格式化 ----------------------------
+# 格式: LEVEL | HH:MM:SS.mmm | message
+# (等效于 Python: '%(levelname)s | %(asctime)s.%(msecs)03d | %(message)s', datefmt='%H:%M:%S')
+_LOG_DATEFMT='%H:%M:%S'
+
+_log_message() {
+    local level="$1"
+    local msg="$2"
+    local timestamp
+    timestamp=$(date "+${_LOG_DATEFMT}.%3N")
+    echo "${level} | ${timestamp} | ${msg}" >> "$LOGFILE"
+}
+
+_log_exec() {
+    local step_name="$1"
+    shift
+    _log_message "EXEC" "▶ ${step_name}: $*"
+    "$@" >> "$LOGFILE" 2>&1
+    local ret=$?
+    if [[ $ret -ne 0 ]]; then
+        _log_message "ERROR" "✗ ${step_name}: 命令失败 (exit ${ret})"
+    else
+        _log_message "OK"    "✓ ${step_name}: 命令完成"
+    fi
+    return $ret
+}
+
 # ---------------------------- 加载图标 ----------------------------
 
 ICON_INFO="💡"
@@ -48,6 +79,7 @@ NC='\033[0m'
 # ---------------------------- 全局变量 ----------------------------
 SKIP_SERVICE=false
 UNINSTALL=false
+KEEP_LOG=false
 DEPLOY_TEMPLATE="config/deploy.template-linux.yaml"
 USE_CN_MIRROR=false
 GH_PROXY=""
@@ -71,15 +103,14 @@ usage() {
   -t TEMPLATE            控制使用的 deploy 模板与国内镜像源
   -S, --skip-service     跳过 systemd 开机自启服务配置
   --uninstall            反向安装：停止并删除 ALAS、虚拟环境、开机自启
+  -l, --log              保留安装日志，不自动删除
   -h, --help             显示帮助信息
 EOF
 }
 
 # ---------------------------- 输出与日志函数 ----------------------------
 echo_line() {
-    local term_line="$1"
-    echo -e "$term_line"
-    echo -e "$(echo -e "$term_line" | sed 's/\x1b\[[0-9;]*m//g')" >> "$LOGFILE"
+    echo -e "$1"
 }
 
 log_out() {
@@ -87,6 +118,13 @@ log_out() {
     local color="$2"
     local msg="$3"
     echo_line "  ${icon}  ${color}${msg}${NC}"
+    local level="INFO"
+    case "$icon" in
+        "${ICON_OK}")    level="OK"      ;;
+        "${ICON_WARN}")  level="WARNING" ;;
+        "${ICON_ERROR}") level="ERROR"   ;;
+    esac
+    _log_message "${level}" "${msg}"
 }
 
 log_info()    { log_out "${ICON_INFO}"  "${GREEN}"  "$1"; }
@@ -104,28 +142,38 @@ _cleanup_spinner() {
 }
 
 start_step() {
+    set +x
     _cleanup_spinner
     local msg="$1"
-    echo "$(date '+%Y-%m-%d %H:%M:%S') ${msg}" >> "$LOGFILE"
+    _log_message "START" "${msg}"
     local spin_chars=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
     local idx=0
     {
         while true; do
             printf "\r${YELLOW}%s  %s${NC}\033[K" "${spin_chars[$idx]}" "$msg"
             idx=$(( (idx + 1) % 10 ))
-            sleep 0.35 2>/dev/null || true
+            sleep 0.20 2>/dev/null || true
         done
     } &
     _SPINNER_PID=$!
+    set -x
 }
 
 end_step() {
+    set +x
     local icon="$1"
     local msg="$2"
     local color="${3:-${GREEN}}"
     _cleanup_spinner
     printf "\r${icon}  ${color}%s${NC}\033[K\n" "$msg"
-    echo "$(date '+%Y-%m-%d %H:%M:%S') ${icon} ${msg}" >> "$LOGFILE"
+    set -x
+    local level="INFO"
+    case "$icon" in
+        "${ICON_OK}")    level="OK"      ;;
+        "${ICON_WARN}")  level="WARNING" ;;
+        "${ICON_ERROR}") level="ERROR"   ;;
+    esac
+    _log_message "${level}" "${msg}"
 }
 
 # ---------------------------- 中断信号处理 ----------------------------
@@ -162,6 +210,7 @@ while [[ $# -gt 0 ]]; do
             fi
             shift 2 ;;
         --uninstall) UNINSTALL=true; shift ;;
+        -l|--log) KEEP_LOG=true; shift ;;
         -S|--skip-service) SKIP_SERVICE=true; shift ;;
         -h|--help) usage; exit 0 ;;
         *) log_error "未知参数: $1"; usage; exit 1 ;;
@@ -242,45 +291,62 @@ install_miniforge() {
     if command -v conda &>/dev/null; then
         CONDA_VER=$(conda --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')
         CONDA_BIN=$(command -v conda)
+        _log_message "OK" "Conda 已就绪: ${CONDA_VER}"
         end_step "${ICON_OK}" "Conda 已就绪: ${CONDA_VER}"
         return
     fi
 
     if [[ -x "${CONDA_BIN}" ]]; then
         CONDA_VER=$("${CONDA_BIN}" --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')
+        _log_message "OK" "Conda 已安装: ${CONDA_VER}"
         end_step "${ICON_OK}" "Conda 已安装: ${CONDA_VER}"
         return
     fi
 
-    wget -q -O /tmp/Miniforge3-Linux-x86_64.sh \
-        "${GH_PROXY}https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh" >> "$LOGFILE" 2>&1
+    _log_message "EXEC" "▶ 下载 Miniforge3-Linux-x86_64.sh"
+    if ! wget -q -O /tmp/Miniforge3-Linux-x86_64.sh \
+        "${GH_PROXY}https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh" >> "$LOGFILE" 2>&1; then
+        _log_message "ERROR" "✗ Miniforge 下载失败"
+        end_step "${ICON_ERROR}" "Miniforge 下载错误，详情请阅读日志：${LOGFILE}" "${RED}"
+        exit 1
+    fi
+    _log_message "OK" "✓ Miniforge 下载完成"
 
-    bash /tmp/Miniforge3-Linux-x86_64.sh -b >> "$LOGFILE" 2>&1
+    _log_message "EXEC" "▶ 安装 Miniforge"
+    if ! bash /tmp/Miniforge3-Linux-x86_64.sh -b >> "$LOGFILE" 2>&1; then
+        _log_message "ERROR" "✗ Miniforge 安装失败"
+        end_step "${ICON_ERROR}" "Miniforge 安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+        rm -f /tmp/Miniforge3-Linux-x86_64.sh
+        exit 1
+    fi
+    _log_message "OK" "✓ Miniforge 安装完成"
     rm -f /tmp/Miniforge3-Linux-x86_64.sh
 
     if [[ -x "${CONDA_BIN}" ]]; then
         CONDA_VER=$("${CONDA_BIN}" --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')
+        _log_message "OK" "Miniforge 已安装: ${CONDA_VER}"
         end_step "${ICON_OK}" "Miniforge 已安装: ${CONDA_VER}"
     else
+        _log_message "ERROR" "Miniforge 安装后未找到 conda 可执行文件"
         end_step "${ICON_ERROR}" "Miniforge 安装失败，请查看日志: ${LOGFILE}" "${RED}"
         exit 1
     fi
 }
 
-# ---------------------------- 第2步: 安装 Git 和 ADB 及相关依赖库 ----------------------------
+# ---------------------------- 第2步: 安装 Git 和 ADB ----------------------------
 install_git_adb() {
-    start_step "正在检查依赖库..."
+    start_step "正在检查依赖..."
 
     local missing_pkgs=()
 
     case "${OS_ID}" in
         debian|ubuntu)
-            local check_list=(git adb libgomp1 libgl1 libglib2.0-0t64 libsm6 libxrender1 libxext6)
+            local check_list=(git adb)
             for pkg in "${check_list[@]}"; do
                 if dpkg -s "$pkg" &>/dev/null; then
-                    echo "$(date '+%Y-%m-%d %H:%M:%S')   ${ICON_OK} ${pkg} 已安装" >> "$LOGFILE"
+                    _log_message "OK" "依赖已存在: ${pkg}"
                 else
-                    echo "$(date '+%Y-%m-%d %H:%M:%S')   ${ICON_WARN} ${pkg} 未安装" >> "$LOGFILE"
+                    _log_message "WARNING" "依赖缺失: ${pkg}"
                     missing_pkgs+=("$pkg")
                 fi
             done
@@ -289,20 +355,20 @@ install_git_adb() {
             local check_list=(git android-tools)
             for pkg in "${check_list[@]}"; do
                 if pacman -Q "$pkg" &>/dev/null; then
-                    echo "$(date '+%Y-%m-%d %H:%M:%S')   ${ICON_OK} ${pkg} 已安装" >> "$LOGFILE"
+                    _log_message "OK" "依赖已存在: ${pkg}"
                 else
-                    echo "$(date '+%Y-%m-%d %H:%M:%S')   ${ICON_WARN} ${pkg} 未安装" >> "$LOGFILE"
+                    _log_message "WARNING" "依赖缺失: ${pkg}"
                     missing_pkgs+=("$pkg")
                 fi
             done
             ;;
         centos|rhel|fedora)
-            local check_list=(git adb libgomp mesa-libGL glib2 libSM libXrender libXext)
+            local check_list=(git adb)
             for pkg in "${check_list[@]}"; do
                 if rpm -q "$pkg" &>/dev/null; then
-                    echo "$(date '+%Y-%m-%d %H:%M:%S')   ${ICON_OK} ${pkg} 已安装" >> "$LOGFILE"
+                    _log_message "OK" "依赖已存在: ${pkg}"
                 else
-                    echo "$(date '+%Y-%m-%d %H:%M:%S')   ${ICON_WARN} ${pkg} 未安装" >> "$LOGFILE"
+                    _log_message "WARNING" "依赖缺失: ${pkg}"
                     missing_pkgs+=("$pkg")
                 fi
             done
@@ -313,34 +379,70 @@ install_git_adb() {
     esac
 
     if [[ ${#missing_pkgs[@]} -eq 0 ]]; then
+        _log_message "OK" "Git: $(git --version 2>/dev/null)"
+        _log_message "OK" "ADB: $(adb --version 2>/dev/null | head -n1)"
         end_step "${ICON_OK}" "Git 已安装: $(git --version 2>/dev/null | awk '{print $NF}')"
         end_step "${ICON_OK}" "ADB 已安装: $(adb --version 2>/dev/null | head -n1 | awk '{print $NF}')"
-        echo "$(date '+%Y-%m-%d %H:%M:%S')   Git: $(git --version 2>/dev/null)" >> "$LOGFILE"
-        echo "$(date '+%Y-%m-%d %H:%M:%S')   ADB: $(adb --version 2>/dev/null | head -n1)" >> "$LOGFILE"
         return
     fi
 
-    start_step "正在安装缺失的依赖..."
+    start_step "正在安装缺失的依赖: ${missing_pkgs[*]}..."
 
     case "${OS_ID}" in
         debian|ubuntu)
-            apt-get -qq update >> "$LOGFILE" 2>&1
-            apt-get -qq install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1 ;;
+            _log_message "EXEC" "▶ apt-get update"
+            if ! apt-get -qq update >> "$LOGFILE" 2>&1; then
+                _log_message "ERROR" "✗ apt-get update 失败"
+                end_step "${ICON_ERROR}" "依赖更新错误，详情请阅读日志：${LOGFILE}" "${RED}"
+                exit 1
+            fi
+            _log_message "OK" "✓ apt-get update 完成"
+            _log_message "EXEC" "▶ apt-get install -y ${missing_pkgs[*]}"
+            if ! apt-get -qq install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
+                _log_message "ERROR" "✗ apt-get install 失败"
+                end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+                exit 1
+            fi
+            _log_message "OK" "✓ 依赖安装完成" ;;
         arch)
-            pacman -Syy --noconfirm "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1 ;;
+            _log_message "EXEC" "▶ pacman -Syy --noconfirm ${missing_pkgs[*]}"
+            if ! pacman -Syy --noconfirm "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
+                _log_message "ERROR" "✗ pacman 安装失败"
+                end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+                exit 1
+            fi
+            _log_message "OK" "✓ 依赖安装完成" ;;
         centos|rhel|fedora)
             if command -v dnf &>/dev/null; then
-                dnf -q makecache >> "$LOGFILE" 2>&1
-                dnf -q install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1
+                _log_message "EXEC" "▶ dnf makecache"
+                if ! dnf -q makecache >> "$LOGFILE" 2>&1; then
+                    _log_message "ERROR" "✗ dnf makecache 失败"
+                    end_step "${ICON_ERROR}" "依赖更新错误，详情请阅读日志：${LOGFILE}" "${RED}"
+                    exit 1
+                fi
+                _log_message "OK" "✓ dnf makecache 完成"
+                _log_message "EXEC" "▶ dnf install -y ${missing_pkgs[*]}"
+                if ! dnf -q install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
+                    _log_message "ERROR" "✗ dnf install 失败"
+                    end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+                    exit 1
+                fi
+                _log_message "OK" "✓ 依赖安装完成"
             else
-                yum -q install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1
+                _log_message "EXEC" "▶ yum install -y ${missing_pkgs[*]}"
+                if ! yum -q install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
+                    _log_message "ERROR" "✗ yum install 失败"
+                    end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+                    exit 1
+                fi
+                _log_message "OK" "✓ 依赖安装完成"
             fi ;;
     esac
 
+    _log_message "OK" "Git: $(git --version 2>/dev/null)"
+    _log_message "OK" "ADB: $(adb --version 2>/dev/null | head -n1)"
     end_step "${ICON_OK}" "Git 已安装: $(git --version 2>/dev/null | awk '{print $NF}')"
     end_step "${ICON_OK}" "ADB 已安装: $(adb --version 2>/dev/null | head -n1 | awk '{print $NF}')"
-    echo "$(date '+%Y-%m-%d %H:%M:%S')   Git: $(git --version 2>/dev/null)" >> "$LOGFILE"
-    echo "$(date '+%Y-%m-%d %H:%M:%S')   ADB: $(adb --version 2>/dev/null | head -n1)" >> "$LOGFILE"
 }
 
 # ---------------------------- 第3步: 克隆仓库 ----------------------------
@@ -349,6 +451,7 @@ clone_alas() {
 
     WORK_DIR="${INSTALL_DIR}"
     if [[ -d "${WORK_DIR}" ]]; then
+        _log_message "WARNING" "ALAS 目录已存在，跳过克隆: ${WORK_DIR}"
         end_step "${ICON_WARN}" "ALAS 目录已存在，跳过克隆" "${YELLOW}"
         cd "${WORK_DIR}"
         ALAS_DIR="${WORK_DIR}"
@@ -356,11 +459,18 @@ clone_alas() {
     fi
 
     REPO_URL="https://github.com/LmeSzinc/AzurLaneAutoScript.git"
+    _log_message "EXEC" "▶ git clone ${GH_PROXY}${REPO_URL} ${WORK_DIR}"
 
-    git clone "${GH_PROXY}${REPO_URL}" "${WORK_DIR}" >> "$LOGFILE" 2>&1
+    if ! git clone "${GH_PROXY}${REPO_URL}" "${WORK_DIR}" >> "$LOGFILE" 2>&1; then
+        _log_message "ERROR" "✗ 仓库克隆失败"
+        end_step "${ICON_ERROR}" "仓库克隆错误，详情请阅读日志：${LOGFILE}" "${RED}"
+        exit 1
+    fi
+    _log_message "OK" "✓ 仓库克隆完成"
     cd "${WORK_DIR}"
     ALAS_DIR="${WORK_DIR}"
 
+    _log_message "OK" "ALAS 目录: ${ALAS_DIR}"
     end_step "${ICON_OK}" "ALAS 仓库已克隆"
 }
 
@@ -370,16 +480,71 @@ setup_conda_env() {
 
     cd "${ALAS_DIR}"
     if [[ -f environment.yml ]]; then
+        _log_message "EXEC" "▶ 备份已有 environment.yml → environment.yml.bak"
         cp environment.yml environment.yml.bak
+        _log_message "OK" "✓ 备份完成"
     fi
 
     ENV_URL="https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Conda/environment.yml"
+    _log_message "EXEC" "▶ 生成 environment.yml"
 
-    wget -q -O environment.yml "${GH_PROXY}${ENV_URL}" >> "$LOGFILE" 2>&1
+    cat > environment.yml << 'YML_EOF'
+name: alas
+channels:
+  - conda-forge
+platforms:
+  - linux-64
+dependencies:
+  - libglib
+  - libgomp
+  - libgl
+  - xorg-libsm
+  - xorg-libxrender
+  - xorg-libxext
+  - python=3.7.6
+  - av>=8.0.3,<9
+  - numpy=1.16.6
+  - scipy=1.4.1
+  - pillow
+  - psutil=5.9.3
+  - pyyaml
+  - tqdm
+  - lz4
+  - pyzmq=22.3.0
+  - pip:
+    - opencv-python==4.5.5.62
+    - imageio==2.27.0
+    - adbutils==0.11.0
+    - uiautomator2==2.16.17
+    - uiautomator2cache==0.3.0.1
+    - wrapt==1.13.1
+    - retrying==1.3.3
+    - rich==11.2.0
+    - jellyfish==0.11.2
+    - inflection==0.5.1
+    - pydantic==1.9.2
+    - aiofiles==0.8.0
+    - prettytable==2.2.1
+    - anyio==1.3.1
+    - onepush==1.4.0
+    - pycryptodome==3.9.9
+    - pypresence==4.2.1
+    - cnocr==1.2.2
+    - mxnet==1.6.0
+    - pywebio==1.6.2
+    - starlette==0.14.2
+    - uvicorn==0.17.6
+    - websockets==10.4
+    - alas-webapp==0.3.7
+    - zerorpc==0.6.3
+YML_EOF
+    _log_message "OK" "✓ environment.yml 已生成"
 
-    eval "$("${CONDA_BIN}" shell.bash hook)" >> "$LOGFILE" 2>&1
+    set +x; eval "$("${CONDA_BIN}" shell.bash hook)" >> "$LOGFILE" 2>&1; set -x
+    _log_message "OK" "✓ Conda shell hook 已加载"
 
     if [[ "${USE_CN_MIRROR}" == true ]]; then
+        _log_message "EXEC" "▶ 配置国内镜像源"
         conda config --prepend channels https://mirror.nju.edu.cn/anaconda/cloud/conda-forge/ >> "$LOGFILE" 2>&1
         conda config --prepend channels https://mirror.nju.edu.cn/anaconda/pkgs/main/ >> "$LOGFILE" 2>&1
         conda config --append channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge/ >> "$LOGFILE" 2>&1
@@ -391,23 +556,37 @@ setup_conda_env() {
         export PIP_EXTRA_INDEX_URL="https://mirrors.aliyun.com/pypi/simple/ https://pypi.tuna.tsinghua.edu.cn/simple/"
         export PIP_TRUSTED_HOST="pypi.mirrors.ustc.edu.cn mirrors.aliyun.com pypi.tuna.tsinghua.edu.cn"
         export PIP_TIMEOUT=60
+        _log_message "OK" "✓ 国内镜像源已配置"
     fi
 
     if conda env list 2>/dev/null | grep -q "^alas "; then
-        conda env remove -n alas -y >> "$LOGFILE" 2>&1 || \
-        rm -rf "$(conda info --base 2>/dev/null)/envs/alas" >> "$LOGFILE" 2>&1
+        _log_message "WARNING" "检测到已有 alas 环境，正在移除..."
+        _log_exec "移除旧环境 (方法1: conda env remove)" conda env remove -n alas -y || \
+        _log_exec "移除旧环境 (方法2: rm -rf)" rm -rf "$(conda info --base 2>/dev/null)/envs/alas"
+        _log_message "OK" "✓ 旧环境已移除"
     fi
 
-    conda env create -f environment.yml >> "$LOGFILE" 2>&1
+    _log_message "EXEC" "▶ conda env create -f environment.yml (这可能需要较长时间)"
+    if ! conda env create -f environment.yml >> "$LOGFILE" 2>&1; then
+        _log_message "ERROR" "✗ conda env create 失败"
+        end_step "${ICON_ERROR}" "虚拟环境构建错误，详情请阅读日志：${LOGFILE}" "${RED}"
+        exit 1
+    fi
+    _log_message "OK" "✓ conda env create 完成"
 
     unset PIP_INDEX_URL PIP_EXTRA_INDEX_URL
 
     # 检查是否有依赖缺失，如有则逐条尝试独立安装
+    _log_message "EXEC" "▶ 验证环境: python -c 'import alas_webapp'"
     if ! conda run -n alas python -c "import alas_webapp" >> "$LOGFILE" 2>&1; then
-        echo "$(date '+%Y-%m-%d %H:%M:%S')   尝试修复缺失依赖..." >> "$LOGFILE"
+        _log_message "WARNING" "⚠ 依赖完整性检查未通过，尝试修复..."
         conda env update -n alas --file environment.yml >> "$LOGFILE" 2>&1 || true
+        _log_message "OK" "✓ 依赖修复完成"
+    else
+        _log_message "OK" "✓ 依赖完整性检查通过"
     fi
 
+    _log_message "OK" "Conda 虚拟环境已构建"
     end_step "${ICON_OK}" "虚拟环境已构建"
 }
 
@@ -417,22 +596,31 @@ configure_deploy() {
 
     cd "${ALAS_DIR}"
     if [[ -f config/deploy.yaml ]]; then
+        _log_message "EXEC" "▶ 备份已有 deploy.yaml → deploy.yaml.bak"
         cp config/deploy.yaml config/deploy.yaml.bak
+        _log_message "OK" "✓ 备份完成"
     fi
 
     TEMPLATE="${DEPLOY_TEMPLATE}"
 
     if [[ -f "${TEMPLATE}" ]]; then
+        _log_message "EXEC" "▶ cp ${TEMPLATE} config/deploy.yaml"
         cp "${TEMPLATE}" config/deploy.yaml
-        end_step "${ICON_OK}" "cp deploy.template-linux.yaml config/deploy.yaml"
+        _log_message "OK" "✓ deploy.yaml 已配置"
+        end_step "${ICON_OK}" "cp ${TEMPLATE} config/deploy.yaml"
     else
-        end_step "${ICON_WARN}" "模板文件 ${TEMPLATE} 不存在，请手动执行 cp deploy.template-linux-cn.yaml config/deploy.yaml" "${YELLOW}"
+        _log_message "WARNING" "模板文件 ${TEMPLATE} 不存在，跳过"
+        end_step "${ICON_WARN}" "模板文件 ${TEMPLATE} 不存在，请手动执行 cp ${TEMPLATE} config/deploy.yaml" "${YELLOW}"
     fi
 }
 
 # ---------------------------- 第6步: 创建启动脚本 ----------------------------
 create_launcher() {
     start_step "正在生成启动脚本..."
+
+    _log_message "EXEC" "▶ 生成 ${SCRIPT_OUT_DIR}/run_alas.sh"
+    _log_message "INFO" "  Conda: ${CONDA_BIN}"
+    _log_message "INFO" "  ALAS 目录: ${ALAS_DIR}"
 
     cat > "${SCRIPT_OUT_DIR}/run_alas.sh" <<EOF
 #!/bin/bash
@@ -442,6 +630,7 @@ cd ${ALAS_DIR}
 python gui.py
 EOF
     chmod +x "${SCRIPT_OUT_DIR}/run_alas.sh"
+    _log_message "OK" "✓ 启动脚本已生成: ${SCRIPT_OUT_DIR}/run_alas.sh"
 
     end_step "${ICON_OK}" "启动脚本已生成: ${SCRIPT_OUT_DIR}/run_alas.sh"
 }
@@ -449,11 +638,17 @@ EOF
 # ---------------------------- 第7步: systemd 服务 ----------------------------
 configure_service() {
     if [[ "${SKIP_SERVICE}" == true ]]; then
+        _log_message "INFO" "已跳过 systemd 服务配置 (--skip-service)"
         end_step "${ICON_INFO}" "已跳过 systemd 服务配置"
         return
     fi
 
     start_step "正在配置 systemd 开机自启..."
+
+    _log_message "EXEC" "▶ 生成 /etc/systemd/system/run_alas.service"
+    _log_message "INFO" "  用户: ${USER_NAME}, 组: ${USER_GROUP}"
+    _log_message "INFO" "  工作目录: ${ALAS_DIR}"
+    _log_message "INFO" "  启动命令: ${SCRIPT_OUT_DIR}/run_alas.sh"
 
     cat > /etc/systemd/system/run_alas.service <<EOF
 [Unit]
@@ -472,14 +667,26 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 EOF
+    _log_message "OK" "✓ 服务单元文件已创建"
     chmod 644 /etc/systemd/system/run_alas.service
+
+    _log_message "EXEC" "▶ systemctl daemon-reload"
     systemctl daemon-reload >> "$LOGFILE" 2>&1
+    _log_message "OK" "✓ daemon-reload 完成"
+
+    _log_message "EXEC" "▶ systemctl enable run_alas.service"
     systemctl enable run_alas.service >> "$LOGFILE" 2>&1
+    _log_message "OK" "✓ 服务已启用开机自启"
+
+    _log_message "EXEC" "▶ systemctl start run_alas.service"
     systemctl start run_alas.service >> "$LOGFILE" 2>&1
+    _log_message "OK" "✓ 服务已启动"
 
     if systemctl is-active --quiet run_alas.service; then
+        _log_message "OK" "systemd 服务运行正常"
         end_step "${ICON_OK}" "systemd 服务已启动并设为开机自启"
     else
+        _log_message "ERROR" "systemd 服务启动失败"
         end_step "${ICON_ERROR}" "systemd 服务启动失败，请查看日志: ${LOGFILE}" "${RED}"
     fi
 }
@@ -494,54 +701,81 @@ print_completion() {
 # ---------------------------- 反向安装（卸载） ----------------------------
 do_uninstall() {
     echo_line ""
-    echo_line "  ${ICON_WARN}  ${YELLOW}  即将执行 ALAS 卸载，将删除以下内容：${NC}"
+    echo_line "  ${ICON_WARN}  ${YELLOW}即将执行 ALAS 卸载，将删除以下内容：${NC}"
     echo_line "  ${ICON_WARN}  ${YELLOW}  - 开机自启服务${NC}"
     echo_line "  ${ICON_WARN}  ${YELLOW}  - Conda 虚拟环境 (alas)${NC}"
     echo_line "  ${ICON_WARN}  ${YELLOW}  - ALAS 目录: ${INSTALL_DIR}${NC}"
     echo_line "  ${ICON_WARN}  ${YELLOW}  - 启动脚本: ${SCRIPT_OUT_DIR}/run_alas.sh${NC}"
     echo_line "  ${ICON_INFO}  ${GREEN}  依赖库 (git, adb, conda) 不会被删除${NC}"
     echo_line ""
-    echo -n "  确认？[yes/NO] "
-    read -r CONFIRM
-    if [[ "${CONFIRM}" != "yes" && "${CONFIRM}" != "YES" ]]; then
-        echo_line "  ${ICON_INFO}  已取消卸载"
-        exit 0
-    fi
+    _log_message "WARNING" "用户确认卸载流程开始"
+    while true; do
+        echo -n "  确认继续吗？ [yes/N] ："
+        read -r CONFIRM < /dev/tty
+        case "${CONFIRM}" in
+            yes|YES)
+                _log_message "INFO" "用户已确认卸载"
+                break ;;
+            no|NO|n|N)
+                _log_message "INFO" "用户取消卸载"
+                echo_line "  ${ICON_INFO}  已取消卸载"; exit 0 ;;
+            *)
+                echo_line "  ${ICON_WARN}  无效输入，请输入 yes 或 N" "${YELLOW}" ;;
+        esac
+    done
 
     echo_line ""
 
     start_step "正在停止 ALAS 服务..."
     if systemctl is-active --quiet run_alas.service 2>/dev/null; then
+        _log_message "EXEC" "▶ systemctl stop run_alas.service"
         systemctl stop run_alas.service >> "$LOGFILE" 2>&1
+        _log_message "OK" "✓ 服务已停止"
     fi
     if systemctl is-enabled --quiet run_alas.service 2>/dev/null; then
+        _log_message "EXEC" "▶ systemctl disable run_alas.service"
         systemctl disable run_alas.service >> "$LOGFILE" 2>&1
+        _log_message "OK" "✓ 服务已禁用"
     fi
     if [[ -f /etc/systemd/system/run_alas.service ]]; then
+        _log_message "EXEC" "▶ 删除服务单元文件"
         rm -f /etc/systemd/system/run_alas.service
         systemctl daemon-reload >> "$LOGFILE" 2>&1
+        _log_message "OK" "✓ 服务单元文件已删除"
     fi
     end_step "${ICON_OK}" "服务已停止并移除"
 
     start_step "正在清理 Conda 虚拟环境..."
     CONDA_BIN="${HOME}/miniforge3/bin/conda"
     command -v conda &>/dev/null && CONDA_BIN=$(command -v conda)
-    eval "$("${CONDA_BIN}" shell.bash hook)" >> "$LOGFILE" 2>&1
+    set +x; eval "$("${CONDA_BIN}" shell.bash hook)" >> "$LOGFILE" 2>&1; set -x
     if conda env list 2>/dev/null | grep -q "^alas "; then
-        conda env remove -n alas -y >> "$LOGFILE" 2>&1 || \
-        rm -rf "$(conda info --base 2>/dev/null)/envs/alas" >> "$LOGFILE" 2>&1
+        _log_message "EXEC" "▶ conda env remove -n alas"
+        _log_exec "移除 Conda 环境 (方法1: conda env remove)" conda env remove -n alas -y || \
+        _log_exec "移除 Conda 环境 (方法2: rm -rf)" rm -rf "$(conda info --base 2>/dev/null)/envs/alas"
+        _log_message "OK" "✓ Conda 环境已移除"
+    else
+        _log_message "INFO" "未检测到 alas 环境，跳过"
     fi
     end_step "${ICON_OK}" "虚拟环境已清理"
 
     start_step "正在删除 ALAS 目录..."
+    _log_message "EXEC" "▶ rm -rf ${INSTALL_DIR}"
     rm -rf "${INSTALL_DIR}"
+    _log_message "OK" "✓ ALAS 目录已删除"
     end_step "${ICON_OK}" "目录已删除"
 
     start_step "正在删除启动脚本..."
+    _log_message "EXEC" "▶ rm -f ${SCRIPT_OUT_DIR}/run_alas.sh"
     rm -f "${SCRIPT_OUT_DIR}/run_alas.sh"
+    _log_message "OK" "✓ 启动脚本已删除"
     end_step "${ICON_OK}" "启动脚本已删除"
 
-    rm -f "$LOGFILE"
+    if [[ "${KEEP_LOG}" == false ]]; then
+        _log_message "INFO" "清理日志文件: ${LOGFILE}"
+        rm -f "$LOGFILE"
+    fi
+    _log_message "OK" "ALAS 卸载完成"
     echo_line ""
     echo_line "${ICON_OK}  ${GREEN}ALAS 卸载完成${NC}"
     echo_line ""
@@ -567,7 +801,13 @@ main() {
     configure_service
 
     print_completion
-    rm -f "$LOGFILE"
+    if [[ "${KEEP_LOG}" == false ]]; then
+        _log_message "INFO" "安装完成，清理日志文件: ${LOGFILE}"
+        rm -f "$LOGFILE"
+    else
+        _log_message "INFO" "安装完成，日志已保存至: ${LOGFILE}"
+        echo_line "  ${ICON_INFO}  日志已保存至：${LOGFILE}"
+    fi
 }
 
 main
