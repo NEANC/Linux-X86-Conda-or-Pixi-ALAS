@@ -155,7 +155,7 @@ ALAS_DIR=""
 CONDA_BIN=""
 USER_NAME="$(whoami)"
 _SPINNER_PID=""
-SKIP_SERVICE=false
+SKIP_SERVICE=true
 UNINSTALL=false
 KEEP_LOG=false
 
@@ -168,7 +168,7 @@ usage() {
   -d, --dir DIR          指定 ALAS 安装目录 (默认: ~/AzurLaneAutoScript)
   -s, --script-dir DIR   指定脚本输出目录 (默认: ~/AzurLaneAutoScript)
   -t TEMPLATE            控制使用的 deploy 模板与国内镜像源
-  -S, --skip-service     跳过开机自启服务配置
+  -S, --setup-service    配置 ALAS 开机自启
   --uninstall            反向安装：停止并删除 ALAS、虚拟环境、开机自启
   -l, --log              保留安装日志，不自动删除
   -h, --help             显示帮助信息
@@ -274,7 +274,7 @@ while [[ $# -gt 0 ]]; do
             shift 2 ;;
         --uninstall) UNINSTALL=true; shift ;;
         -l|--log) KEEP_LOG=true; shift ;;
-        -S|--skip-service) SKIP_SERVICE=true; shift ;;
+        -S|--setup-service) SKIP_SERVICE=false; shift ;;
         -h|--help) usage; exit 0 ;;
         *) log_error "未知参数: $1"; usage; exit 1 ;;
     esac
@@ -323,8 +323,8 @@ print_header() {
     elif [[ "${RAM_SIZE_MIB}" -lt 16000 ]]; then
         ram_color="${BLUE}"
     fi
-    echo_line "  ${ICON_RAM}  内存大小       : ${ram_color}${RAM_SIZE_MIB} MiB${NC}"
 
+    echo_line "  ${ICON_RAM}  内存大小       : ${ram_color}${RAM_SIZE_MIB} MiB${NC}"
     echo_line "  ${ICON_USER}  当前用户       : ${GREEN}${USER_NAME}${NC}"
     echo_line ""
 }
@@ -777,13 +777,12 @@ EOF
 
 # ---------------------------- 第7步: 开机自启 (LaunchAgent) ----------------------------
 configure_service() {
-    if [[ "${SKIP_SERVICE}" == true ]]; then
-        _log_message "INFO" "已跳过开机自启服务配置 (--skip-service)"
-        end_step "${ICON_INFO}" "已跳过开机自启服务配置"
-        return
-    fi
-
     start_step "正在配置开机自启..."
+
+    local run_at_load="false"
+    if [[ "${SKIP_SERVICE}" == false ]]; then
+        run_at_load="true"
+    fi
 
     local plist_dir="${HOME}/Library/LaunchAgents"
     mkdir -p "${plist_dir}"
@@ -791,7 +790,7 @@ configure_service() {
     _log_message "EXEC" "▶ 生成 ${plist_dir}/com.alas.run.plist"
     _log_message "INFO" "  用户: ${USER_NAME}"
     _log_message "INFO" "  ALAS 目录: ${ALAS_DIR}"
-    _log_message "INFO" "  启动命令: ${SCRIPT_OUT_DIR}/run_alas.sh"
+    _log_message "INFO" "  RunAtLoad: ${run_at_load}"
 
     cat > "${plist_dir}/com.alas.run.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -805,12 +804,13 @@ configure_service() {
         <string>${SCRIPT_OUT_DIR}/run_alas.sh</string>
     </array>
     <key>RunAtLoad</key>
-    <true/>
+    <${run_at_load}/>
     <key>KeepAlive</key>
     <false/>
 </dict>
 </plist>
 EOF
+    chmod 644 "${plist_dir}/com.alas.run.plist"
     _log_message "OK" "✓ plist 文件已创建"
 
     _log_message "EXEC" "▶ launchctl bootout (卸载旧服务)"
@@ -820,10 +820,18 @@ EOF
 
     if launchctl list 2>/dev/null | grep -q "com.alas.run"; then
         _log_message "OK" "launchd 服务已注册"
-        end_step "${ICON_OK}" "开机自启服务已配置"
+        _log_message "EXEC" "▶ launchctl stop/start com.alas.run（立即启动）"
+        launchctl stop com.alas.run 2>/dev/null || true
+        launchctl start com.alas.run
+        _log_message "OK" "✓ ALAS 服务已启动"
+        if [[ "${run_at_load}" == true ]]; then
+            end_step "${ICON_OK}" "开机自启服务已配置，请在下次重启后验证 ALAS 是否正常运行"
+        else
+            end_step "${ICON_OK}" "系统服务已配置，请在下次重启后双击 运行ALAS.command 启动 ALAS"
+        fi
     else
         _log_message "WARNING" "launchd 服务可能未成功注册"
-        end_step "${ICON_WARN}" "服务配置已完成，请重启后验证" "${YELLOW}"
+        end_step "${ICON_WARN}" "未成功注册 launchd 服务，请检查 plist 文件" "${YELLOW}"
     fi
 }
 
