@@ -20,12 +20,6 @@ fi
 LOGFILE="/tmp/alas_install.log"
 touch "$LOGFILE" || { echo "无法创建日志文件 $LOGFILE"; exit 1; }
 
-# 调试追踪 (set -x) 输出到 /dev/null，终端和日志文件均不可见
-exec 9>/dev/null
-BASH_XTRACEFD=9
-PS4='+$(date "+%H:%M:%S.%3N | DEBUG  | ")'
-set -x
-
 # ---------------------------- 日志格式化 ----------------------------
 # 格式: LEVEL | HH:MM:SS.mmm | message
 # (等效于 Python: '%(levelname)s | %(asctime)s.%(msecs)03d | %(message)s', datefmt='%H:%M:%S')
@@ -88,7 +82,7 @@ ALAS_DIR=""
 CONDA_BIN=""
 USER_NAME="$(whoami)"
 _SPINNER_PID=""
-SKIP_SERVICE=false
+SKIP_SERVICE=true
 UNINSTALL=false
 KEEP_LOG=false
 
@@ -101,7 +95,7 @@ usage() {
   -d, --dir DIR          指定 ALAS 安装目录 (默认: ~/AzurLaneAutoScript)
   -s, --script-dir DIR   指定脚本输出目录 (默认: ~/AzurLaneAutoScript)
   -t TEMPLATE            控制使用的 deploy 模板与国内镜像源
-  -S, --skip-service     跳过开机自启服务配置
+  -S, --setup-service    配置 ALAS 开机自启
   --uninstall            反向安装：停止并删除 ALAS、虚拟环境、开机自启
   -l, --log              保留安装日志，不自动删除
   -h, --help             显示帮助信息
@@ -142,7 +136,6 @@ _cleanup_spinner() {
 }
 
 start_step() {
-    set +x
     _cleanup_spinner
     local msg="$1"
     _log_message "START" "${msg}"
@@ -156,17 +149,14 @@ start_step() {
         done
     } &
     _SPINNER_PID=$!
-    set -x
 }
 
 end_step() {
-    set +x
     local icon="$1"
     local msg="$2"
     local color="${3:-${GREEN}}"
     _cleanup_spinner
     printf "\r${icon}  ${color}%s${NC}\033[K\n" "$msg"
-    set -x
     local level="INFO"
     case "$icon" in
         "${ICON_OK}")    level="OK"      ;;
@@ -211,7 +201,7 @@ while [[ $# -gt 0 ]]; do
             shift 2 ;;
         --uninstall) UNINSTALL=true; shift ;;
         -l|--log) KEEP_LOG=true; shift ;;
-        -S|--skip-service) SKIP_SERVICE=true; shift ;;
+        -S|--setup-service) SKIP_SERVICE=false; shift ;;
         -h|--help) usage; exit 0 ;;
         *) log_error "未知参数: $1"; usage; exit 1 ;;
     esac
@@ -260,8 +250,8 @@ print_header() {
     elif [[ "${RAM_SIZE_MIB}" -lt 16000 ]]; then
         ram_color="${BLUE}"
     fi
-    echo_line "  ${ICON_RAM}  内存大小       : ${ram_color}${RAM_SIZE_MIB} MiB${NC}"
 
+    echo_line "  ${ICON_RAM}  内存大小       : ${ram_color}${RAM_SIZE_MIB} MiB${NC}"
     echo_line "  ${ICON_USER}  当前用户       : ${GREEN}${USER_NAME}${NC}"
     echo_line ""
 }
@@ -272,14 +262,12 @@ install_homebrew() {
 
     if command -v brew &>/dev/null; then
         BREW_VER=$(brew --version 2>/dev/null | head -n1 | awk '{print $NF}' || echo '版本获取失败')
-        _log_message "OK" "Homebrew 已就绪: ${BREW_VER}"
         end_step "${ICON_OK}" "Homebrew 已就绪: ${BREW_VER}"
         return
     fi
 
-    _log_message "EXEC" "▶ 安装 Homebrew"
+    start_step "正在安装 Homebrew..."
     if ! /bin/bash -c "$(curl -fsSL ${GH_PROXY}https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" >> "$LOGFILE" 2>&1; then
-        _log_message "ERROR" "✗ Homebrew 安装失败"
         end_step "${ICON_ERROR}" "Homebrew 安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
         exit 1
     fi
@@ -293,7 +281,6 @@ install_homebrew() {
 
     if command -v brew &>/dev/null; then
         BREW_VER=$(brew --version 2>/dev/null | head -n1 | awk '{print $NF}' || echo '版本获取失败')
-        _log_message "OK" "Homebrew 已安装: ${BREW_VER}"
         end_step "${ICON_OK}" "Homebrew 已安装: ${BREW_VER}"
     else
         _log_message "ERROR" "Homebrew 安装后未找到 brew 可执行文件"
@@ -319,10 +306,7 @@ install_packages() {
     done
 
     if [[ ${#missing_formulae[@]} -eq 0 ]]; then
-        _log_message "OK" "Git: $(git --version 2>/dev/null)"
-        _log_message "OK" "ADB: $(adb --version 2>/dev/null | head -n1)"
         CONDA_BIN=$(command -v conda 2>/dev/null || echo "${HOME}/miniforge3/bin/conda")
-        _log_message "OK" "Conda: $(conda --version 2>/dev/null)"
         end_step "${ICON_OK}" "Git 已安装: $(git --version 2>/dev/null | awk '{print $NF}')"
         end_step "${ICON_OK}" "ADB 已安装: $(adb --version 2>/dev/null | head -n1 | awk '{print $NF}')"
         end_step "${ICON_OK}" "Conda 已就绪: $(conda --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')"
@@ -337,24 +321,20 @@ install_packages() {
         end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
         exit 1
     fi
-    _log_message "OK" "✓ 依赖安装完成"
 
     if [[ -x /opt/homebrew/bin/brew ]]; then
         eval "$(/opt/homebrew/bin/brew shellenv)" 2>/dev/null || true
     fi
-
-    _log_message "OK" "Git: $(git --version 2>/dev/null)"
-    _log_message "OK" "ADB: $(adb --version 2>/dev/null | head -n1)"
     CONDA_BIN=$(command -v conda 2>/dev/null || echo "${HOME}/miniforge3/bin/conda")
-    _log_message "OK" "Conda: $(conda --version 2>/dev/null)"
     end_step "${ICON_OK}" "Git 已安装: $(git --version 2>/dev/null | awk '{print $NF}')"
     end_step "${ICON_OK}" "ADB 已安装: $(adb --version 2>/dev/null | head -n1 | awk '{print $NF}')"
     end_step "${ICON_OK}" "Conda 已就绪: $(conda --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')"
+    _log_message "OK" "✓ 依赖安装完成"
 }
 
 # ---------------------------- 第3步: 克隆仓库 ----------------------------
 clone_alas() {
-    start_step "正在克隆 AzurLaneAutoScript 仓库..."
+    start_step "正在克隆 ALAS 仓库..."
 
     WORK_DIR="${INSTALL_DIR}"
     if [[ -d "${WORK_DIR}" ]]; then
@@ -614,21 +594,19 @@ dependencies:
 YML_EOF
     _log_message "OK" "✓ environment.yml 已生成"
 
-    set +x; eval "$("${CONDA_BIN}" shell.bash hook)" >> "$LOGFILE" 2>&1; set -x
+    eval "$("${CONDA_BIN}" shell.bash hook)" >> "$LOGFILE" 2>&1
     _log_message "OK" "✓ Conda shell hook 已加载"
 
     if [[ "${USE_CN_MIRROR}" == true ]]; then
-        _log_message "EXEC" "▶ 配置国内镜像源"
-        conda config --prepend channels https://mirror.nju.edu.cn/anaconda/cloud/conda-forge/ >> "$LOGFILE" 2>&1
-        conda config --prepend channels https://mirror.nju.edu.cn/anaconda/pkgs/main/ >> "$LOGFILE" 2>&1
-        conda config --append channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge/ >> "$LOGFILE" 2>&1
-        conda config --append channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/main/ >> "$LOGFILE" 2>&1
-        conda config --append channels https://mirror.sjtu.edu.cn/anaconda/cloud/conda-forge/ >> "$LOGFILE" 2>&1
-        conda config --append channels https://mirror.sjtu.edu.cn/anaconda/pkgs/main/ >> "$LOGFILE" 2>&1
+        local cernet_conda="https://mirrors.cernet.edu.cn/anaconda"
+        local cernet_pypi="https://mirrors.cernet.edu.cn/pypi/web/simple"
 
-        export PIP_INDEX_URL="https://pypi.mirrors.ustc.edu.cn/simple/"
-        export PIP_EXTRA_INDEX_URL="https://mirrors.aliyun.com/pypi/simple/ https://pypi.tuna.tsinghua.edu.cn/simple/"
-        export PIP_TRUSTED_HOST="pypi.mirrors.ustc.edu.cn mirrors.aliyun.com pypi.tuna.tsinghua.edu.cn"
+        _log_message "EXEC" "▶ 配置国内镜像源 (cernet)"
+        conda config --prepend channels "${cernet_conda}/cloud/conda-forge/" >> "$LOGFILE" 2>&1
+        conda config --prepend channels "${cernet_conda}/pkgs/main/" >> "$LOGFILE" 2>&1
+
+        export PIP_INDEX_URL="${cernet_pypi}"
+        export PIP_TRUSTED_HOST="mirrors.cernet.edu.cn"
         export PIP_TIMEOUT=60
         _log_message "OK" "✓ 国内镜像源已配置"
     fi
@@ -648,7 +626,7 @@ YML_EOF
     fi
     _log_message "OK" "✓ conda env create 完成"
 
-    unset PIP_INDEX_URL PIP_EXTRA_INDEX_URL
+    unset PIP_INDEX_URL
 
     _log_message "EXEC" "▶ 验证环境: python -c 'import alas_webapp'"
     if ! conda run -n alas python -c "import alas_webapp" >> "$LOGFILE" 2>&1; then
@@ -658,8 +636,6 @@ YML_EOF
     else
         _log_message "OK" "✓ 依赖完整性检查通过"
     fi
-
-    _log_message "OK" "Conda 虚拟环境已构建"
     end_step "${ICON_OK}" "虚拟环境已构建"
 }
 
@@ -679,10 +655,8 @@ configure_deploy() {
     if [[ -f "${TEMPLATE}" ]]; then
         _log_message "EXEC" "▶ cp ${TEMPLATE} config/deploy.yaml"
         cp "${TEMPLATE}" config/deploy.yaml
-        _log_message "OK" "✓ deploy.yaml 已配置"
         end_step "${ICON_OK}" "deploy.yaml 已复制"
     else
-        _log_message "WARNING" "模板文件 ${TEMPLATE} 不存在，跳过"
         end_step "${ICON_WARN}" "模板文件 ${TEMPLATE} 不存在，请手动重命名 deploy.yaml-linux.yaml" "${YELLOW}"
     fi
 }
@@ -707,20 +681,17 @@ cd ${ALAS_DIR}
 python gui.py
 EOF
     chmod +x "${SCRIPT_OUT_DIR}/run_alas.sh"
-    _log_message "OK" "✓ 启动脚本已生成: ${SCRIPT_OUT_DIR}/run_alas.sh"
-
     end_step "${ICON_OK}" "启动脚本已生成: ${SCRIPT_OUT_DIR}/run_alas.sh"
 }
 
-# ---------------------------- 第7步: 开机自启 (LaunchAgent) ----------------------------
+# ---------------------------- 第7步: launchctl 服务 ----------------------------
 configure_service() {
-    if [[ "${SKIP_SERVICE}" == true ]]; then
-        _log_message "INFO" "已跳过开机自启服务配置 (--skip-service)"
-        end_step "${ICON_INFO}" "已跳过开机自启服务配置"
-        return
-    fi
+    start_step "正在配置 launchctl 服务..."
 
-    start_step "正在配置开机自启..."
+    local run_at_load="false"
+    if [[ "${SKIP_SERVICE}" == false ]]; then
+        run_at_load="true"
+    fi
 
     local plist_dir="${HOME}/Library/LaunchAgents"
     mkdir -p "${plist_dir}"
@@ -728,7 +699,7 @@ configure_service() {
     _log_message "EXEC" "▶ 生成 ${plist_dir}/com.alas.run.plist"
     _log_message "INFO" "  用户: ${USER_NAME}"
     _log_message "INFO" "  ALAS 目录: ${ALAS_DIR}"
-    _log_message "INFO" "  启动命令: ${SCRIPT_OUT_DIR}/run_alas.sh"
+    _log_message "INFO" "  RunAtLoad: ${run_at_load}"
 
     cat > "${plist_dir}/com.alas.run.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -742,12 +713,13 @@ configure_service() {
         <string>${SCRIPT_OUT_DIR}/run_alas.sh</string>
     </array>
     <key>RunAtLoad</key>
-    <true/>
+    <${run_at_load}/>
     <key>KeepAlive</key>
     <false/>
 </dict>
 </plist>
 EOF
+    chmod 644 "${plist_dir}/com.alas.run.plist"
     _log_message "OK" "✓ plist 文件已创建"
 
     _log_message "EXEC" "▶ launchctl bootout (卸载旧服务)"
@@ -756,12 +728,55 @@ EOF
     launchctl bootstrap "gui/$(id -u)" "${plist_dir}/com.alas.run.plist"
 
     if launchctl list 2>/dev/null | grep -q "com.alas.run"; then
-        _log_message "OK" "launchd 服务已注册"
-        end_step "${ICON_OK}" "开机自启服务已配置"
+        _log_message "OK" "launchctl 服务已注册"
+        _log_message "EXEC" "▶ launchctl stop/start com.alas.run（立即启动）"
+        launchctl stop com.alas.run 2>/dev/null || true
+        launchctl start com.alas.run
+        _log_message "OK" "✓ ALAS 服务已启动"
+        if [[ "${run_at_load}" == true ]]; then
+            end_step "${ICON_OK}" "开机自启服务已配置，请在下次重启后验证 ALAS 是否正常运行"
+        else
+            end_step "${ICON_OK}" "系统服务已配置，请在下次重启后双击 运行ALAS.command 启动 ALAS"
+        fi
     else
-        _log_message "WARNING" "launchd 服务可能未成功注册"
-        end_step "${ICON_WARN}" "服务配置已完成，请重启后验证" "${YELLOW}"
+        end_step "${ICON_WARN}" "未成功注册 launchd 服务，请检查 plist 文件" "${YELLOW}"
     fi
+}
+
+# ---------------------------- 第8步: 生成桌面快捷脚本 ----------------------------
+create_desktop_commands() {
+    start_step "正在生成桌面快捷脚本..."
+
+    local desktop_dir="${HOME}/Desktop"
+    mkdir -p "${desktop_dir}"
+
+    _log_message "EXEC" "▶ 生成 ${desktop_dir}/运行ALAS.command"
+    cat > "${desktop_dir}/运行ALAS.command" << 'CMD_EOF'
+#!/bin/bash
+(sleep 3 && open http://127.0.0.1:22267) &
+launchctl stop com.alas.run && launchctl start com.alas.run
+CMD_EOF
+    chmod +x "${desktop_dir}/运行ALAS.command"
+    _log_message "OK" "✓ 运行ALAS.command 已生成"
+
+    _log_message "EXEC" "▶ 生成 ${desktop_dir}/停止ALAS.command"
+    cat > "${desktop_dir}/停止ALAS.command" << 'CMD_EOF'
+#!/bin/bash
+launchctl stop com.alas.run
+CMD_EOF
+    chmod +x "${desktop_dir}/停止ALAS.command"
+    _log_message "OK" "✓ 停止ALAS.command 已生成"
+
+    _log_message "EXEC" "▶ 生成 ${desktop_dir}/重启ALAS.command"
+    cat > "${desktop_dir}/重启ALAS.command" << 'CMD_EOF'
+#!/bin/bash
+(sleep 3 && open http://127.0.0.1:22267) &
+launchctl stop com.alas.run && launchctl start com.alas.run
+CMD_EOF
+    chmod +x "${desktop_dir}/重启ALAS.command"
+    _log_message "OK" "✓ 重启ALAS.command 已生成"
+
+    end_step "${ICON_OK}" "桌面快捷脚本已生成: ${desktop_dir}"
 }
 
 # ---------------------------- 完成摘要 ----------------------------
@@ -779,18 +794,19 @@ do_uninstall() {
     echo_line "  ${ICON_WARN}  ${YELLOW}  - Conda 虚拟环境 (alas)${NC}"
     echo_line "  ${ICON_WARN}  ${YELLOW}  - ALAS 目录: ${INSTALL_DIR}${NC}"
     echo_line "  ${ICON_WARN}  ${YELLOW}  - 启动脚本: ${SCRIPT_OUT_DIR}/run_alas.sh${NC}"
+    echo_line "  ${ICON_WARN}  ${YELLOW}  - 桌面快捷脚本: 运行ALAS/停止ALAS/重启ALAS.command${NC}"
     echo_line "  ${ICON_INFO}  ${GREEN}  依赖库 (brew, git, adb, conda) 不会被删除${NC}"
     echo_line ""
-    _log_message "WARNING" "用户确认卸载流程开始"
+    _log_message "WARNING" "等待确认卸载"
     while true; do
         echo -n "  确认继续吗？ [yes/N] ："
         read -r CONFIRM < /dev/tty
         case "${CONFIRM}" in
             yes|YES)
-                _log_message "INFO" "用户已确认卸载"
+                _log_message "INFO" "已确认卸载"
                 break ;;
             no|NO|n|N)
-                _log_message "INFO" "用户取消卸载"
+                _log_message "INFO" "卸载取消"
                 echo_line "  ${ICON_INFO}  已取消卸载"; exit 0 ;;
             *)
                 echo_line "  ${ICON_WARN}  无效输入，请输入 yes 或 N" "${YELLOW}" ;;
@@ -804,18 +820,16 @@ do_uninstall() {
     launchctl bootout "gui/$(id -u)/com.alas.run" 2>/dev/null || true
     _log_message "EXEC" "▶ rm -f plist 文件"
     rm -f "${HOME}/Library/LaunchAgents/com.alas.run.plist"
-    _log_message "OK" "✓ 服务已停止并移除"
     end_step "${ICON_OK}" "服务已停止并移除"
 
     start_step "正在清理 Conda 虚拟环境..."
     CONDA_BIN="${HOME}/miniforge3/bin/conda"
     command -v conda &>/dev/null && CONDA_BIN=$(command -v conda)
-    set +x; eval "$("${CONDA_BIN}" shell.bash hook)" >> "$LOGFILE" 2>&1; set -x
+    eval "$("${CONDA_BIN}" shell.bash hook)" >> "$LOGFILE" 2>&1
     if conda env list 2>/dev/null | grep -q "^alas "; then
         _log_message "EXEC" "▶ conda env remove -n alas"
         _log_exec "移除 Conda 环境 (方法1: conda env remove)" conda env remove -n alas -y || \
         _log_exec "移除 Conda 环境 (方法2: rm -rf)" rm -rf "$(conda info --base 2>/dev/null)/envs/alas"
-        _log_message "OK" "✓ Conda 环境已移除"
     else
         _log_message "INFO" "未检测到 alas 环境，跳过"
     fi
@@ -824,14 +838,21 @@ do_uninstall() {
     start_step "正在删除 ALAS 目录..."
     _log_message "EXEC" "▶ rm -rf ${INSTALL_DIR}"
     rm -rf "${INSTALL_DIR}"
-    _log_message "OK" "✓ ALAS 目录已删除"
     end_step "${ICON_OK}" "目录已删除"
 
     start_step "正在删除启动脚本..."
     _log_message "EXEC" "▶ rm -f ${SCRIPT_OUT_DIR}/run_alas.sh"
     rm -f "${SCRIPT_OUT_DIR}/run_alas.sh"
-    _log_message "OK" "✓ 启动脚本已删除"
     end_step "${ICON_OK}" "启动脚本已删除"
+
+    start_step "正在删除桌面快捷脚本..."
+    _log_message "EXEC" "▶ rm -f ${HOME}/Desktop/运行ALAS.command"
+    rm -f "${HOME}/Desktop/运行ALAS.command"
+    _log_message "EXEC" "▶ rm -f ${HOME}/Desktop/停止ALAS.command"
+    rm -f "${HOME}/Desktop/停止ALAS.command"
+    _log_message "EXEC" "▶ rm -f ${HOME}/Desktop/重启ALAS.command"
+    rm -f "${HOME}/Desktop/重启ALAS.command"
+    end_step "${ICON_OK}" "桌面快捷脚本已删除"
 
     if [[ "${KEEP_LOG}" == false ]]; then
         _log_message "INFO" "清理日志文件: ${LOGFILE}"
@@ -846,6 +867,9 @@ do_uninstall() {
 # ---------------------------- 主流程 ----------------------------
 main() {
     if [[ "${UNINSTALL}" == true ]]; then
+        detect_os
+        gather_system_info
+        print_header
         do_uninstall
         exit 0
     fi
@@ -859,6 +883,7 @@ main() {
     setup_conda_env
     configure_deploy
     create_launcher
+    create_desktop_commands
     configure_service
 
     print_completion

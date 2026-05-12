@@ -20,12 +20,6 @@ fi
 LOGFILE="/tmp/alas_install.log"
 touch "$LOGFILE" || { echo "无法创建日志文件 $LOGFILE"; exit 1; }
 
-# 调试追踪 (set -x) 输出到 /dev/null，终端和日志文件均不可见
-exec 9>/dev/null
-BASH_XTRACEFD=9
-PS4='+$(date "+%H:%M:%S.%3N | DEBUG  | ")'
-set -x
-
 # ---------------------------- 日志格式化 ----------------------------
 # 格式: LEVEL | HH:MM:SS.mmm | message
 # (等效于 Python: '%(levelname)s | %(asctime)s.%(msecs)03d | %(message)s', datefmt='%H:%M:%S')
@@ -144,7 +138,6 @@ _cleanup_spinner() {
 }
 
 start_step() {
-    set +x
     _cleanup_spinner
     local msg="$1"
     _log_message "START" "${msg}"
@@ -158,17 +151,14 @@ start_step() {
         done
     } &
     _SPINNER_PID=$!
-    set -x
 }
 
 end_step() {
-    set +x
     local icon="$1"
     local msg="$2"
     local color="${3:-${GREEN}}"
     _cleanup_spinner
     printf "\r${icon}  ${color}%s${NC}\033[K\n" "$msg"
-    set -x
     local level="INFO"
     case "$icon" in
         "${ICON_OK}")    level="OK"      ;;
@@ -291,7 +281,6 @@ install_pixi() {
 
     if command -v pixi &>/dev/null; then
         PIXI_VER=$(pixi --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')
-        _log_message "OK" "Pixi 已安装: ${PIXI_VER}"
         end_step "${ICON_OK}" "Pixi 已安装: ${PIXI_VER}"
         return
     fi
@@ -299,15 +288,14 @@ install_pixi() {
     if [[ -x "${HOME}/.pixi/bin/pixi" ]]; then
         export PATH="${HOME}/.pixi/bin:${PATH}"
         PIXI_VER=$(pixi --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')
-        _log_message "OK" "Pixi 已激活: ${PIXI_VER}"
         end_step "${ICON_OK}" "Pixi 已激活: ${PIXI_VER}"
         return
     fi
 
+    start_step "正在安装 Pixi 包管理器..."
     # 官方安装方式，输出重定向到日志文件
     _log_message "EXEC" "▶ 安装 Pixi: curl -fsSL https://pixi.sh/install.sh | sh"
     if ! curl -fsSL https://pixi.sh/install.sh | sh >> "$LOGFILE" 2>&1; then
-        _log_message "ERROR" "✗ Pixi 安装失败"
         end_step "${ICON_ERROR}" "Pixi 安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
         exit 1
     fi
@@ -316,7 +304,6 @@ install_pixi() {
     export PATH="${HOME}/.pixi/bin:${PATH}"
     if command -v pixi &>/dev/null; then
         PIXI_VER=$(pixi --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')
-        _log_message "OK" "Pixi 已安装: ${PIXI_VER}"
         end_step "${ICON_OK}" "Pixi 已安装: ${PIXI_VER}"
     else
         _log_message "ERROR" "Pixi 安装后未找到可执行文件"
@@ -341,8 +328,7 @@ install_git_adb() {
                     _log_message "WARNING" "依赖缺失: ${pkg}"
                     missing_pkgs+=("$pkg")
                 fi
-            done
-            ;;
+            done ;;
         arch)
             local check_list=(git android-tools)
             for pkg in "${check_list[@]}"; do
@@ -352,8 +338,7 @@ install_git_adb() {
                     _log_message "WARNING" "依赖缺失: ${pkg}"
                     missing_pkgs+=("$pkg")
                 fi
-            done
-            ;;
+            done ;;
         centos|rhel|fedora)
             local check_list=(git adb)
             for pkg in "${check_list[@]}"; do
@@ -363,16 +348,13 @@ install_git_adb() {
                     _log_message "WARNING" "依赖缺失: ${pkg}"
                     missing_pkgs+=("$pkg")
                 fi
-            done
-            ;;
+            done ;;
         *)
             end_step "${ICON_ERROR}" "不支持的发行版: ${OS_ID}" "${RED}"
             exit 1 ;;
     esac
 
     if [[ ${#missing_pkgs[@]} -eq 0 ]]; then
-        _log_message "OK" "Git: $(git --version 2>/dev/null)"
-        _log_message "OK" "ADB: $(adb --version 2>/dev/null | head -n1)"
         end_step "${ICON_OK}" "Git 已安装: $(git --version 2>/dev/null | awk '{print $NF}')"
         end_step "${ICON_OK}" "ADB 已安装: $(adb --version 2>/dev/null | head -n1 | awk '{print $NF}')"
         return
@@ -394,16 +376,14 @@ install_git_adb() {
                 _log_message "ERROR" "✗ apt-get install 失败"
                 end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
                 exit 1
-            fi
-            _log_message "OK" "✓ 依赖安装完成" ;;
+            fi ;;
         arch)
             _log_message "EXEC" "▶ pacman -Syy --noconfirm ${missing_pkgs[*]}"
             if ! pacman -Syy --noconfirm "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
                 _log_message "ERROR" "✗ pacman 安装失败"
                 end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
                 exit 1
-            fi
-            _log_message "OK" "✓ 依赖安装完成" ;;
+            fi ;;
         centos|rhel|fedora)
             if command -v dnf &>/dev/null; then
                 _log_message "EXEC" "▶ dnf makecache"
@@ -419,7 +399,6 @@ install_git_adb() {
                     end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
                     exit 1
                 fi
-                _log_message "OK" "✓ 依赖安装完成"
             else
                 _log_message "EXEC" "▶ yum install -y ${missing_pkgs[*]}"
                 if ! yum -q install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
@@ -427,19 +406,16 @@ install_git_adb() {
                     end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
                     exit 1
                 fi
-                _log_message "OK" "✓ 依赖安装完成"
             fi ;;
     esac
-
-    _log_message "OK" "Git: $(git --version 2>/dev/null)"
-    _log_message "OK" "ADB: $(adb --version 2>/dev/null | head -n1)"
     end_step "${ICON_OK}" "Git 已安装: $(git --version 2>/dev/null | awk '{print $NF}')"
     end_step "${ICON_OK}" "ADB 已安装: $(adb --version 2>/dev/null | head -n1 | awk '{print $NF}')"
+    _log_message "OK" "✓ 依赖安装完成"
 }
 
 # ---------------------------- 第3步: 克隆仓库 ----------------------------
 clone_alas() {
-    start_step "正在克隆 AzurLaneAutoScript 仓库..."
+    start_step "正在克隆 ALAS 仓库..."
 
     WORK_DIR="${INSTALL_DIR}"
     if [[ -d "${WORK_DIR}" ]]; then
@@ -454,11 +430,9 @@ clone_alas() {
     _log_message "EXEC" "▶ git clone ${GH_PROXY}${REPO_URL} ${WORK_DIR}"
 
     if ! git clone "${GH_PROXY}${REPO_URL}" "${WORK_DIR}" >> "$LOGFILE" 2>&1; then
-        _log_message "ERROR" "✗ 仓库克隆失败"
         end_step "${ICON_ERROR}" "仓库克隆错误，详情请阅读日志：${LOGFILE}" "${RED}"
         exit 1
     fi
-    _log_message "OK" "✓ 仓库克隆完成"
     cd "${WORK_DIR}"
     ALAS_DIR="${WORK_DIR}"
 
@@ -521,6 +495,7 @@ uvloop = "*"
 websockets = "*"
 h11 = "*"
 python-dotenv = "*"
+requests = "*"
 [pypi-dependencies]
 anyio = "==1.3.1"
 adbutils = "==0.11.0"
@@ -538,6 +513,20 @@ alas-webapp = "==0.3.7"
 PIXI_EOF
     _log_message "OK" "✓ pixi.toml 已生成"
 
+    if [[ "${USE_CN_MIRROR}" == true ]]; then
+        local cernet_conda="https://mirrors.cernet.edu.cn/anaconda"
+        local cernet_pypi="https://mirrors.cernet.edu.cn/pypi/web/simple"
+
+        _log_message "EXEC" "▶ 配置国内镜像源 (cernet)"
+        sed -i "s|channels = \\[\"conda-forge\"\\]|channels = [\"${cernet_conda}/cloud/conda-forge\"]|" pixi.toml
+        cat >> pixi.toml << PIXI_EOF
+
+[pypi-options]
+index-url = "${cernet_pypi}"
+PIXI_EOF
+        _log_message "OK" "✓ 国内镜像源已配置至 pixi.toml"
+    fi
+
     if [[ -d ".pixi/envs/alas" || -f "pixi.lock" ]]; then
         _log_message "WARNING" "检测到已有 Pixi 环境，正在清理..."
         _log_exec "清理 Pixi 缓存" pixi clean cache -y || true
@@ -547,40 +536,12 @@ PIXI_EOF
         _log_message "OK" "✓ 旧环境已清理"
     fi
 
-    if [[ "${USE_CN_MIRROR}" == true ]]; then
-        _log_message "EXEC" "▶ 配置国内镜像源"
-        local PIXI_CONF="${HOME}/.pixi/config.toml"
-        local PIXI_CONF_BAK="${PIXI_CONF}.bak"
-
-        if [[ -f "${PIXI_CONF_BAK}" ]]; then
-            cp "${PIXI_CONF}" /tmp/pixi_config.toml.live 2>/dev/null || true
-            cp "${PIXI_CONF_BAK}" /tmp/pixi_config.toml.bak 2>/dev/null || true
-        elif [[ -f "${PIXI_CONF}" ]]; then
-            cp "${PIXI_CONF}" "${PIXI_CONF_BAK}"
-        fi
-
-        pixi config set --global pypi-config.index-url "https://mirror.nju.edu.cn/pypi/web/simple/" >> "$LOGFILE" 2>&1
-        pixi config set --global default-channels '["https://pypi.mirrors.ustc.edu.cn/simple/"]' >> "$LOGFILE" 2>&1
-        _log_message "OK" "✓ 国内镜像源已配置"
-    fi
-
     _log_message "EXEC" "▶ pixi install --manifest-path pixi.toml (这可能需要较长时间)"
     if ! pixi install --manifest-path pixi.toml >> "$LOGFILE" 2>&1; then
         _log_message "ERROR" "✗ pixi install 失败"
         end_step "${ICON_ERROR}" "虚拟环境构建错误，详情请阅读日志：${LOGFILE}" "${RED}"
         exit 1
     fi
-    _log_message "OK" "✓ pixi install 完成"
-
-    if [[ "${USE_CN_MIRROR}" == true ]]; then
-        if [[ -f "${PIXI_CONF_BAK}" ]]; then
-            _log_message "EXEC" "▶ 恢复 Pixi 配置备份"
-            mv -f "${PIXI_CONF_BAK}" "${PIXI_CONF}" >> "$LOGFILE" 2>&1
-            _log_message "OK" "✓ Pixi 配置已恢复"
-        fi
-    fi
-
-    _log_message "OK" "Pixi 虚拟环境已构建"
     end_step "${ICON_OK}" "虚拟环境已构建"
 }
 
@@ -600,10 +561,8 @@ configure_deploy() {
     if [[ -f "${TEMPLATE}" ]]; then
         _log_message "EXEC" "▶ cp ${TEMPLATE} config/deploy.yaml"
         cp "${TEMPLATE}" config/deploy.yaml
-        _log_message "OK" "✓ deploy.yaml 已配置"
         end_step "${ICON_OK}" "cp ${TEMPLATE} config/deploy.yaml"
     else
-        _log_message "WARNING" "模板文件 ${TEMPLATE} 不存在，跳过"
         end_step "${ICON_WARN}" "模板文件 ${TEMPLATE} 不存在，请手动执行 cp ${TEMPLATE} config/deploy.yaml" "${YELLOW}"
     fi
 }
@@ -657,10 +616,8 @@ EOF
     _log_message "OK" "✓ 服务已启动"
 
     if systemctl is-active --quiet run_alas.service; then
-        _log_message "OK" "systemd 服务运行正常"
         end_step "${ICON_OK}" "systemd 服务已启动并设为开机自启"
     else
-        _log_message "ERROR" "systemd 服务启动失败"
         end_step "${ICON_ERROR}" "systemd 服务启动失败，请查看日志: ${LOGFILE}" "${RED}"
     fi
 }
@@ -682,16 +639,16 @@ do_uninstall() {
     echo_line "  ${ICON_WARN}  ${YELLOW}  - 启动脚本: ${SCRIPT_OUT_DIR}/run_alas.sh${NC}"
     echo_line "  ${ICON_INFO}  ${GREEN}  依赖库 (git, adb, pixi) 不会被删除${NC}"
     echo_line ""
-    _log_message "WARNING" "用户确认卸载流程开始"
+    _log_message "WARNING" "等待确认卸载"
     while true; do
         echo -n "  确认继续吗？ [yes/N] ："
         read -r CONFIRM < /dev/tty
         case "${CONFIRM}" in
             yes|YES)
-                _log_message "INFO" "用户已确认卸载"
+                _log_message "INFO" "已确认卸载"
                 break ;;
             no|NO|n|N)
-                _log_message "INFO" "用户取消卸载"
+                _log_message "INFO" "卸载取消"
                 echo_line "  ${ICON_INFO}  已取消卸载"; exit 0 ;;
             *)
                 echo_line "  ${ICON_WARN}  无效输入，请输入 yes 或 N" "${YELLOW}" ;;
@@ -726,7 +683,6 @@ do_uninstall() {
         _log_exec "清理 Pixi 环境 (方法1: pixi clean --environment alas)" pixi clean --environment alas || \
         _log_exec "清理 Pixi 环境 (方法2: pixi clean)" pixi clean || \
         _log_exec "清理 Pixi 环境 (方法3: rm -rf .pixi pixi.lock)" rm -rf .pixi pixi.lock
-        _log_message "OK" "✓ Pixi 环境已清理"
     else
         _log_message "INFO" "未检测到 Pixi 环境，跳过"
     fi
@@ -735,20 +691,17 @@ do_uninstall() {
     start_step "正在删除 ALAS 目录..."
     _log_message "EXEC" "▶ rm -rf ${INSTALL_DIR}"
     rm -rf "${INSTALL_DIR}"
-    _log_message "OK" "✓ ALAS 目录已删除"
     end_step "${ICON_OK}" "目录已删除"
 
     start_step "正在删除启动脚本..."
     _log_message "EXEC" "▶ rm -f ${SCRIPT_OUT_DIR}/run_alas.sh"
     rm -f "${SCRIPT_OUT_DIR}/run_alas.sh"
-    _log_message "OK" "✓ 启动脚本已删除"
     end_step "${ICON_OK}" "启动脚本已删除"
 
     if [[ "${KEEP_LOG}" == false ]]; then
         _log_message "INFO" "清理日志文件: ${LOGFILE}"
         rm -f "$LOGFILE"
     fi
-    _log_message "OK" "ALAS 卸载完成"
     echo_line ""
     echo_line "${ICON_OK}  ${GREEN}ALAS 卸载完成${NC}"
     echo_line ""
@@ -757,6 +710,9 @@ do_uninstall() {
 # ---------------------------- 主流程 ----------------------------
 main() {
     if [[ "${UNINSTALL}" == true ]]; then
+        detect_os
+        gather_system_info
+        print_header
         do_uninstall
         exit 0
     fi
@@ -777,7 +733,6 @@ main() {
         _log_message "INFO" "安装完成，清理日志文件: ${LOGFILE}"
         rm -f "$LOGFILE"
     else
-        _log_message "INFO" "安装完成，日志已保存至: ${LOGFILE}"
         echo_line "  ${ICON_INFO}  日志已保存至：${LOGFILE}"
     fi
 }
