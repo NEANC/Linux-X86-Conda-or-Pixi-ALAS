@@ -511,6 +511,7 @@ uvloop = "*"
 websockets = "*"
 h11 = "*"
 python-dotenv = "*"
+requests = "*"
 [pypi-dependencies]
 anyio = "==1.3.1"
 adbutils = "==0.11.0"
