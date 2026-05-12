@@ -82,6 +82,40 @@ _select_fastest_pypi_mirror() {
     _log_message "OK" "选中的 PyPI 镜像: ${fastest} (延迟: ${best_time}s)"
 }
 
+# ---------------------------- Conda 镜像测速 ----------------------------
+_select_fastest_conda_mirror() {
+    local mirrors=(
+        "https://mirrors.tuna.tsinghua.edu.cn/anaconda"
+        "https://mirrors.hit.edu.cn/anaconda"
+        "https://mirror.nju.edu.cn/anaconda"
+        "https://mirrors.pku.edu.cn/anaconda"
+        "https://mirrors.njtech.edu.cn/anaconda"
+        "https://mirror.nyist.edu.cn/anaconda"
+        "https://mirrors.ustc.edu.cn/anaconda"
+        "https://mirror.sjtu.edu.cn/anaconda"
+        "https://mirrors.sustech.edu.cn/anaconda"
+        "https://mirrors.zju.edu.cn/anaconda"
+        "https://mirror.lzu.edu.cn/anaconda"
+        "https://mirrors.cqupt.edu.cn/anaconda"
+    )
+    local fastest="https://mirrors.cernet.edu.cn"
+    local best_time=999
+    local mirror time_m
+
+    for mirror in "${mirrors[@]}"; do
+        mirror="${mirror%/}"
+        time_m=$(curl -o /dev/null -s --connect-timeout 3 --max-time 5 -w '%{time_total}' "${mirror}/pkgs/main/" 2>/dev/null)
+        time_m=${time_m:-999}
+        _log_message "INFO" "  测速 ${mirror} : ${time_m}s"
+        if awk "BEGIN{exit $time_m >= $best_time}"; then
+            best_time=$time_m
+            fastest=$mirror
+        fi
+    done
+    _CONDA_MIRROR="$fastest"
+    _log_message "OK" "选中的 Conda 镜像: ${fastest} (延迟: ${best_time}s)"
+}
+
 # ---------------------------- 加载图标 ----------------------------
 
 ICON_INFO="💡"
@@ -567,7 +601,8 @@ PIXI_EOF
     if [[ "${USE_CN_MIRROR}" == true ]]; then
         _log_message "EXEC" "▶ 配置国内镜像源"
         _select_fastest_pypi_mirror
-        sed -i 's|channels = \["conda-forge"\]|channels = ["https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge"]|' pixi.toml
+        _select_fastest_conda_mirror
+        sed -i "s|channels = \\[\"conda-forge\"\\]|channels = [\"${_CONDA_MIRROR}/cloud/conda-forge\"]|" pixi.toml
         cat >> pixi.toml << PIXI_EOF
 
 [pypi-options]
