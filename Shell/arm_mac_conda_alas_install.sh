@@ -50,7 +50,6 @@ _log_exec() {
 # ---------------------------- 镜像站测速与选择 ----------------------------
 # 公共镜像主站列表（校园网镜像站）
 _MIRROR_BASES=(
-    "https://mirrors.tuna.tsinghua.edu.cn"
     "https://mirrors.hit.edu.cn"
     "https://mirror.nju.edu.cn"
     "https://mirrors.pku.edu.cn"
@@ -62,6 +61,7 @@ _MIRROR_BASES=(
     "https://mirrors.zju.edu.cn"
     "https://mirror.lzu.edu.cn"
     "https://mirrors.cqupt.edu.cn"
+    "https://mirrors.tuna.tsinghua.edu.cn"
 )
 _MIRROR_BASES_SORTED=()
 _MIRROR_BASES_TESTED=false
@@ -109,18 +109,23 @@ _select_fastest_pypi_mirror() {
     _log_message "WARNING" "所有候选均不可用，使用校园网联合镜像站: ${_PYPI_MIRROR}"
 }
 
-# 验证并选择 Conda 镜像（验证 /anaconda 目录是否存在）
+# 验证并选择 Conda 镜像（验证 /cloud/conda-forge/ 和 /pkgs/main/ 两个通道）
 _select_fastest_conda_mirror() {
     _select_fastest_mirror_bases
-    local entry base_url http_code candidate
+    local entry base_url cf_code pkgs_code candidate
     for entry in "${_MIRROR_BASES_SORTED[@]}"; do
         base_url="${entry#*|}"
         candidate="${base_url}/anaconda"
-        http_code=$(_safe_curl -o /dev/null -s --connect-timeout 3 --max-time 5 -w '%{http_code}' "${candidate}/" 2>/dev/null)
-        _log_message "INFO" "  验证 ${candidate}/ → HTTP ${http_code:-超时}"
-        if [[ "$http_code" =~ ^(200|301|302|403)$ ]]; then
+
+        cf_code=$(_safe_curl -o /dev/null -s --connect-timeout 3 --max-time 5 -w '%{http_code}' "${candidate}/cloud/conda-forge/" 2>/dev/null)
+        _log_message "INFO" "  验证 ${candidate}/cloud/conda-forge/ → HTTP ${cf_code:-超时}"
+
+        pkgs_code=$(_safe_curl -o /dev/null -s --connect-timeout 3 --max-time 5 -w '%{http_code}' "${candidate}/pkgs/main/" 2>/dev/null)
+        _log_message "INFO" "  验证 ${candidate}/pkgs/main/ → HTTP ${pkgs_code:-超时}"
+
+        if [[ "$cf_code" =~ ^(200|301|302|403)$ ]] && [[ "$pkgs_code" =~ ^(200|301|302|403)$ ]]; then
             _CONDA_MIRROR="$candidate"
-            _log_message "OK" "选中的 Conda 镜像: ${_CONDA_MIRROR} (HTTP ${http_code})"
+            _log_message "OK" "选中的 Conda 镜像: ${_CONDA_MIRROR}"
             return 0
         fi
     done
