@@ -768,6 +768,9 @@ do_uninstall() {
 # ---------------------------- 主流程 ----------------------------
 main() {
     if [[ "${UNINSTALL}" == true ]]; then
+        detect_os
+        gather_system_info
+        print_header
         do_uninstall
         exit 0
     fi
