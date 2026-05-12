@@ -283,14 +283,12 @@ install_miniforge() {
     if command -v conda &>/dev/null; then
         CONDA_VER=$(conda --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')
         CONDA_BIN=$(command -v conda)
-        _log_message "OK" "Conda 已就绪: ${CONDA_VER}"
         end_step "${ICON_OK}" "Conda 已就绪: ${CONDA_VER}"
         return
     fi
 
     if [[ -x "${CONDA_BIN}" ]]; then
         CONDA_VER=$("${CONDA_BIN}" --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')
-        _log_message "OK" "Conda 已安装: ${CONDA_VER}"
         end_step "${ICON_OK}" "Conda 已安装: ${CONDA_VER}"
         return
     fi
@@ -298,7 +296,6 @@ install_miniforge() {
     _log_message "EXEC" "▶ 下载 Miniforge3-Linux-x86_64.sh"
     if ! wget -q -O /tmp/Miniforge3-Linux-x86_64.sh \
         "${GH_PROXY}https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh" >> "$LOGFILE" 2>&1; then
-        _log_message "ERROR" "✗ Miniforge 下载失败"
         end_step "${ICON_ERROR}" "Miniforge 下载错误，详情请阅读日志：${LOGFILE}" "${RED}"
         exit 1
     fi
@@ -306,7 +303,6 @@ install_miniforge() {
 
     _log_message "EXEC" "▶ 安装 Miniforge"
     if ! bash /tmp/Miniforge3-Linux-x86_64.sh -b >> "$LOGFILE" 2>&1; then
-        _log_message "ERROR" "✗ Miniforge 安装失败"
         end_step "${ICON_ERROR}" "Miniforge 安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
         rm -f /tmp/Miniforge3-Linux-x86_64.sh
         exit 1
@@ -316,7 +312,6 @@ install_miniforge() {
 
     if [[ -x "${CONDA_BIN}" ]]; then
         CONDA_VER=$("${CONDA_BIN}" --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')
-        _log_message "OK" "Miniforge 已安装: ${CONDA_VER}"
         end_step "${ICON_OK}" "Miniforge 已安装: ${CONDA_VER}"
     else
         _log_message "ERROR" "Miniforge 安装后未找到 conda 可执行文件"
@@ -368,8 +363,6 @@ install_git_adb() {
     esac
 
     if [[ ${#missing_pkgs[@]} -eq 0 ]]; then
-        _log_message "OK" "Git: $(git --version 2>/dev/null)"
-        _log_message "OK" "ADB: $(adb --version 2>/dev/null | head -n1)"
         end_step "${ICON_OK}" "Git 已安装: $(git --version 2>/dev/null | awk '{print $NF}')"
         end_step "${ICON_OK}" "ADB 已安装: $(adb --version 2>/dev/null | head -n1 | awk '{print $NF}')"
         return
@@ -424,16 +417,14 @@ install_git_adb() {
             fi ;;
     esac
 
-    _log_message "OK" "Git: $(git --version 2>/dev/null)"
-    _log_message "OK" "ADB: $(adb --version 2>/dev/null | head -n1)"
-    _log_message "OK" "✓ 依赖安装完成"
     end_step "${ICON_OK}" "Git 已安装: $(git --version 2>/dev/null | awk '{print $NF}')"
     end_step "${ICON_OK}" "ADB 已安装: $(adb --version 2>/dev/null | head -n1 | awk '{print $NF}')"
+    _log_message "OK" "✓ 依赖安装完成"
 }
 
 # ---------------------------- 第3步: 克隆仓库 ----------------------------
 clone_alas() {
-    start_step "正在克隆 AzurLaneAutoScript 仓库..."
+    start_step "正在克隆 ALAS 仓库..."
 
     WORK_DIR="${INSTALL_DIR}"
     if [[ -d "${WORK_DIR}" ]]; then
@@ -448,11 +439,9 @@ clone_alas() {
     _log_message "EXEC" "▶ git clone ${GH_PROXY}${REPO_URL} ${WORK_DIR}"
 
     if ! git clone "${GH_PROXY}${REPO_URL}" "${WORK_DIR}" >> "$LOGFILE" 2>&1; then
-        _log_message "ERROR" "✗ 仓库克隆失败"
         end_step "${ICON_ERROR}" "仓库克隆错误，详情请阅读日志：${LOGFILE}" "${RED}"
         exit 1
     fi
-    _log_message "OK" "✓ 仓库克隆完成"
     cd "${WORK_DIR}"
     ALAS_DIR="${WORK_DIR}"
 
@@ -552,7 +541,6 @@ YML_EOF
 
     _log_message "EXEC" "▶ conda env create -f environment.yml (这可能需要较长时间)"
     if ! conda env create -f environment.yml >> "$LOGFILE" 2>&1; then
-        _log_message "ERROR" "✗ conda env create 失败"
         end_step "${ICON_ERROR}" "虚拟环境构建错误，详情请阅读日志：${LOGFILE}" "${RED}"
         exit 1
     fi
@@ -569,8 +557,6 @@ YML_EOF
     else
         _log_message "OK" "✓ 依赖完整性检查通过"
     fi
-
-    _log_message "OK" "Conda 虚拟环境已构建"
     end_step "${ICON_OK}" "虚拟环境已构建"
 }
 
@@ -590,10 +576,8 @@ configure_deploy() {
     if [[ -f "${TEMPLATE}" ]]; then
         _log_message "EXEC" "▶ cp ${TEMPLATE} config/deploy.yaml"
         cp "${TEMPLATE}" config/deploy.yaml
-        _log_message "OK" "✓ deploy.yaml 已配置"
         end_step "${ICON_OK}" "cp ${TEMPLATE} config/deploy.yaml"
     else
-        _log_message "WARNING" "模板文件 ${TEMPLATE} 不存在，跳过"
         end_step "${ICON_WARN}" "模板文件 ${TEMPLATE} 不存在，请手动执行 cp ${TEMPLATE} config/deploy.yaml" "${YELLOW}"
     fi
 }
@@ -614,8 +598,6 @@ cd ${ALAS_DIR}
 python gui.py
 EOF
     chmod +x "${SCRIPT_OUT_DIR}/run_alas.sh"
-    _log_message "OK" "✓ 启动脚本已生成: ${SCRIPT_OUT_DIR}/run_alas.sh"
-
     end_step "${ICON_OK}" "启动脚本已生成: ${SCRIPT_OUT_DIR}/run_alas.sh"
 }
 
@@ -667,10 +649,8 @@ EOF
     _log_message "OK" "✓ 服务已启动"
 
     if systemctl is-active --quiet run_alas.service; then
-        _log_message "OK" "systemd 服务运行正常"
         end_step "${ICON_OK}" "systemd 服务已启动并设为开机自启"
     else
-        _log_message "ERROR" "systemd 服务启动失败"
         end_step "${ICON_ERROR}" "systemd 服务启动失败，请查看日志: ${LOGFILE}" "${RED}"
     fi
 }
@@ -725,7 +705,6 @@ do_uninstall() {
         _log_message "EXEC" "▶ 删除服务单元文件"
         rm -f /etc/systemd/system/run_alas.service
         systemctl daemon-reload >> "$LOGFILE" 2>&1
-        _log_message "OK" "✓ 服务单元文件已删除"
     fi
     end_step "${ICON_OK}" "服务已停止并移除"
 
@@ -737,7 +716,6 @@ do_uninstall() {
         _log_message "EXEC" "▶ conda env remove -n alas"
         _log_exec "移除 Conda 环境 (方法1: conda env remove)" conda env remove -n alas -y || \
         _log_exec "移除 Conda 环境 (方法2: rm -rf)" rm -rf "$(conda info --base 2>/dev/null)/envs/alas"
-        _log_message "OK" "✓ Conda 环境已移除"
     else
         _log_message "INFO" "未检测到 alas 环境，跳过"
     fi
@@ -746,20 +724,17 @@ do_uninstall() {
     start_step "正在删除 ALAS 目录..."
     _log_message "EXEC" "▶ rm -rf ${INSTALL_DIR}"
     rm -rf "${INSTALL_DIR}"
-    _log_message "OK" "✓ ALAS 目录已删除"
     end_step "${ICON_OK}" "目录已删除"
 
     start_step "正在删除启动脚本..."
     _log_message "EXEC" "▶ rm -f ${SCRIPT_OUT_DIR}/run_alas.sh"
     rm -f "${SCRIPT_OUT_DIR}/run_alas.sh"
-    _log_message "OK" "✓ 启动脚本已删除"
     end_step "${ICON_OK}" "启动脚本已删除"
 
     if [[ "${KEEP_LOG}" == false ]]; then
         _log_message "INFO" "清理日志文件: ${LOGFILE}"
         rm -f "$LOGFILE"
     fi
-    _log_message "OK" "ALAS 卸载完成"
     echo_line ""
     echo_line "${ICON_OK}  ${GREEN}ALAS 卸载完成${NC}"
     echo_line ""
@@ -792,7 +767,6 @@ main() {
         _log_message "INFO" "安装完成，清理日志文件: ${LOGFILE}"
         rm -f "$LOGFILE"
     else
-        _log_message "INFO" "安装完成，日志已保存至: ${LOGFILE}"
         echo_line "  ${ICON_INFO}  日志已保存至：${LOGFILE}"
     fi
 }

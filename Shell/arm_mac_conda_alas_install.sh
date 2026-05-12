@@ -262,15 +262,12 @@ install_homebrew() {
 
     if command -v brew &>/dev/null; then
         BREW_VER=$(brew --version 2>/dev/null | head -n1 | awk '{print $NF}' || echo '版本获取失败')
-        _log_message "OK" "Homebrew 已就绪: ${BREW_VER}"
         end_step "${ICON_OK}" "Homebrew 已就绪: ${BREW_VER}"
         return
     fi
 
     start_step "正在安装 Homebrew..."
-    _log_message "EXEC" "▶ 安装 Homebrew"
     if ! /bin/bash -c "$(curl -fsSL ${GH_PROXY}https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" >> "$LOGFILE" 2>&1; then
-        _log_message "ERROR" "✗ Homebrew 安装失败"
         end_step "${ICON_ERROR}" "Homebrew 安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
         exit 1
     fi
@@ -284,7 +281,6 @@ install_homebrew() {
 
     if command -v brew &>/dev/null; then
         BREW_VER=$(brew --version 2>/dev/null | head -n1 | awk '{print $NF}' || echo '版本获取失败')
-        _log_message "OK" "Homebrew 已安装: ${BREW_VER}"
         end_step "${ICON_OK}" "Homebrew 已安装: ${BREW_VER}"
     else
         _log_message "ERROR" "Homebrew 安装后未找到 brew 可执行文件"
@@ -310,10 +306,7 @@ install_packages() {
     done
 
     if [[ ${#missing_formulae[@]} -eq 0 ]]; then
-        _log_message "OK" "Git: $(git --version 2>/dev/null)"
-        _log_message "OK" "ADB: $(adb --version 2>/dev/null | head -n1)"
         CONDA_BIN=$(command -v conda 2>/dev/null || echo "${HOME}/miniforge3/bin/conda")
-        _log_message "OK" "Conda: $(conda --version 2>/dev/null)"
         end_step "${ICON_OK}" "Git 已安装: $(git --version 2>/dev/null | awk '{print $NF}')"
         end_step "${ICON_OK}" "ADB 已安装: $(adb --version 2>/dev/null | head -n1 | awk '{print $NF}')"
         end_step "${ICON_OK}" "Conda 已就绪: $(conda --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')"
@@ -332,20 +325,16 @@ install_packages() {
     if [[ -x /opt/homebrew/bin/brew ]]; then
         eval "$(/opt/homebrew/bin/brew shellenv)" 2>/dev/null || true
     fi
-
-    _log_message "OK" "Git: $(git --version 2>/dev/null)"
-    _log_message "OK" "ADB: $(adb --version 2>/dev/null | head -n1)"
     CONDA_BIN=$(command -v conda 2>/dev/null || echo "${HOME}/miniforge3/bin/conda")
-    _log_message "OK" "Conda: $(conda --version 2>/dev/null)"
-    _log_message "OK" "✓ 依赖安装完成"
     end_step "${ICON_OK}" "Git 已安装: $(git --version 2>/dev/null | awk '{print $NF}')"
     end_step "${ICON_OK}" "ADB 已安装: $(adb --version 2>/dev/null | head -n1 | awk '{print $NF}')"
     end_step "${ICON_OK}" "Conda 已就绪: $(conda --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')"
+    _log_message "OK" "✓ 依赖安装完成"
 }
 
 # ---------------------------- 第3步: 克隆仓库 ----------------------------
 clone_alas() {
-    start_step "正在克隆 AzurLaneAutoScript 仓库..."
+    start_step "正在克隆 ALAS 仓库..."
 
     WORK_DIR="${INSTALL_DIR}"
     if [[ -d "${WORK_DIR}" ]]; then
@@ -647,8 +636,6 @@ YML_EOF
     else
         _log_message "OK" "✓ 依赖完整性检查通过"
     fi
-
-    _log_message "OK" "Conda 虚拟环境已构建"
     end_step "${ICON_OK}" "虚拟环境已构建"
 }
 
@@ -668,10 +655,8 @@ configure_deploy() {
     if [[ -f "${TEMPLATE}" ]]; then
         _log_message "EXEC" "▶ cp ${TEMPLATE} config/deploy.yaml"
         cp "${TEMPLATE}" config/deploy.yaml
-        _log_message "OK" "✓ deploy.yaml 已配置"
         end_step "${ICON_OK}" "deploy.yaml 已复制"
     else
-        _log_message "WARNING" "模板文件 ${TEMPLATE} 不存在，跳过"
         end_step "${ICON_WARN}" "模板文件 ${TEMPLATE} 不存在，请手动重命名 deploy.yaml-linux.yaml" "${YELLOW}"
     fi
 }
@@ -696,8 +681,6 @@ cd ${ALAS_DIR}
 python gui.py
 EOF
     chmod +x "${SCRIPT_OUT_DIR}/run_alas.sh"
-    _log_message "OK" "✓ 启动脚本已生成: ${SCRIPT_OUT_DIR}/run_alas.sh"
-
     end_step "${ICON_OK}" "启动脚本已生成: ${SCRIPT_OUT_DIR}/run_alas.sh"
 }
 
@@ -756,7 +739,6 @@ EOF
             end_step "${ICON_OK}" "系统服务已配置，请在下次重启后双击 运行ALAS.command 启动 ALAS"
         fi
     else
-        _log_message "WARNING" "launchd 服务可能未成功注册"
         end_step "${ICON_WARN}" "未成功注册 launchd 服务，请检查 plist 文件" "${YELLOW}"
     fi
 }
@@ -838,7 +820,6 @@ do_uninstall() {
     launchctl bootout "gui/$(id -u)/com.alas.run" 2>/dev/null || true
     _log_message "EXEC" "▶ rm -f plist 文件"
     rm -f "${HOME}/Library/LaunchAgents/com.alas.run.plist"
-    _log_message "OK" "✓ 服务已停止并移除"
     end_step "${ICON_OK}" "服务已停止并移除"
 
     start_step "正在清理 Conda 虚拟环境..."
@@ -849,7 +830,6 @@ do_uninstall() {
         _log_message "EXEC" "▶ conda env remove -n alas"
         _log_exec "移除 Conda 环境 (方法1: conda env remove)" conda env remove -n alas -y || \
         _log_exec "移除 Conda 环境 (方法2: rm -rf)" rm -rf "$(conda info --base 2>/dev/null)/envs/alas"
-        _log_message "OK" "✓ Conda 环境已移除"
     else
         _log_message "INFO" "未检测到 alas 环境，跳过"
     fi
@@ -858,13 +838,11 @@ do_uninstall() {
     start_step "正在删除 ALAS 目录..."
     _log_message "EXEC" "▶ rm -rf ${INSTALL_DIR}"
     rm -rf "${INSTALL_DIR}"
-    _log_message "OK" "✓ ALAS 目录已删除"
     end_step "${ICON_OK}" "目录已删除"
 
     start_step "正在删除启动脚本..."
     _log_message "EXEC" "▶ rm -f ${SCRIPT_OUT_DIR}/run_alas.sh"
     rm -f "${SCRIPT_OUT_DIR}/run_alas.sh"
-    _log_message "OK" "✓ 启动脚本已删除"
     end_step "${ICON_OK}" "启动脚本已删除"
 
     start_step "正在删除桌面快捷脚本..."
@@ -874,7 +852,6 @@ do_uninstall() {
     rm -f "${HOME}/Desktop/停止ALAS.command"
     _log_message "EXEC" "▶ rm -f ${HOME}/Desktop/重启ALAS.command"
     rm -f "${HOME}/Desktop/重启ALAS.command"
-    _log_message "OK" "✓ 桌面快捷脚本已删除"
     end_step "${ICON_OK}" "桌面快捷脚本已删除"
 
     if [[ "${KEEP_LOG}" == false ]]; then
