@@ -827,6 +827,42 @@ EOF
     fi
 }
 
+# ---------------------------- 第8步: 生成桌面快捷脚本 ----------------------------
+create_desktop_commands() {
+    start_step "正在生成桌面快捷脚本..."
+
+    local desktop_dir="${HOME}/Desktop"
+    mkdir -p "${desktop_dir}"
+
+    _log_message "EXEC" "▶ 生成 ${desktop_dir}/运行ALAS.command"
+    cat > "${desktop_dir}/运行ALAS.command" << 'CMD_EOF'
+#!/bin/bash
+(sleep 3 && open http://127.0.0.1:22267) &
+launchctl stop com.alas.run && launchctl start com.alas.run
+CMD_EOF
+    chmod +x "${desktop_dir}/运行ALAS.command"
+    _log_message "OK" "✓ 运行ALAS.command 已生成"
+
+    _log_message "EXEC" "▶ 生成 ${desktop_dir}/停止ALAS.command"
+    cat > "${desktop_dir}/停止ALAS.command" << 'CMD_EOF'
+#!/bin/bash
+launchctl stop com.alas.run
+CMD_EOF
+    chmod +x "${desktop_dir}/停止ALAS.command"
+    _log_message "OK" "✓ 停止ALAS.command 已生成"
+
+    _log_message "EXEC" "▶ 生成 ${desktop_dir}/重启ALAS.command"
+    cat > "${desktop_dir}/重启ALAS.command" << 'CMD_EOF'
+#!/bin/bash
+(sleep 3 && open http://127.0.0.1:22267) &
+launchctl stop com.alas.run && launchctl start com.alas.run
+CMD_EOF
+    chmod +x "${desktop_dir}/重启ALAS.command"
+    _log_message "OK" "✓ 重启ALAS.command 已生成"
+
+    end_step "${ICON_OK}" "桌面快捷脚本已生成: ${desktop_dir}"
+}
+
 # ---------------------------- 完成摘要 ----------------------------
 print_completion() {
     echo_line ""
@@ -842,6 +878,7 @@ do_uninstall() {
     echo_line "  ${ICON_WARN}  ${YELLOW}  - Conda 虚拟环境 (alas)${NC}"
     echo_line "  ${ICON_WARN}  ${YELLOW}  - ALAS 目录: ${INSTALL_DIR}${NC}"
     echo_line "  ${ICON_WARN}  ${YELLOW}  - 启动脚本: ${SCRIPT_OUT_DIR}/run_alas.sh${NC}"
+    echo_line "  ${ICON_WARN}  ${YELLOW}  - 桌面快捷脚本: 运行ALAS/停止ALAS/重启ALAS.command${NC}"
     echo_line "  ${ICON_INFO}  ${GREEN}  依赖库 (brew, git, adb, conda) 不会被删除${NC}"
     echo_line ""
     _log_message "WARNING" "等待确认卸载"
@@ -896,6 +933,16 @@ do_uninstall() {
     _log_message "OK" "✓ 启动脚本已删除"
     end_step "${ICON_OK}" "启动脚本已删除"
 
+    start_step "正在删除桌面快捷脚本..."
+    _log_message "EXEC" "▶ rm -f ${HOME}/Desktop/运行ALAS.command"
+    rm -f "${HOME}/Desktop/运行ALAS.command"
+    _log_message "EXEC" "▶ rm -f ${HOME}/Desktop/停止ALAS.command"
+    rm -f "${HOME}/Desktop/停止ALAS.command"
+    _log_message "EXEC" "▶ rm -f ${HOME}/Desktop/重启ALAS.command"
+    rm -f "${HOME}/Desktop/重启ALAS.command"
+    _log_message "OK" "✓ 桌面快捷脚本已删除"
+    end_step "${ICON_OK}" "桌面快捷脚本已删除"
+
     if [[ "${KEEP_LOG}" == false ]]; then
         _log_message "INFO" "清理日志文件: ${LOGFILE}"
         rm -f "$LOGFILE"
@@ -922,6 +969,7 @@ main() {
     setup_conda_env
     configure_deploy
     create_launcher
+    create_desktop_commands
     configure_service
 
     print_completion
