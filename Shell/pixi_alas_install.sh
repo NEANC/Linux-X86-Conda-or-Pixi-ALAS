@@ -404,8 +404,7 @@ install_git_adb() {
                     _log_message "WARNING" "依赖缺失: ${pkg}"
                     missing_pkgs+=("$pkg")
                 fi
-            done
-            ;;
+            done ;;
         arch)
             local check_list=(git android-tools)
             for pkg in "${check_list[@]}"; do
@@ -415,8 +414,7 @@ install_git_adb() {
                     _log_message "WARNING" "依赖缺失: ${pkg}"
                     missing_pkgs+=("$pkg")
                 fi
-            done
-            ;;
+            done ;;
         centos|rhel|fedora)
             local check_list=(git adb)
             for pkg in "${check_list[@]}"; do
@@ -426,8 +424,7 @@ install_git_adb() {
                     _log_message "WARNING" "依赖缺失: ${pkg}"
                     missing_pkgs+=("$pkg")
                 fi
-            done
-            ;;
+            done ;;
         *)
             end_step "${ICON_ERROR}" "不支持的发行版: ${OS_ID}" "${RED}"
             exit 1 ;;
@@ -457,16 +454,14 @@ install_git_adb() {
                 _log_message "ERROR" "✗ apt-get install 失败"
                 end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
                 exit 1
-            fi
-            _log_message "OK" "✓ 依赖安装完成" ;;
+            fi ;;
         arch)
             _log_message "EXEC" "▶ pacman -Syy --noconfirm ${missing_pkgs[*]}"
             if ! pacman -Syy --noconfirm "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
                 _log_message "ERROR" "✗ pacman 安装失败"
                 end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
                 exit 1
-            fi
-            _log_message "OK" "✓ 依赖安装完成" ;;
+            fi ;;
         centos|rhel|fedora)
             if command -v dnf &>/dev/null; then
                 _log_message "EXEC" "▶ dnf makecache"
@@ -482,7 +477,6 @@ install_git_adb() {
                     end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
                     exit 1
                 fi
-                _log_message "OK" "✓ 依赖安装完成"
             else
                 _log_message "EXEC" "▶ yum install -y ${missing_pkgs[*]}"
                 if ! yum -q install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
@@ -490,12 +484,12 @@ install_git_adb() {
                     end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
                     exit 1
                 fi
-                _log_message "OK" "✓ 依赖安装完成"
             fi ;;
     esac
 
     _log_message "OK" "Git: $(git --version 2>/dev/null)"
     _log_message "OK" "ADB: $(adb --version 2>/dev/null | head -n1)"
+    _log_message "OK" "✓ 依赖安装完成"
     end_step "${ICON_OK}" "Git 已安装: $(git --version 2>/dev/null | awk '{print $NF}')"
     end_step "${ICON_OK}" "ADB 已安装: $(adb --version 2>/dev/null | head -n1 | awk '{print $NF}')"
 }
