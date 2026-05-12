@@ -66,6 +66,14 @@ _MIRROR_BASES=(
 _MIRROR_BASES_SORTED=()
 _MIRROR_BASES_TESTED=false
 
+_safe_curl() {
+    if command -v timeout &>/dev/null; then
+        timeout 10 curl "$@"
+    else
+        curl "$@"
+    fi
+}
+
 # 测试所有主站延迟，按速度排序（仅执行一次）
 _select_fastest_mirror_bases() {
     if [[ "$_MIRROR_BASES_TESTED" == true ]]; then
@@ -73,7 +81,7 @@ _select_fastest_mirror_bases() {
     fi
     local base time_m results=()
     for base in "${_MIRROR_BASES[@]}"; do
-        time_m=$(curl -o /dev/null -s --connect-timeout 3 --max-time 5 -w '%{time_total}' "$base" 2>/dev/null)
+        time_m=$(_safe_curl -o /dev/null -s --connect-timeout 3 --max-time 5 -w '%{time_total}' "$base" 2>/dev/null)
         time_m=${time_m:-999}
         _log_message "INFO" "  测速 ${base} : ${time_m}s"
         results+=("$(printf "%06.3f" "$time_m")|${base}")
@@ -89,7 +97,7 @@ _select_fastest_pypi_mirror() {
     for entry in "${_MIRROR_BASES_SORTED[@]}"; do
         base_url="${entry#*|}"
         candidate="${base_url}/pypi/simple"
-        http_code=$(curl -o /dev/null -s --connect-timeout 3 --max-time 5 -w '%{http_code}' "${candidate}/" 2>/dev/null)
+        http_code=$(_safe_curl -o /dev/null -s --connect-timeout 3 --max-time 5 -w '%{http_code}' "${candidate}/" 2>/dev/null)
         _log_message "INFO" "  验证 ${candidate}/ → HTTP ${http_code:-超时}"
         if [[ "$http_code" =~ ^(200|301|302|403)$ ]]; then
             _PYPI_MIRROR="$candidate"
@@ -108,7 +116,7 @@ _select_fastest_conda_mirror() {
     for entry in "${_MIRROR_BASES_SORTED[@]}"; do
         base_url="${entry#*|}"
         candidate="${base_url}/anaconda"
-        http_code=$(curl -o /dev/null -s --connect-timeout 3 --max-time 5 -w '%{http_code}' "${candidate}/" 2>/dev/null)
+        http_code=$(_safe_curl -o /dev/null -s --connect-timeout 3 --max-time 5 -w '%{http_code}' "${candidate}/" 2>/dev/null)
         _log_message "INFO" "  验证 ${candidate}/ → HTTP ${http_code:-超时}"
         if [[ "$http_code" =~ ^(200|301|302|403)$ ]]; then
             _CONDA_MIRROR="$candidate"
