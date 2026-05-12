@@ -47,6 +47,41 @@ _log_exec() {
     return $ret
 }
 
+# ---------------------------- PyPI 镜像测速 ----------------------------
+_select_fastest_pypi_mirror() {
+    local mirrors=(
+        "https://mirrors.aliyun.com/pypi/simple/"
+        "https://mirrors.huaweicloud.com/repository/pypi/simple"
+        "https://mirrors.cloud.tencent.com/pypi/simple/"
+        "https://mirror.nju.edu.cn/pypi/web/simple"
+        "https://pypi.tuna.tsinghua.edu.cn/simple"
+        "https://mirrors.bfsu.edu.cn/pypi/web/simple"
+        "https://mirrors.pku.edu.cn/pypi/web/simple"
+        "https://mirrors.njtech.edu.cn/pypi/web/simple"
+        "https://mirrors.hust.edu.cn/pypi/web/simple"
+        "https://mirrors.ustc.edu.cn/pypi/web/simple"
+        "https://mirror.sjtu.edu.cn/pypi/web/simple"
+        "https://mirrors.sustech.edu.cn/pypi/web/simple"
+        "https://mirrors.zju.edu.cn/pypi/web/simple"
+        "https://mirrors.jlu.edu.cn/pypi/web/simple"
+    )
+    local fastest="https://mirrors.cernet.edu.cn/pypi/web/simple"
+    local best_time=999
+    local mirror time_m
+
+    for mirror in "${mirrors[@]}"; do
+        time_m=$(curl -o /dev/null -s --connect-timeout 3 --max-time 5 -w '%{time_total}' "$mirror" 2>/dev/null)
+        time_m=${time_m:-999}
+        _log_message "INFO" "  测速 ${mirror} : ${time_m}s"
+        if awk "BEGIN{exit $time_m >= $best_time}"; then
+            best_time=$time_m
+            fastest=$mirror
+        fi
+    done
+    _PYPI_MIRROR="$fastest"
+    _log_message "OK" "选中的 PyPI 镜像: ${fastest} (延迟: ${best_time}s)"
+}
+
 # ---------------------------- 加载图标 ----------------------------
 
 ICON_INFO="💡"
@@ -537,6 +572,7 @@ YML_EOF
 
     if [[ "${USE_CN_MIRROR}" == true ]]; then
         _log_message "EXEC" "▶ 配置国内镜像源"
+        _select_fastest_pypi_mirror
         conda config --prepend channels https://mirror.nju.edu.cn/anaconda/cloud/conda-forge/ >> "$LOGFILE" 2>&1
         conda config --prepend channels https://mirror.nju.edu.cn/anaconda/pkgs/main/ >> "$LOGFILE" 2>&1
         conda config --append channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge/ >> "$LOGFILE" 2>&1
@@ -544,9 +580,9 @@ YML_EOF
         conda config --append channels https://mirror.sjtu.edu.cn/anaconda/cloud/conda-forge/ >> "$LOGFILE" 2>&1
         conda config --append channels https://mirror.sjtu.edu.cn/anaconda/pkgs/main/ >> "$LOGFILE" 2>&1
 
-        export PIP_INDEX_URL="https://pypi.mirrors.ustc.edu.cn/simple/"
-        export PIP_EXTRA_INDEX_URL="https://mirrors.aliyun.com/pypi/simple/ https://pypi.tuna.tsinghua.edu.cn/simple/"
-        export PIP_TRUSTED_HOST="pypi.mirrors.ustc.edu.cn mirrors.aliyun.com pypi.tuna.tsinghua.edu.cn"
+        export PIP_INDEX_URL="${_PYPI_MIRROR}"
+        export PIP_EXTRA_INDEX_URL="https://mirrors.cernet.edu.cn/pypi/web/simple"
+        export PIP_TRUSTED_HOST="mirror.nju.edu.cn pypi.tuna.tsinghua.edu.cn mirrors.aliyun.com pypi.mirrors.ustc.edu.cn mirrors.cernet.edu.cn"
         export PIP_TIMEOUT=60
         _log_message "OK" "✓ 国内镜像源已配置"
     fi
