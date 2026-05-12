@@ -529,6 +529,17 @@ alas-webapp = "==0.3.7"
 PIXI_EOF
     _log_message "OK" "✓ pixi.toml 已生成"
 
+    if [[ "${USE_CN_MIRROR}" == true ]]; then
+        _log_message "EXEC" "▶ 配置国内镜像源"
+        sed -i 's|channels = \["conda-forge"\]|channels = ["https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge"]|' pixi.toml
+        cat >> pixi.toml << 'PIXI_EOF'
+
+[pypi-options]
+index-url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+PIXI_EOF
+        _log_message "OK" "✓ 国内镜像源已配置至 pixi.toml"
+    fi
+
     if [[ -d ".pixi/envs/alas" || -f "pixi.lock" ]]; then
         _log_message "WARNING" "检测到已有 Pixi 环境，正在清理..."
         _log_exec "清理 Pixi 缓存" pixi clean cache -y || true
@@ -538,23 +549,6 @@ PIXI_EOF
         _log_message "OK" "✓ 旧环境已清理"
     fi
 
-    if [[ "${USE_CN_MIRROR}" == true ]]; then
-        _log_message "EXEC" "▶ 配置国内镜像源"
-        local PIXI_CONF="${HOME}/.pixi/config.toml"
-        local PIXI_CONF_BAK="${PIXI_CONF}.bak"
-
-        if [[ -f "${PIXI_CONF_BAK}" ]]; then
-            cp "${PIXI_CONF}" /tmp/pixi_config.toml.live 2>/dev/null || true
-            cp "${PIXI_CONF_BAK}" /tmp/pixi_config.toml.bak 2>/dev/null || true
-        elif [[ -f "${PIXI_CONF}" ]]; then
-            cp "${PIXI_CONF}" "${PIXI_CONF_BAK}"
-        fi
-
-        pixi config set --global pypi-config.index-url "https://mirror.nju.edu.cn/pypi/web/simple/" >> "$LOGFILE" 2>&1
-        pixi config set --global default-channels '["https://pypi.mirrors.ustc.edu.cn/simple/"]' >> "$LOGFILE" 2>&1
-        _log_message "OK" "✓ 国内镜像源已配置"
-    fi
-
     _log_message "EXEC" "▶ pixi install --manifest-path pixi.toml (这可能需要较长时间)"
     if ! pixi install --manifest-path pixi.toml >> "$LOGFILE" 2>&1; then
         _log_message "ERROR" "✗ pixi install 失败"
@@ -562,14 +556,6 @@ PIXI_EOF
         exit 1
     fi
     _log_message "OK" "✓ pixi install 完成"
-
-    if [[ "${USE_CN_MIRROR}" == true ]]; then
-        if [[ -f "${PIXI_CONF_BAK}" ]]; then
-            _log_message "EXEC" "▶ 恢复 Pixi 配置备份"
-            mv -f "${PIXI_CONF_BAK}" "${PIXI_CONF}" >> "$LOGFILE" 2>&1
-            _log_message "OK" "✓ Pixi 配置已恢复"
-        fi
-    fi
 
     _log_message "OK" "Pixi 虚拟环境已构建"
     end_step "${ICON_OK}" "虚拟环境已构建"
