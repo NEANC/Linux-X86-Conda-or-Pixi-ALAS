@@ -98,7 +98,7 @@ _select_fastest_pypi_mirror() {
         fi
     done
     _PYPI_MIRROR="https://mirrors.cernet.edu.cn/pypi/web/simple"
-    _log_message "WARNING" "所有候选均不可用，使用校园网联合镜像站自动选择: ${_PYPI_MIRROR}"
+    _log_message "WARNING" "所有候选均不可用，使用校园网联合镜像站: ${_PYPI_MIRROR}"
 }
 
 # 验证并选择 Conda 镜像（验证 /anaconda 目录是否存在）
@@ -117,7 +117,7 @@ _select_fastest_conda_mirror() {
         fi
     done
     _CONDA_MIRROR="https://mirrors.cernet.edu.cn/anaconda"
-    _log_message "WARNING" "所有候选均不可用，使用校园网联合镜像站自动选择: ${_CONDA_MIRROR}"
+    _log_message "WARNING" "所有候选均不可用，使用校园网联合镜像站: ${_CONDA_MIRROR}"
 }
 
 # ---------------------------- 加载图标 ----------------------------
@@ -844,16 +844,16 @@ do_uninstall() {
     echo_line "  ${ICON_WARN}  ${YELLOW}  - 启动脚本: ${SCRIPT_OUT_DIR}/run_alas.sh${NC}"
     echo_line "  ${ICON_INFO}  ${GREEN}  依赖库 (brew, git, adb, conda) 不会被删除${NC}"
     echo_line ""
-    _log_message "WARNING" "用户确认卸载流程开始"
+    _log_message "WARNING" "等待确认卸载"
     while true; do
         echo -n "  确认继续吗？ [yes/N] ："
         read -r CONFIRM < /dev/tty
         case "${CONFIRM}" in
             yes|YES)
-                _log_message "INFO" "用户已确认卸载"
+                _log_message "INFO" "已确认卸载"
                 break ;;
             no|NO|n|N)
-                _log_message "INFO" "用户取消卸载"
+                _log_message "INFO" "卸载取消"
                 echo_line "  ${ICON_INFO}  已取消卸载"; exit 0 ;;
             *)
                 echo_line "  ${ICON_WARN}  无效输入，请输入 yes 或 N" "${YELLOW}" ;;
