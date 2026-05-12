@@ -20,12 +20,6 @@ fi
 LOGFILE="/tmp/alas_install.log"
 touch "$LOGFILE" || { echo "无法创建日志文件 $LOGFILE"; exit 1; }
 
-# 调试追踪 (set -x) 输出到 /dev/null，终端和日志文件均不可见
-exec 9>/dev/null
-BASH_XTRACEFD=9
-PS4='+$(date "+%H:%M:%S.%3N | DEBUG  | ")'
-set -x
-
 # ---------------------------- 日志格式化 ----------------------------
 # 格式: LEVEL | HH:MM:SS.mmm | message
 # (等效于 Python: '%(levelname)s | %(asctime)s.%(msecs)03d | %(message)s', datefmt='%H:%M:%S')
@@ -142,7 +136,6 @@ _cleanup_spinner() {
 }
 
 start_step() {
-    set +x
     _cleanup_spinner
     local msg="$1"
     _log_message "START" "${msg}"
@@ -156,17 +149,14 @@ start_step() {
         done
     } &
     _SPINNER_PID=$!
-    set -x
 }
 
 end_step() {
-    set +x
     local icon="$1"
     local msg="$2"
     local color="${3:-${GREEN}}"
     _cleanup_spinner
     printf "\r${icon}  ${color}%s${NC}\033[K\n" "$msg"
-    set -x
     local level="INFO"
     case "$icon" in
         "${ICON_OK}")    level="OK"      ;;
@@ -614,7 +604,7 @@ dependencies:
 YML_EOF
     _log_message "OK" "✓ environment.yml 已生成"
 
-    set +x; eval "$("${CONDA_BIN}" shell.bash hook)" >> "$LOGFILE" 2>&1; set -x
+    eval "$("${CONDA_BIN}" shell.bash hook)" >> "$LOGFILE" 2>&1
     _log_message "OK" "✓ Conda shell hook 已加载"
 
     if [[ "${USE_CN_MIRROR}" == true ]]; then
@@ -810,7 +800,7 @@ do_uninstall() {
     start_step "正在清理 Conda 虚拟环境..."
     CONDA_BIN="${HOME}/miniforge3/bin/conda"
     command -v conda &>/dev/null && CONDA_BIN=$(command -v conda)
-    set +x; eval "$("${CONDA_BIN}" shell.bash hook)" >> "$LOGFILE" 2>&1; set -x
+    eval "$("${CONDA_BIN}" shell.bash hook)" >> "$LOGFILE" 2>&1
     if conda env list 2>/dev/null | grep -q "^alas "; then
         _log_message "EXEC" "▶ conda env remove -n alas"
         _log_exec "移除 Conda 环境 (方法1: conda env remove)" conda env remove -n alas -y || \
