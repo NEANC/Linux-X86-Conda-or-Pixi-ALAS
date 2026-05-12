@@ -47,79 +47,6 @@ _log_exec() {
     return $ret
 }
 
-# ---------------------------- 镜像站测速与选择 ----------------------------
-# 公共镜像主站列表（校园网镜像站）
-_MIRROR_BASES=(
-    "https://mirrors.hit.edu.cn"
-    "https://mirror.nju.edu.cn"
-    "https://mirrors.pku.edu.cn"
-    "https://mirrors.njtech.edu.cn"
-    "https://mirror.nyist.edu.cn"
-    "https://mirrors.ustc.edu.cn"
-    "https://mirror.sjtu.edu.cn"
-    "https://mirrors.sustech.edu.cn"
-    "https://mirrors.zju.edu.cn"
-    "https://mirror.lzu.edu.cn"
-    "https://mirrors.cqupt.edu.cn"
-    "https://mirrors.tuna.tsinghua.edu.cn"
-)
-_MIRROR_BASES_SORTED=()
-_MIRROR_BASES_TESTED=false
-
-# 测试所有主站延迟，按速度排序（仅执行一次）
-_select_fastest_mirror_bases() {
-    if [[ "$_MIRROR_BASES_TESTED" == true ]]; then
-        return
-    fi
-    local base time_m results=()
-    for base in "${_MIRROR_BASES[@]}"; do
-        time_m=$(timeout 10 curl -o /dev/null -s --connect-timeout 3 --max-time 5 -w '%{time_total}' "$base" 2>/dev/null)
-        time_m=${time_m:-999}
-        _log_message "INFO" "  测速 ${base} : ${time_m}s"
-        results+=("$(printf "%06.3f" "$time_m")|${base}")
-    done
-    IFS=$'\n' _MIRROR_BASES_SORTED=($(sort <<<"${results[*]}")); unset IFS
-    _MIRROR_BASES_TESTED=true
-}
-
-# 验证并选择 PyPI 镜像（验证 /pypi/simple/ 目录是否存在）
-_select_fastest_pypi_mirror() {
-    _select_fastest_mirror_bases
-    local entry base_url http_code candidate
-    for entry in "${_MIRROR_BASES_SORTED[@]}"; do
-        base_url="${entry#*|}"
-        candidate="${base_url}/pypi/simple"
-        http_code=$(timeout 10 curl -o /dev/null -s --connect-timeout 3 --max-time 5 -w '%{http_code}' "${candidate}/" 2>/dev/null)
-        _log_message "INFO" "  验证 ${candidate}/ → HTTP ${http_code:-超时}"
-        if [[ "$http_code" =~ ^(200|301|302|403)$ ]]; then
-            _PYPI_MIRROR="$candidate"
-            _log_message "OK" "选中的 PyPI 镜像: ${_PYPI_MIRROR} (HTTP ${http_code})"
-            return 0
-        fi
-    done
-    _PYPI_MIRROR="https://mirrors.cernet.edu.cn/pypi/web/simple"
-    _log_message "WARNING" "所有候选均不可用，使用校园网联合镜像站: ${_PYPI_MIRROR}"
-}
-
-# 验证并选择 Conda 镜像（验证 /cloud/conda-forge/ 通道）
-_select_fastest_conda_mirror() {
-    _select_fastest_mirror_bases
-    local entry base_url http_code candidate
-    for entry in "${_MIRROR_BASES_SORTED[@]}"; do
-        base_url="${entry#*|}"
-        candidate="${base_url}/anaconda"
-        http_code=$(timeout 10 curl -o /dev/null -s --connect-timeout 3 --max-time 5 -w '%{http_code}' "${candidate}/cloud/conda-forge/" 2>/dev/null)
-        _log_message "INFO" "  验证 ${candidate}/cloud/conda-forge/ → HTTP ${http_code:-超时}"
-        if [[ "$http_code" =~ ^(200|301|302|403)$ ]]; then
-            _CONDA_MIRROR="$candidate"
-            _log_message "OK" "选中的 Conda 镜像: ${_CONDA_MIRROR} (HTTP ${http_code})"
-            return 0
-        fi
-    done
-    _CONDA_MIRROR="https://mirrors.cernet.edu.cn/anaconda"
-    _log_message "WARNING" "所有候选均不可用，使用校园网联合镜像站: ${_CONDA_MIRROR}"
-}
-
 # ---------------------------- 加载图标 ----------------------------
 
 ICON_INFO="💡"
@@ -597,14 +524,15 @@ PIXI_EOF
     _log_message "OK" "✓ pixi.toml 已生成"
 
     if [[ "${USE_CN_MIRROR}" == true ]]; then
-        _log_message "EXEC" "▶ 配置国内镜像源"
-        _select_fastest_pypi_mirror
-        _select_fastest_conda_mirror
-        sed -i "s|channels = \\[\"conda-forge\"\\]|channels = [\"${_CONDA_MIRROR}/cloud/conda-forge\"]|" pixi.toml
+        local cernet_conda="https://mirrors.cernet.edu.cn/anaconda"
+        local cernet_pypi="https://mirrors.cernet.edu.cn/pypi/web/simple"
+
+        _log_message "EXEC" "▶ 配置国内镜像源 (cernet)"
+        sed -i "s|channels = \\[\"conda-forge\"\\]|channels = [\"${cernet_conda}/cloud/conda-forge\"]|" pixi.toml
         cat >> pixi.toml << PIXI_EOF
 
 [pypi-options]
-index-url = "${_PYPI_MIRROR}"
+index-url = "${cernet_pypi}"
 PIXI_EOF
         _log_message "OK" "✓ 国内镜像源已配置至 pixi.toml"
     fi
