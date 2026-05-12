@@ -267,6 +267,7 @@ install_homebrew() {
         return
     fi
 
+    start_step "正在安装 Homebrew..."
     _log_message "EXEC" "▶ 安装 Homebrew"
     if ! /bin/bash -c "$(curl -fsSL ${GH_PROXY}https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" >> "$LOGFILE" 2>&1; then
         _log_message "ERROR" "✗ Homebrew 安装失败"
@@ -700,9 +701,9 @@ EOF
     end_step "${ICON_OK}" "启动脚本已生成: ${SCRIPT_OUT_DIR}/run_alas.sh"
 }
 
-# ---------------------------- 第7步: 开机自启 (LaunchAgent) ----------------------------
+# ---------------------------- 第7步: launchctl 服务 ----------------------------
 configure_service() {
-    start_step "正在配置开机自启..."
+    start_step "正在配置 launchctl 服务..."
 
     local run_at_load="false"
     if [[ "${SKIP_SERVICE}" == false ]]; then
@@ -744,7 +745,7 @@ EOF
     launchctl bootstrap "gui/$(id -u)" "${plist_dir}/com.alas.run.plist"
 
     if launchctl list 2>/dev/null | grep -q "com.alas.run"; then
-        _log_message "OK" "launchd 服务已注册"
+        _log_message "OK" "launchctl 服务已注册"
         _log_message "EXEC" "▶ launchctl stop/start com.alas.run（立即启动）"
         launchctl stop com.alas.run 2>/dev/null || true
         launchctl start com.alas.run

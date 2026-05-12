@@ -294,6 +294,7 @@ install_pixi() {
         return
     fi
 
+    start_step "正在安装 Pixi 包管理器..."
     # 官方安装方式，输出重定向到日志文件
     _log_message "EXEC" "▶ 安装 Pixi: curl -fsSL https://pixi.sh/install.sh | sh"
     if ! curl -fsSL https://pixi.sh/install.sh | sh >> "$LOGFILE" 2>&1; then
