@@ -293,11 +293,20 @@ install_pixi() {
     fi
 
     start_step "正在安装 Pixi 包管理器..."
-    # 官方安装方式，输出重定向到日志文件
-    _log_message "EXEC" "▶ 安装 Pixi: curl -fsSL https://pixi.sh/install.sh | sh"
-    if ! curl -fsSL https://pixi.sh/install.sh | sh >> "$LOGFILE" 2>&1; then
-        end_step "${ICON_ERROR}" "Pixi 安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
-        exit 1
+
+    if [[ "${USE_CN_MIRROR}" == true ]]; then
+        local pixi_dl="${GH_PROXY}https://github.com/prefix-dev/pixi/releases/latest/download/pixi-x86_64-unknown-linux-musl.tar.gz"
+        _log_message "EXEC" "▶ 安装 Pixi (国内源): PIXI_DOWNLOAD_URL=${pixi_dl}"
+        if ! curl -fsSL https://pixi.sh/install.sh | PIXI_DOWNLOAD_URL="${pixi_dl}" bash >> "$LOGFILE" 2>&1; then
+            end_step "${ICON_ERROR}" "Pixi 安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+            exit 1
+        fi
+    else
+        _log_message "EXEC" "▶ 安装 Pixi: curl -fsSL https://pixi.sh/install.sh | sh"
+        if ! curl -fsSL https://pixi.sh/install.sh | sh >> "$LOGFILE" 2>&1; then
+            end_step "${ICON_ERROR}" "Pixi 安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+            exit 1
+        fi
     fi
     _log_message "OK" "✓ Pixi 安装命令已完成"
 
