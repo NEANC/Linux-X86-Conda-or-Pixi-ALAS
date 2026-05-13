@@ -277,7 +277,7 @@ detect_os() {
 
 # ---------------------------- 第1步: 安装/激活 Pixi ----------------------------
 install_pixi() {
-    start_step "正在检查 Pixi 包管理器..."
+    start_step "正在检查 Pixi..."
 
     if command -v pixi &>/dev/null; then
         PIXI_VER=$(pixi --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')
@@ -291,9 +291,8 @@ install_pixi() {
         end_step "${ICON_OK}" "Pixi 已激活: ${PIXI_VER}"
         return
     fi
-
-    start_step "正在安装 Pixi 包管理器..."
-
+    _log_message "ERROR" "未检测到 Pixi"
+    start_step "正在安装 Pixi..."
     if [[ "${USE_CN_MIRROR}" == true ]]; then
         local pixi_dl="${GH_PROXY}https://github.com/prefix-dev/pixi/releases/latest/download/pixi-x86_64-unknown-linux-musl.tar.gz"
         _log_message "EXEC" "▶ 安装 Pixi (国内源): PIXI_DOWNLOAD_URL=${pixi_dl}"
@@ -308,7 +307,7 @@ install_pixi() {
             exit 1
         fi
     fi
-    _log_message "OK" "✓ Pixi 安装命令已完成"
+    _log_message "OK" "✓ Pixi 安装已完成"
 
     export PATH="${HOME}/.pixi/bin:${PATH}"
     if command -v pixi &>/dev/null; then
@@ -529,7 +528,6 @@ PIXI_EOF
         _log_message "EXEC" "▶ 配置国内镜像源 (cernet)"
         sed -i "s|channels = \\[\"conda-forge\"\\]|channels = [\"${cernet_conda}/cloud/conda-forge\"]|" pixi.toml
         cat >> pixi.toml << PIXI_EOF
-
 [pypi-options]
 index-url = "${cernet_pypi}"
 PIXI_EOF
@@ -545,7 +543,7 @@ PIXI_EOF
         _log_message "OK" "✓ 旧环境已清理"
     fi
 
-    _log_message "EXEC" "▶ pixi install --manifest-path pixi.toml (这可能需要较长时间)"
+    _log_message "EXEC" "▶ pixi install --manifest-path pixi.toml"
     if ! pixi install --manifest-path pixi.toml >> "$LOGFILE" 2>&1; then
         _log_message "ERROR" "✗ pixi install 失败"
         end_step "${ICON_ERROR}" "虚拟环境构建错误，详情请阅读日志：${LOGFILE}" "${RED}"
@@ -646,7 +644,7 @@ do_uninstall() {
     echo_line "  ${ICON_WARN}  ${YELLOW}  - Pixi 虚拟环境${NC}"
     echo_line "  ${ICON_WARN}  ${YELLOW}  - ALAS 目录: ${INSTALL_DIR}${NC}"
     echo_line "  ${ICON_WARN}  ${YELLOW}  - 启动脚本: ${SCRIPT_OUT_DIR}/run_alas.sh${NC}"
-    echo_line "  ${ICON_INFO}  ${GREEN}  依赖库 (git, adb, pixi) 不会被删除${NC}"
+    echo_line "  ${ICON_INFO}  ${GREEN}  Git, ADB, Pixi 不会被删除${NC}"
     echo_line ""
     _log_message "WARNING" "等待确认卸载"
     while true; do
@@ -689,11 +687,11 @@ do_uninstall() {
     cd "${INSTALL_DIR}"
     if [[ -d ".pixi" || -f "pixi.lock" ]]; then
         _log_message "EXEC" "▶ 清理 Pixi 环境"
-        _log_exec "清理 Pixi 环境 (方法1: pixi clean --environment alas)" pixi clean --environment alas || \
+        _log_exec "清理 Pixi 环境 (方法1: pixi clean --environment default)" pixi clean --environment default || \
         _log_exec "清理 Pixi 环境 (方法2: pixi clean)" pixi clean || \
         _log_exec "清理 Pixi 环境 (方法3: rm -rf .pixi pixi.lock)" rm -rf .pixi pixi.lock
     else
-        _log_message "INFO" "未检测到 Pixi 环境，跳过"
+        _log_message "INFO" "未检测到 Pixi 环境，跳过清理"
     fi
     end_step "${ICON_OK}" "虚拟环境已清理"
 
@@ -725,18 +723,15 @@ main() {
         do_uninstall
         exit 0
     fi
-
     detect_os
     gather_system_info
     print_header
-
     install_pixi
     install_git_adb
     clone_alas
     setup_pixi_env
     configure_deploy
     configure_service
-
     print_completion
     if [[ "${KEEP_LOG}" == false ]]; then
         _log_message "INFO" "安装完成，清理日志文件: ${LOGFILE}"
@@ -745,5 +740,4 @@ main() {
         echo_line "  ${ICON_INFO}  日志已保存至：${LOGFILE}"
     fi
 }
-
 main

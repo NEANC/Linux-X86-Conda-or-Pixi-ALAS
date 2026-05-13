@@ -6,17 +6,16 @@
 
 ## 脚本列表
 
-| 脚本                            | 适用平台              | 包管理器                       |
+| 脚本                            | 适用平台              | 管理器                         |
 | ------------------------------- | --------------------- | ------------------------------ |
 | `pixi_alas_install.sh`          | Linux x86-64          | Pixi                           |
 | `conda_alas_install.sh`         | Linux x86-64          | Conda (Miniforge)              |
 | `arm_mac_conda_alas_install.sh` | macOS (Apple Silicon) | Conda (Miniforge via Homebrew) |
+| `arm_mac_pixi_alas_install.sh`  | macOS (Apple Silicon) | Pixi                           |
 
 ---
 
 ## 参数
-
-所有脚本均支持以下选项：
 
 | 参数                   | 说明                                                 | 备注                                        |
 | ---------------------- | ---------------------------------------------------- | ------------------------------------------- |
@@ -39,7 +38,7 @@
 curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/pixi_alas_install.sh | sudo bash
 
 # 使用国内镜像
-curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/pixi_alas_install.sh | sudo bash -s -- -t CN
+curl -fsSL https://ghfast.top/https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/pixi_alas_install.sh | sudo bash -s -- -t CN
 
 # 卸载
 curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/pixi_alas_install.sh | sudo bash -s -- --uninstall
@@ -52,7 +51,7 @@ curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/
 curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/conda_alas_install.sh | sudo bash
 
 # 使用国内镜像
-curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/conda_alas_install.sh | sudo bash -s -- -t CN
+curl -fsSL https://ghfast.top/https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/conda_alas_install.sh | sudo bash -s -- -t CN
 
 # 卸载
 curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/conda_alas_install.sh | sudo bash -s -- --uninstall
@@ -60,7 +59,9 @@ curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/
 
 ---
 
-## ARM macOS 部署脚本
+## ARM macOS
+
+### Conda 版部署脚本
 
 ```bash
 # 标准安装
@@ -70,13 +71,32 @@ curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/
 curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/arm_mac_conda_alas_install.sh | bash -s -- -S
 
 # 使用国内镜像
-curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/arm_mac_conda_alas_install.sh | bash -s -- -t CN
+curl -fsSL https://ghfast.top/https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/arm_mac_conda_alas_install.sh | bash -s -- -t CN
 
 # 使用国内镜像并配置开机自启
-curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/arm_mac_conda_alas_install.sh | bash -s -- -t CN -S
+curl -fsSL https://ghfast.top/https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/arm_mac_conda_alas_install.sh | bash -s -- -t CN -S
 
 # 卸载
 curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/arm_mac_conda_alas_install.sh | bash -s -- --uninstall
+```
+
+### Pixi 版部署脚本
+
+```bash
+# 标准安装
+curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/arm_mac_pixi_alas_install.sh | bash
+
+# 配置开机自启
+curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/arm_mac_pixi_alas_install.sh | bash -s -- -S
+
+# 使用国内镜像
+curl -fsSL https://ghfast.top/https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/arm_mac_pixi_alas_install.sh | bash -s -- -t CN
+
+# 使用国内镜像并配置开机自启
+curl -fsSL https://ghfast.top/https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/arm_mac_pixi_alas_install.sh | bash -s -- -t CN -S
+
+# 卸载
+curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/arm_mac_pixi_alas_install.sh | bash -s -- --uninstall
 ```
 
 ---

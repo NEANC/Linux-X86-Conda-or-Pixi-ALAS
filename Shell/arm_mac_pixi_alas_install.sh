@@ -1,6 +1,6 @@
 #!/bin/bash
 #==============================================================================
-# AzurLaneAutoScript macOS ARM Conda 一键部署脚本
+# AzurLaneAutoScript macOS ARM Pixi 一键部署脚本
 # 特性：
 #   - 静默执行，系统信息面板，步骤反馈
 #==============================================================================
@@ -79,7 +79,7 @@ USE_CN_MIRROR=false
 GH_PROXY=""
 WORK_DIR=""
 ALAS_DIR=""
-CONDA_BIN=""
+PIXI_BIN_PATH=""
 USER_NAME="$(whoami)"
 _SPINNER_PID=""
 SKIP_SERVICE=true
@@ -236,7 +236,7 @@ print_header() {
     echo_line " / ___ |/ /___/ ___ |___/ / "
     echo_line "/_/  |_/_____/_/  |_/____/  "
     echo_line "${NC}"
-    echo_line "  ${ICON_COMPUTER}  ARM macOS 中基于 Conda 的 ALAS 部署脚本"
+    echo_line "  ${ICON_COMPUTER}  ARM macOS 中基于 Pixi 的 ALAS 部署脚本"
     echo_line "  ─────────────────────────────────────────────────"
     echo_line "  ${ICON_INFO}  当前局域网 IP  : ${BLUE}${NET_IP}${NC}"
     echo_line "  ${ICON_GEAR}   macOS 版本     : ${GREEN}${MACOS_VER}${NC}"
@@ -289,12 +289,12 @@ install_homebrew() {
     fi
 }
 
-# ---------------------------- 第2步: 安装 Miniforge、Git 和 ADB ----------------------------
+# ---------------------------- 第2步: 安装 Git 和 ADB ----------------------------
 install_packages() {
     start_step "正在检查依赖..."
 
     local missing_formulae=()
-    local check_list=(miniforge git android-platform-tools)
+    local check_list=(git android-platform-tools)
 
     for pkg in "${check_list[@]}"; do
         if brew list --formula "$pkg" &>/dev/null; then
@@ -306,10 +306,8 @@ install_packages() {
     done
 
     if [[ ${#missing_formulae[@]} -eq 0 ]]; then
-        CONDA_BIN=$(command -v conda 2>/dev/null || echo "${HOME}/miniforge3/bin/conda")
         end_step "${ICON_OK}" "Git 已安装: $(git --version 2>/dev/null | awk '{print $NF}')"
         end_step "${ICON_OK}" "ADB 已安装: $(adb --version 2>/dev/null | head -n1 | awk '{print $NF}')"
-        end_step "${ICON_OK}" "Conda 已就绪: $(conda --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')"
         return
     fi
 
@@ -325,14 +323,58 @@ install_packages() {
     if [[ -x /opt/homebrew/bin/brew ]]; then
         eval "$(/opt/homebrew/bin/brew shellenv)" 2>/dev/null || true
     fi
-    CONDA_BIN=$(command -v conda 2>/dev/null || echo "${HOME}/miniforge3/bin/conda")
     end_step "${ICON_OK}" "Git 已安装: $(git --version 2>/dev/null | awk '{print $NF}')"
     end_step "${ICON_OK}" "ADB 已安装: $(adb --version 2>/dev/null | head -n1 | awk '{print $NF}')"
-    end_step "${ICON_OK}" "Conda 已就绪: $(conda --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')"
     _log_message "OK" "✓ 依赖安装完成"
 }
 
-# ---------------------------- 第3步: 克隆仓库 ----------------------------
+# ---------------------------- 第3步: 安装 Pixi 包管理器 ----------------------------
+install_pixi() {
+    start_step "正在检查 Pixi 包管理器..."
+
+    if command -v pixi &>/dev/null; then
+        PIXI_VER=$(pixi --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')
+        end_step "${ICON_OK}" "Pixi 已安装: ${PIXI_VER}"
+        return
+    fi
+
+    if [[ -x "${HOME}/.pixi/bin/pixi" ]]; then
+        export PATH="${HOME}/.pixi/bin:${PATH}"
+        PIXI_VER=$(pixi --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')
+        end_step "${ICON_OK}" "Pixi 已激活: ${PIXI_VER}"
+        return
+    fi
+
+    start_step "正在安装 Pixi 包管理器..."
+
+    if [[ "${USE_CN_MIRROR}" == true ]]; then
+        local pixi_dl="${GH_PROXY}https://github.com/prefix-dev/pixi/releases/latest/download/pixi-aarch64-apple-darwin.tar.gz"
+        _log_message "EXEC" "▶ 安装 Pixi (国内源): PIXI_DOWNLOAD_URL=${pixi_dl}"
+        if ! curl -fsSL https://pixi.sh/install.sh | PIXI_DOWNLOAD_URL="${pixi_dl}" bash >> "$LOGFILE" 2>&1; then
+            end_step "${ICON_ERROR}" "Pixi 安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+            exit 1
+        fi
+    else
+        _log_message "EXEC" "▶ 安装 Pixi: curl -fsSL https://pixi.sh/install.sh | sh"
+        if ! curl -fsSL https://pixi.sh/install.sh | sh >> "$LOGFILE" 2>&1; then
+            end_step "${ICON_ERROR}" "Pixi 安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+            exit 1
+        fi
+    fi
+    _log_message "OK" "✓ Pixi 安装命令已完成"
+
+    export PATH="${HOME}/.pixi/bin:${PATH}"
+    if command -v pixi &>/dev/null; then
+        PIXI_VER=$(pixi --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')
+        end_step "${ICON_OK}" "Pixi 已安装: ${PIXI_VER}"
+    else
+        _log_message "ERROR" "Pixi 安装后未找到可执行文件"
+        end_step "${ICON_ERROR}" "Pixi 安装失败，请查看日志: ${LOGFILE}" "${RED}"
+        exit 1
+    fi
+}
+
+# ---------------------------- 第4步: 克隆 ALAS 仓库 ----------------------------
 clone_alas() {
     start_step "正在克隆 ALAS 仓库..."
 
@@ -360,9 +402,9 @@ clone_alas() {
     end_step "${ICON_OK}" "ALAS 仓库已克隆"
 }
 
-# ---------------------------- 第4步: 配置虚拟环境 ----------------------------
-setup_conda_env() {
-    start_step "正在配置 Conda 虚拟环境..."
+# ---------------------------- 第5步: 配置 Pixi 虚拟环境 ----------------------------
+setup_pixi_env() {
+    start_step "正在配置 Pixi 虚拟环境..."
 
     cd "${ALAS_DIR}"
     if [[ -f environment.yml ]]; then
@@ -593,52 +635,72 @@ dependencies:
 YML_EOF
     _log_message "OK" "✓ environment.yml 已生成"
 
-    eval "$("${CONDA_BIN}" shell.bash hook)" >> "$LOGFILE" 2>&1
-    _log_message "OK" "✓ Conda shell hook 已加载"
+    if [[ -f pixi.toml ]]; then
+        _log_message "EXEC" "▶ 备份已有 pixi.toml → pixi.toml.bak"
+        cp pixi.toml pixi.toml.bak
+    fi
+
+    if [[ -f "pixi.lock" ]]; then
+        _log_message "WARNING" "检测到已有 Pixi 锁定文件，正在清理..."
+        rm -f pixi.lock
+        _log_message "OK" "✓ 旧锁定文件已移除"
+    fi
 
     if [[ "${USE_CN_MIRROR}" == true ]]; then
         local cernet_conda="https://mirrors.cernet.edu.cn/anaconda"
         local cernet_pypi="https://mirrors.cernet.edu.cn/pypi/web/simple"
 
-        _log_message "EXEC" "▶ 配置国内镜像源 (cernet)"
-        conda config --prepend channels "${cernet_conda}/cloud/conda-forge/" >> "$LOGFILE" 2>&1
-        conda config --prepend channels "${cernet_conda}/pkgs/main/" >> "$LOGFILE" 2>&1
+        _log_message "EXEC" "▶ pixi init --import environment.yml（使用国内镜像源）"
+        if ! PIXI_DOWNLOAD_URL="https://github.com/prefix-dev/pixi/releases/latest/download/pixi-aarch64-apple-darwin.tar.gz" \
+            pixi init --import environment.yml >> "$LOGFILE" 2>&1; then
+            _log_message "ERROR" "✗ pixi init 失败"
+            end_step "${ICON_ERROR}" "虚拟环境配置初始化错误，详情请阅读日志：${LOGFILE}" "${RED}"
+            exit 1
+        fi
 
-        export PIP_INDEX_URL="${cernet_pypi}"
-        export PIP_TRUSTED_HOST="mirrors.cernet.edu.cn"
-        export PIP_TIMEOUT=60
-        _log_message "OK" "✓ 国内镜像源已配置"
+        sed -i '' "s|channels = \[.*\]|channels = [\"${cernet_conda}/cloud/conda-forge\", \"${cernet_conda}/pkgs/main\"]|" pixi.toml
+
+        cat >> pixi.toml << PIXI_EOF
+[pypi-options]
+index-url = "${cernet_pypi}"
+PIXI_EOF
+        _log_message "OK" "✓ 国内镜像源已配置至 pixi.toml"
+    else
+        _log_message "EXEC" "▶ pixi init --import environment.yml"
+        if ! pixi init --import environment.yml >> "$LOGFILE" 2>&1; then
+            _log_message "ERROR" "✗ pixi init 失败"
+            end_step "${ICON_ERROR}" "虚拟环境配置初始化错误，详情请阅读日志：${LOGFILE}" "${RED}"
+            exit 1
+        fi
+    fi
+    _log_message "OK" "✓ pixi init 完成"
+
+    _log_message "EXEC" "▶ 添加 start 任务至 pixi.toml"
+    cat >> pixi.toml << 'PIXI_EOF'
+[tasks]
+start = "python gui.py"
+PIXI_EOF
+    _log_message "OK" "✓ start 任务已配置"
+
+    if [[ -d ".pixi/envs/alas" || -f "pixi.lock" ]]; then
+        _log_message "WARNING" "检测到已有 Pixi 环境，正在清理..."
+        _log_exec "清理 Pixi 缓存" pixi clean cache -y || true
+        _log_exec "清理 Pixi 环境 (方法1: pixi clean --environment default)" pixi clean --environment default || \
+        _log_exec "清理 Pixi 环境 (方法2: pixi clean)" pixi clean || \
+        _log_exec "清理 Pixi 环境 (方法3: rm -rf .pixi pixi.lock)" rm -rf .pixi pixi.lock
+        _log_message "OK" "✓ 旧环境已清理"
     fi
 
-    if conda env list 2>/dev/null | grep -q "^alas "; then
-        _log_message "WARNING" "检测到已有 alas 环境，正在移除..."
-        _log_exec "移除旧环境 (方法1: conda env remove)" conda env remove -n alas -y || \
-        _log_exec "移除旧环境 (方法2: rm -rf)" rm -rf "$(conda info --base 2>/dev/null)/envs/alas"
-        _log_message "OK" "✓ 旧环境已移除"
-    fi
-
-    _log_message "EXEC" "▶ conda env create -f environment.yml (这可能需要较长时间)"
-    if ! conda env create -f environment.yml >> "$LOGFILE" 2>&1; then
-        _log_message "ERROR" "✗ conda env create 失败"
+    _log_message "EXEC" "▶ pixi install --manifest-path pixi.toml"
+    if ! pixi install --manifest-path pixi.toml >> "$LOGFILE" 2>&1; then
+        _log_message "ERROR" "✗ pixi install 失败"
         end_step "${ICON_ERROR}" "虚拟环境构建错误，详情请阅读日志：${LOGFILE}" "${RED}"
         exit 1
-    fi
-    _log_message "OK" "✓ conda env create 完成"
-
-    unset PIP_INDEX_URL
-
-    _log_message "EXEC" "▶ 验证环境: python -c 'import alas_webapp'"
-    if ! conda run -n alas python -c "import alas_webapp" >> "$LOGFILE" 2>&1; then
-        _log_message "WARNING" "⚠ 依赖完整性检查未通过，尝试修复..."
-        conda env update -n alas --file environment.yml >> "$LOGFILE" 2>&1 || true
-        _log_message "OK" "✓ 依赖修复完成"
-    else
-        _log_message "OK" "✓ 依赖完整性检查通过"
     fi
     end_step "${ICON_OK}" "虚拟环境已构建"
 }
 
-# ---------------------------- 第5步: 配置 deploy.yaml ----------------------------
+# ---------------------------- 第6步: 配置部署 ----------------------------
 configure_deploy() {
     start_step "复制 deploy.yaml..."
 
@@ -660,26 +722,24 @@ configure_deploy() {
     fi
 }
 
-# ---------------------------- 第6步: 创建启动脚本 ----------------------------
+# ---------------------------- 第7步: 创建启动脚本 ----------------------------
 create_launcher() {
     start_step "正在创建启动脚本..."
 
-    _log_message "EXEC" "▶ 生成 ${SCRIPT_OUT_DIR}/run_alas.sh"
-    _log_message "INFO" "  Conda: ${CONDA_BIN}"
-    _log_message "INFO" "  ALAS 目录: ${ALAS_DIR}"
+    PIXI_BIN_PATH=$(command -v pixi)
 
     cat > "${SCRIPT_OUT_DIR}/run_alas.sh" <<EOF
 #!/bin/bash
-eval "\$(${CONDA_BIN} shell.bash hook)"
-conda activate alas
-cd ${ALAS_DIR}
-python gui.py
+cd "${ALAS_DIR}"
+"${PIXI_BIN_PATH}" run start
 EOF
     chmod +x "${SCRIPT_OUT_DIR}/run_alas.sh"
-    end_step "${ICON_OK}" "启动脚本已生成: ${SCRIPT_OUT_DIR}/run_alas.sh"
+    _log_message "OK" "✓ 启动脚本已创建: ${SCRIPT_OUT_DIR}/run_alas.sh"
+
+    end_step "${ICON_OK}" "启动脚本已创建: ${SCRIPT_OUT_DIR}/run_alas.sh"
 }
 
-# ---------------------------- 第7步: launchctl 服务 ----------------------------
+# ---------------------------- 第8步: 配置 launchctl 服务 ----------------------------
 configure_service() {
     start_step "正在配置 launchctl 服务..."
 
@@ -734,11 +794,11 @@ EOF
             end_step "${ICON_OK}" "系统服务已配置，请在下次重启后双击 运行ALAS.command 启动 ALAS"
         fi
     else
-        end_step "${ICON_WARN}" "未成功注册 launchd 服务，请检查 plist 文件" "${YELLOW}"
+end_step "${ICON_WARN}" "未成功注册 launchd 服务，请检查 plist 文件" "${YELLOW}"
     fi
 }
 
-# ---------------------------- 第8步: 创建桌面快捷脚本 ----------------------------
+# ---------------------------- 第9步: 创建桌面快捷脚本 ----------------------------
 create_desktop_commands() {
     start_step "正在创建桌面快捷脚本..."
 
@@ -792,11 +852,11 @@ do_uninstall() {
     echo_line ""
     echo_line "  ${ICON_WARN}  ${YELLOW}即将执行 ALAS 卸载，将删除以下内容：${NC}"
     echo_line "  ${ICON_WARN}  ${YELLOW}  - 开机自启服务${NC}"
-    echo_line "  ${ICON_WARN}  ${YELLOW}  - Conda 虚拟环境${NC}"
+    echo_line "  ${ICON_WARN}  ${YELLOW}  - Pixi 虚拟环境${NC}"
     echo_line "  ${ICON_WARN}  ${YELLOW}  - ALAS 目录: ${INSTALL_DIR}${NC}"
     echo_line "  ${ICON_WARN}  ${YELLOW}  - 启动脚本: ${SCRIPT_OUT_DIR}/run_alas.sh${NC}"
     echo_line "  ${ICON_WARN}  ${YELLOW}  - 桌面快捷脚本: 运行ALAS/停止ALAS/重启ALAS.command${NC}"
-    echo_line "  ${ICON_INFO}  ${GREEN}  Homebrew, git, adb, Miniforge 不会被删除${NC}"
+    echo_line "  ${ICON_INFO}  ${GREEN}  Homebrew, git, adb, pixi 不会被删除${NC}"
     echo_line ""
     _log_message "WARNING" "等待确认卸载"
     while true; do
@@ -823,21 +883,21 @@ do_uninstall() {
     rm -f "${HOME}/Library/LaunchAgents/com.alas.run.plist"
     end_step "${ICON_OK}" "服务已停止并移除"
 
-    start_step "正在清理 Conda 虚拟环境..."
-    CONDA_BIN="${HOME}/miniforge3/bin/conda"
-    command -v conda &>/dev/null && CONDA_BIN=$(command -v conda)
-    eval "$("${CONDA_BIN}" shell.bash hook)" >> "$LOGFILE" 2>&1
-    if conda env list 2>/dev/null | grep -q "^alas "; then
-        _log_message "EXEC" "▶ conda env remove -n alas"
-        _log_exec "移除 Conda 环境 (方法1: conda env remove)" conda env remove -n alas -y || \
-        _log_exec "移除 Conda 环境 (方法2: rm -rf)" rm -rf "$(conda info --base 2>/dev/null)/envs/alas"
+    start_step "正在清理 Pixi 虚拟环境..."
+    cd "${INSTALL_DIR}" 2>/dev/null || true
+    if [[ -d ".pixi" || -f "pixi.lock" ]]; then
+        _log_message "EXEC" "▶ 清理 Pixi 环境"
+        _log_exec "清理 Pixi 环境 (方法1: pixi clean --environment default)" pixi clean --environment default || \
+        _log_exec "清理 Pixi 环境 (方法2: pixi clean)" pixi clean || \
+        _log_exec "清理 Pixi 环境 (方法3: rm -rf .pixi pixi.lock)" rm -rf .pixi pixi.lock
     else
-        _log_message "INFO" "未检测到 alas 环境，跳过"
+        _log_message "INFO" "未检测到 Pixi 环境，跳过清理"
     fi
     end_step "${ICON_OK}" "虚拟环境已清理"
 
     start_step "正在删除 ALAS 目录..."
     _log_message "EXEC" "▶ rm -rf ${INSTALL_DIR}"
+    cd / 2>/dev/null || true
     rm -rf "${INSTALL_DIR}"
     end_step "${ICON_OK}" "目录已删除"
 
@@ -878,8 +938,9 @@ main() {
     print_header
     install_homebrew
     install_packages
+    install_pixi
     clone_alas
-    setup_conda_env
+    setup_pixi_env
     configure_deploy
     create_launcher
     create_desktop_commands

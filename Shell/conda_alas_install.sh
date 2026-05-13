@@ -292,7 +292,8 @@ install_miniforge() {
         end_step "${ICON_OK}" "Conda 已安装: ${CONDA_VER}"
         return
     fi
-
+    _log_message "ERROR" "未检测到 Conda"
+    start_step "正在安装 Miniforge..."
     _log_message "EXEC" "▶ 下载 Miniforge3-Linux-x86_64.sh"
     if ! wget -q -O /tmp/Miniforge3-Linux-x86_64.sh \
         "${GH_PROXY}https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh" >> "$LOGFILE" 2>&1; then
@@ -670,7 +671,7 @@ do_uninstall() {
     echo_line "  ${ICON_WARN}  ${YELLOW}  - Conda 虚拟环境 (alas)${NC}"
     echo_line "  ${ICON_WARN}  ${YELLOW}  - ALAS 目录: ${INSTALL_DIR}${NC}"
     echo_line "  ${ICON_WARN}  ${YELLOW}  - 启动脚本: ${SCRIPT_OUT_DIR}/run_alas.sh${NC}"
-    echo_line "  ${ICON_INFO}  ${GREEN}  依赖库 (git, adb, conda) 不会被删除${NC}"
+    echo_line "  ${ICON_INFO}  ${GREEN}  Git, ADB, Miniforge 不会被删除${NC}"
     echo_line ""
     _log_message "WARNING" "等待确认卸载"
     while true; do
@@ -749,11 +750,9 @@ main() {
         do_uninstall
         exit 0
     fi
-
     detect_os
     gather_system_info
     print_header
-
     install_miniforge
     install_git_adb
     clone_alas
@@ -761,7 +760,6 @@ main() {
     configure_deploy
     create_launcher
     configure_service
-
     print_completion
     if [[ "${KEEP_LOG}" == false ]]; then
         _log_message "INFO" "安装完成，清理日志文件: ${LOGFILE}"
@@ -770,5 +768,4 @@ main() {
         echo_line "  ${ICON_INFO}  日志已保存至：${LOGFILE}"
     fi
 }
-
 main
