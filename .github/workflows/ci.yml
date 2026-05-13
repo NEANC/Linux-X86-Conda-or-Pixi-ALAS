@@ -1,0 +1,132 @@
+name: CI
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Linux 部署测试
+  deploy-conda-linux:
+    name: Deploy - Conda (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pre-reqs
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq git adb
+      - name: Run deployment
+        run: sudo bash Shell/conda_alas_install.sh 2>&1
+      - name: Verify output
+        run: |
+          test -d "$HOME/AzurLaneAutoScript" || { echo "ERROR: ALAS dir missing"; exit 1; }
+          test -f "$HOME/AzurLaneAutoScript/environment.yml" || { echo "ERROR: environment.yml missing"; exit 1; }
+          echo "All output files verified"
+      - name: Uninstall
+        run: echo "yes" | sudo bash Shell/conda_alas_install.sh --uninstall 2>&1
+        if: always()
+
+  deploy-pixi-linux:
+    name: Deploy - Pixi (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pre-reqs
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq git adb
+      - name: Run deployment
+        run: sudo bash Shell/pixi_alas_install.sh 2>&1
+      - name: Verify output
+        run: |
+          test -d "$HOME/AzurLaneAutoScript" || { echo "ERROR: ALAS dir missing"; exit 1; }
+          test -f "$HOME/AzurLaneAutoScript/pixi.toml" || { echo "ERROR: pixi.toml missing"; exit 1; }
+          echo "All output files verified"
+      - name: Uninstall
+        run: echo "yes" | sudo bash Shell/pixi_alas_install.sh --uninstall 2>&1
+        if: always()
+
+  # macOS 部署测试
+  deploy-conda-mac:
+    name: Deploy - Conda (macOS)
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run deployment
+        run: bash Shell/arm_mac_conda_alas_install.sh 2>&1
+      - name: Verify output
+        run: |
+          test -d "$HOME/AzurLaneAutoScript" || { echo "ERROR: ALAS dir missing"; exit 1; }
+          test -f "$HOME/AzurLaneAutoScript/environment.yml" || { echo "ERROR: environment.yml missing"; exit 1; }
+          echo "All output files verified"
+      - name: Uninstall
+        run: echo "yes" | bash Shell/arm_mac_conda_alas_install.sh --uninstall 2>&1
+        if: always()
+
+  deploy-pixi-mac:
+    name: Deploy - Pixi (macOS)
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run deployment
+        run: bash Shell/arm_mac_pixi_alas_install.sh 2>&1
+      - name: Verify output
+        run: |
+          test -d "$HOME/AzurLaneAutoScript" || { echo "ERROR: ALAS dir missing"; exit 1; }
+          test -f "$HOME/AzurLaneAutoScript/pixi.toml" || { echo "ERROR: pixi.toml missing"; exit 1; }
+          echo "All output files verified"
+      - name: Uninstall
+        run: echo "yes" | bash Shell/arm_mac_pixi_alas_install.sh --uninstall 2>&1
+        if: always()
+
+  # Windows 部署测试
+  deploy-conda-win:
+    name: Deploy - Conda (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install git
+        run: winget install --id Git.Git --silent --accept-package-agreements --accept-source-agreements
+        shell: pwsh
+      - name: Refresh PATH
+        run: |
+          $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+        shell: pwsh
+      - name: Run deployment
+        run: pwsh -NoProfile -File Shell\win_conda_alas_install.ps1 2>&1
+      - name: Verify output
+        run: |
+          if (-not (Test-Path "$env:USERPROFILE\AzurLaneAutoScript")) { throw "ERROR: ALAS dir missing" }
+          Write-Host "ALAS directory: OK"
+        shell: pwsh
+      - name: Uninstall
+        run: echo "yes" | pwsh -NoProfile -File Shell\win_conda_alas_install.ps1 -uninstall 2>&1
+        if: always()
+
+  deploy-pixi-win:
+    name: Deploy - Pixi (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install git
+        run: winget install --id Git.Git --silent --accept-package-agreements --accept-source-agreements
+        shell: pwsh
+      - name: Refresh PATH
+        run: |
+          $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+        shell: pwsh
+      - name: Run deployment
+        run: pwsh -NoProfile -File Shell\win_pixi_install.ps1 2>&1
+      - name: Verify output
+        run: |
+          if (-not (Test-Path "$env:USERPROFILE\AzurLaneAutoScript")) { throw "ERROR: ALAS dir missing" }
+          Write-Host "ALAS directory: OK"
+        shell: pwsh
+      - name: Uninstall
+        run: echo "yes" | pwsh -NoProfile -File Shell\win_pixi_install.ps1 -uninstall 2>&1
+        if: always()
