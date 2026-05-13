@@ -749,8 +749,10 @@ create_desktop_commands() {
     _log_message "EXEC" "▶ 生成 ${desktop_dir}/运行ALAS.command"
     cat > "${desktop_dir}/运行ALAS.command" << 'CMD_EOF'
 #!/bin/bash
+WINDOW_ID=$(osascript -e 'tell application "Terminal" to id of front window')
 (sleep 3 && open http://127.0.0.1:22267) &
 launchctl stop com.alas.run && launchctl start com.alas.run
+osascript -e "tell application \"Terminal\" to close window id $WINDOW_ID"
 CMD_EOF
     chmod +x "${desktop_dir}/运行ALAS.command"
     _log_message "OK" "✓ 运行ALAS.command 已生成"
@@ -758,7 +760,9 @@ CMD_EOF
     _log_message "EXEC" "▶ 生成 ${desktop_dir}/停止ALAS.command"
     cat > "${desktop_dir}/停止ALAS.command" << 'CMD_EOF'
 #!/bin/bash
+WINDOW_ID=$(osascript -e 'tell application "Terminal" to id of front window')
 launchctl stop com.alas.run
+osascript -e "tell application \"Terminal\" to close window id $WINDOW_ID"
 CMD_EOF
     chmod +x "${desktop_dir}/停止ALAS.command"
     _log_message "OK" "✓ 停止ALAS.command 已生成"
@@ -766,8 +770,10 @@ CMD_EOF
     _log_message "EXEC" "▶ 生成 ${desktop_dir}/重启ALAS.command"
     cat > "${desktop_dir}/重启ALAS.command" << 'CMD_EOF'
 #!/bin/bash
+WINDOW_ID=$(osascript -e 'tell application "Terminal" to id of front window')
 (sleep 3 && open http://127.0.0.1:22267) &
 launchctl stop com.alas.run && launchctl start com.alas.run
+osascript -e "tell application \"Terminal\" to close window id $WINDOW_ID"
 CMD_EOF
     chmod +x "${desktop_dir}/重启ALAS.command"
     _log_message "OK" "✓ 重启ALAS.command 已生成"
