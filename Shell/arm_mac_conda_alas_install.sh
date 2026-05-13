@@ -671,13 +671,9 @@ create_launcher() {
 
     cat > "${SCRIPT_OUT_DIR}/run_alas.sh" <<EOF
 #!/bin/bash
-
-osascript -e 'tell application "Terminal" to set miniaturized of front window to true'
-
 eval "\$(${CONDA_BIN} shell.bash hook)"
 conda activate alas
 cd ${ALAS_DIR}
-(sleep 2 && open http://127.0.0.1:22267) &
 python gui.py
 EOF
     chmod +x "${SCRIPT_OUT_DIR}/run_alas.sh"
