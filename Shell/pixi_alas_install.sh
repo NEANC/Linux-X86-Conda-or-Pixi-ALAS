@@ -277,7 +277,7 @@ detect_os() {
 
 # ---------------------------- 第1步: 安装/激活 Pixi ----------------------------
 install_pixi() {
-    start_step "正在检查 Pixi 包管理器..."
+    start_step "正在检查 Pixi..."
 
     if command -v pixi &>/dev/null; then
         PIXI_VER=$(pixi --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')
@@ -291,9 +291,8 @@ install_pixi() {
         end_step "${ICON_OK}" "Pixi 已激活: ${PIXI_VER}"
         return
     fi
-
-    start_step "正在安装 Pixi 包管理器..."
-
+    _log_message "ERROR" "未检测到 Pixi"
+    start_step "正在安装 Pixi..."
     if [[ "${USE_CN_MIRROR}" == true ]]; then
         local pixi_dl="${GH_PROXY}https://github.com/prefix-dev/pixi/releases/latest/download/pixi-x86_64-unknown-linux-musl.tar.gz"
         _log_message "EXEC" "▶ 安装 Pixi (国内源): PIXI_DOWNLOAD_URL=${pixi_dl}"
@@ -308,7 +307,7 @@ install_pixi() {
             exit 1
         fi
     fi
-    _log_message "OK" "✓ Pixi 安装命令已完成"
+    _log_message "OK" "✓ Pixi 安装已完成"
 
     export PATH="${HOME}/.pixi/bin:${PATH}"
     if command -v pixi &>/dev/null; then
@@ -529,7 +528,6 @@ PIXI_EOF
         _log_message "EXEC" "▶ 配置国内镜像源 (cernet)"
         sed -i "s|channels = \\[\"conda-forge\"\\]|channels = [\"${cernet_conda}/cloud/conda-forge\"]|" pixi.toml
         cat >> pixi.toml << PIXI_EOF
-
 [pypi-options]
 index-url = "${cernet_pypi}"
 PIXI_EOF

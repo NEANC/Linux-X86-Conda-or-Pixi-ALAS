@@ -265,13 +265,13 @@ install_homebrew() {
         end_step "${ICON_OK}" "Homebrew 已就绪: ${BREW_VER}"
         return
     fi
-
+    _log_message "ERROR" "未检测到 Homebrew"
     start_step "正在安装 Homebrew..."
     if ! /bin/bash -c "$(curl -fsSL ${GH_PROXY}https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" >> "$LOGFILE" 2>&1; then
         end_step "${ICON_ERROR}" "Homebrew 安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
         exit 1
     fi
-    _log_message "OK" "✓ Homebrew 安装命令已完成"
+    _log_message "OK" "✓ Homebrew 安装已完成"
 
     if [[ -x /opt/homebrew/bin/brew ]]; then
         eval "$(/opt/homebrew/bin/brew shellenv)"
@@ -663,7 +663,7 @@ configure_deploy() {
 
 # ---------------------------- 第6步: 创建启动脚本 ----------------------------
 create_launcher() {
-    start_step "正在生成启动脚本..."
+    start_step "正在创建启动脚本..."
 
     _log_message "EXEC" "▶ 生成 ${SCRIPT_OUT_DIR}/run_alas.sh"
     _log_message "INFO" "  Conda: ${CONDA_BIN}"
@@ -791,7 +791,7 @@ do_uninstall() {
     echo_line ""
     echo_line "  ${ICON_WARN}  ${YELLOW}即将执行 ALAS 卸载，将删除以下内容：${NC}"
     echo_line "  ${ICON_WARN}  ${YELLOW}  - 开机自启服务${NC}"
-    echo_line "  ${ICON_WARN}  ${YELLOW}  - Conda 虚拟环境 (alas)${NC}"
+    echo_line "  ${ICON_WARN}  ${YELLOW}  - Conda 虚拟环境${NC}"
     echo_line "  ${ICON_WARN}  ${YELLOW}  - ALAS 目录: ${INSTALL_DIR}${NC}"
     echo_line "  ${ICON_WARN}  ${YELLOW}  - 启动脚本: ${SCRIPT_OUT_DIR}/run_alas.sh${NC}"
     echo_line "  ${ICON_WARN}  ${YELLOW}  - 桌面快捷脚本: 运行ALAS/停止ALAS/重启ALAS.command${NC}"
