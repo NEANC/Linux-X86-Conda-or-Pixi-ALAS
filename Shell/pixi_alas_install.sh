@@ -543,7 +543,7 @@ PIXI_EOF
         _log_message "OK" "✓ 旧环境已清理"
     fi
 
-    _log_message "EXEC" "▶ pixi install --manifest-path pixi.toml (这可能需要较长时间)"
+    _log_message "EXEC" "▶ pixi install --manifest-path pixi.toml"
     if ! pixi install --manifest-path pixi.toml >> "$LOGFILE" 2>&1; then
         _log_message "ERROR" "✗ pixi install 失败"
         end_step "${ICON_ERROR}" "虚拟环境构建错误，详情请阅读日志：${LOGFILE}" "${RED}"
@@ -687,11 +687,11 @@ do_uninstall() {
     cd "${INSTALL_DIR}"
     if [[ -d ".pixi" || -f "pixi.lock" ]]; then
         _log_message "EXEC" "▶ 清理 Pixi 环境"
-        _log_exec "清理 Pixi 环境 (方法1: pixi clean --environment alas)" pixi clean --environment alas || \
+        _log_exec "清理 Pixi 环境 (方法1: pixi clean --environment default)" pixi clean --environment default || \
         _log_exec "清理 Pixi 环境 (方法2: pixi clean)" pixi clean || \
         _log_exec "清理 Pixi 环境 (方法3: rm -rf .pixi pixi.lock)" rm -rf .pixi pixi.lock
     else
-        _log_message "INFO" "未检测到 Pixi 环境，跳过"
+        _log_message "INFO" "未检测到 Pixi 环境，跳过清理"
     fi
     end_step "${ICON_OK}" "虚拟环境已清理"
 
@@ -723,18 +723,15 @@ main() {
         do_uninstall
         exit 0
     fi
-
     detect_os
     gather_system_info
     print_header
-
     install_pixi
     install_git_adb
     clone_alas
     setup_pixi_env
     configure_deploy
     configure_service
-
     print_completion
     if [[ "${KEEP_LOG}" == false ]]; then
         _log_message "INFO" "安装完成，清理日志文件: ${LOGFILE}"
@@ -743,5 +740,4 @@ main() {
         echo_line "  ${ICON_INFO}  日志已保存至：${LOGFILE}"
     fi
 }
-
 main

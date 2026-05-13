@@ -869,10 +869,8 @@ main() {
         do_uninstall
         exit 0
     fi
-
     gather_system_info
     print_header
-
     install_homebrew
     install_packages
     clone_alas
@@ -881,7 +879,6 @@ main() {
     create_launcher
     create_desktop_commands
     configure_service
-
     print_completion
     if [[ "${KEEP_LOG}" == false ]]; then
         _log_message "INFO" "安装完成，清理日志文件: ${LOGFILE}"
@@ -891,5 +888,4 @@ main() {
         echo_line "  ${ICON_INFO}  日志已保存至：${LOGFILE}"
     fi
 }
-
 main
