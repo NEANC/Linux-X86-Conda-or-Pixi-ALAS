@@ -671,7 +671,7 @@ do_uninstall() {
     echo_line "  ${ICON_WARN}  ${YELLOW}  - Conda 虚拟环境 (alas)${NC}"
     echo_line "  ${ICON_WARN}  ${YELLOW}  - ALAS 目录: ${INSTALL_DIR}${NC}"
     echo_line "  ${ICON_WARN}  ${YELLOW}  - 启动脚本: ${SCRIPT_OUT_DIR}/run_alas.sh${NC}"
-    echo_line "  ${ICON_INFO}  ${GREEN}  依赖库 (git, adb, conda) 不会被删除${NC}"
+    echo_line "  ${ICON_INFO}  ${GREEN}  Git, ADB, Miniforge 不会被删除${NC}"
     echo_line ""
     _log_message "WARNING" "等待确认卸载"
     while true; do

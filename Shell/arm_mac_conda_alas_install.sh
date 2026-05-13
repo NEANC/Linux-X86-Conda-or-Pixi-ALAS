@@ -265,7 +265,7 @@ install_homebrew() {
         end_step "${ICON_OK}" "Homebrew 已就绪: ${BREW_VER}"
         return
     fi
-    _log_message "ERROR" "未检测到 Homebrew"
+    _log_message "WARNING" "未检测到 Homebrew"
     start_step "正在安装 Homebrew..."
     if ! /bin/bash -c "$(curl -fsSL ${GH_PROXY}https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" >> "$LOGFILE" 2>&1; then
         end_step "${ICON_ERROR}" "Homebrew 安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
@@ -349,7 +349,6 @@ clone_alas() {
     _log_message "EXEC" "▶ git clone ${GH_PROXY}${REPO_URL} ${WORK_DIR}"
 
     if ! git clone "${GH_PROXY}${REPO_URL}" "${WORK_DIR}" >> "$LOGFILE" 2>&1; then
-        _log_message "ERROR" "✗ 仓库克隆失败"
         end_step "${ICON_ERROR}" "仓库克隆错误，详情请阅读日志：${LOGFILE}" "${RED}"
         exit 1
     fi
@@ -739,14 +738,14 @@ EOF
     fi
 }
 
-# ---------------------------- 第8步: 生成桌面快捷脚本 ----------------------------
+# ---------------------------- 第8步: 创建桌面快捷脚本 ----------------------------
 create_desktop_commands() {
-    start_step "正在生成桌面快捷脚本..."
+    start_step "正在创建桌面快捷脚本..."
 
     local desktop_dir="${HOME}/Desktop"
     mkdir -p "${desktop_dir}"
 
-    _log_message "EXEC" "▶ 生成 ${desktop_dir}/运行ALAS.command"
+    _log_message "EXEC" "▶ 创建 ${desktop_dir}/运行ALAS.command"
     cat > "${desktop_dir}/运行ALAS.command" << 'CMD_EOF'
 #!/bin/bash
 WINDOW_ID=$(osascript -e 'tell application "Terminal" to id of front window')
@@ -757,7 +756,7 @@ CMD_EOF
     chmod +x "${desktop_dir}/运行ALAS.command"
     _log_message "OK" "✓ 运行ALAS.command 已生成"
 
-    _log_message "EXEC" "▶ 生成 ${desktop_dir}/停止ALAS.command"
+    _log_message "EXEC" "▶ 创建 ${desktop_dir}/停止ALAS.command"
     cat > "${desktop_dir}/停止ALAS.command" << 'CMD_EOF'
 #!/bin/bash
 WINDOW_ID=$(osascript -e 'tell application "Terminal" to id of front window')
@@ -767,7 +766,7 @@ CMD_EOF
     chmod +x "${desktop_dir}/停止ALAS.command"
     _log_message "OK" "✓ 停止ALAS.command 已生成"
 
-    _log_message "EXEC" "▶ 生成 ${desktop_dir}/重启ALAS.command"
+    _log_message "EXEC" "▶ 创建 ${desktop_dir}/重启ALAS.command"
     cat > "${desktop_dir}/重启ALAS.command" << 'CMD_EOF'
 #!/bin/bash
 WINDOW_ID=$(osascript -e 'tell application "Terminal" to id of front window')
@@ -778,7 +777,7 @@ CMD_EOF
     chmod +x "${desktop_dir}/重启ALAS.command"
     _log_message "OK" "✓ 重启ALAS.command 已生成"
 
-    end_step "${ICON_OK}" "桌面快捷脚本已生成: ${desktop_dir}"
+    end_step "${ICON_OK}" "桌面快捷脚本已创建: ${desktop_dir}"
 }
 
 # ---------------------------- 完成摘要 ----------------------------
@@ -797,7 +796,7 @@ do_uninstall() {
     echo_line "  ${ICON_WARN}  ${YELLOW}  - ALAS 目录: ${INSTALL_DIR}${NC}"
     echo_line "  ${ICON_WARN}  ${YELLOW}  - 启动脚本: ${SCRIPT_OUT_DIR}/run_alas.sh${NC}"
     echo_line "  ${ICON_WARN}  ${YELLOW}  - 桌面快捷脚本: 运行ALAS/停止ALAS/重启ALAS.command${NC}"
-    echo_line "  ${ICON_INFO}  ${GREEN}  依赖库 (brew, git, adb, conda) 不会被删除${NC}"
+    echo_line "  ${ICON_INFO}  ${GREEN}  Homebrew, git, adb, Miniforge 不会被删除${NC}"
     echo_line ""
     _log_message "WARNING" "等待确认卸载"
     while true; do
