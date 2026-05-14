@@ -358,6 +358,16 @@ install_git_adb() {
                     missing_pkgs+=("$pkg")
                 fi
             done ;;
+        alpine)
+            local check_list=(git android-tools)
+            for pkg in "${check_list[@]}"; do
+                if apk info -e "$pkg" &>/dev/null; then
+                    _log_message "OK" "依赖已存在: ${pkg}"
+                else
+                    _log_message "WARNING" "依赖缺失: ${pkg}"
+                    missing_pkgs+=("$pkg")
+                fi
+            done ;;
         *)
             end_step "${ICON_ERROR}" "不支持的发行版: ${OS_ID}" "${RED}"
             exit 1 ;;
@@ -415,6 +425,13 @@ install_git_adb() {
                     end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
                     exit 1
                 fi
+            fi ;;
+        alpine)
+            _log_message "EXEC" "▶ apk add --no-cache ${missing_pkgs[*]}"
+            if ! apk add --no-cache "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
+                _log_message "ERROR" "✗ apk add 失败"
+                end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+                exit 1
             fi ;;
     esac
 
