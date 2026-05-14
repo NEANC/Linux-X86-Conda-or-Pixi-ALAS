@@ -219,15 +219,35 @@ check_root() {
 
 # ---------------------------- 系统信息收集 ----------------------------
 gather_system_info() {
-    NET_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+    NET_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
+    if [[ -z "${NET_IP}" ]]; then
+        NET_IP=$(ip route get 1 2>/dev/null | grep -oP 'src \K[\d.]+' || true)
+    fi
     [[ -z "${NET_IP}" ]] && NET_IP="未获取"
+
     KERNEL=$(uname -r)
-    CPU_MODEL=$(lscpu | grep "Model name" | sed 's/Model name:\s*//' || echo "未知")
-    CPU_CORES=$(nproc)
-    DISK_AVAIL=$(df -h / | awk 'NR==2{print $4}')
-    DISK_USED=$(df -h / | awk 'NR==2{print $3}')
+
+    CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed 's/Model name:\s*//' || true)
+    if [[ -z "${CPU_MODEL}" ]]; then
+        CPU_MODEL=$(grep -m1 "model name" /proc/cpuinfo 2>/dev/null | sed 's/.*: //' || true)
+    fi
+    [[ -z "${CPU_MODEL}" ]] && CPU_MODEL="未知"
+
+    CPU_CORES=$(nproc 2>/dev/null || true)
+    if [[ -z "${CPU_CORES}" ]]; then
+        CPU_CORES=$(grep -c "^processor" /proc/cpuinfo 2>/dev/null || true)
+    fi
+    [[ -z "${CPU_CORES}" ]] && CPU_CORES="未知"
+
+    DISK_AVAIL=$(df -h / 2>/dev/null | awk 'NR==2{print $4}' || true)
+    DISK_USED=$(df -h / 2>/dev/null | awk 'NR==2{print $3}' || true)
     DISK_INFO="可用: ${DISK_AVAIL}  已用: ${DISK_USED}"
-    RAM_SIZE_MIB=$(free -m | awk '/Mem:/{print $2}')
+
+    RAM_SIZE_MIB=$(free -m 2>/dev/null | awk '/Mem:/{print $2}' || true)
+    if [[ -z "${RAM_SIZE_MIB}" ]]; then
+        RAM_SIZE_MIB=$(awk '/MemTotal:/{printf "%.0f", $2/1024}' /proc/meminfo 2>/dev/null || true)
+    fi
+    [[ -z "${RAM_SIZE_MIB}" ]] && RAM_SIZE_MIB="未知"
 }
 
 # ---------------------------- 打印标题与系统面板 ----------------------------
