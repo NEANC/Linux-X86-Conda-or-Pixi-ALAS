@@ -1,0 +1,7 @@
+# ShellCheck 全局配置
+# 部署脚本中允许的常见模式
+
+# SC1091: source /etc/os-release 在 detect_os 中是预期行为
+# SC2034: 变量可能通过 script 作用域引用（如 SCRIPT_DIR）
+# SC2312: 若干 $(...) 命令的超时由 trap ERR 统一处理
+disable=SC1091,SC2034,SC2312
