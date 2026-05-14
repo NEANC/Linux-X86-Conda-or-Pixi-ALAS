@@ -222,6 +222,9 @@ detect_init_system() {
     elif command -v rc-service &>/dev/null; then
         INIT_SYSTEM="openrc"
         _log_message "INFO" "检测到 init 系统: OpenRC"
+    elif command -v service &>/dev/null && [[ -d /etc/init.d ]]; then
+        INIT_SYSTEM="sysvinit"
+        _log_message "INFO" "检测到 init 系统: SysVinit"
     else
         INIT_SYSTEM="unknown"
         _log_message "WARNING" "无法检测 init 系统，将跳过服务配置"
@@ -680,6 +683,8 @@ configure_service() {
         _configure_systemd
     elif [[ "${INIT_SYSTEM}" == "openrc" ]]; then
         _configure_openrc
+    elif [[ "${INIT_SYSTEM}" == "sysvinit" ]]; then
+        _configure_sysvinit
     fi
 }
 
@@ -786,6 +791,85 @@ OPENRC_EOF
     fi
 }
 
+_configure_sysvinit() {
+    start_step "正在配置 SysVinit 开机自启..."
+
+    _log_message "EXEC" "▶ 生成 /etc/init.d/run_alas"
+    _log_message "INFO" "  用户: ${USER_NAME}, 组: ${USER_GROUP}"
+    _log_message "INFO" "  工作目录: ${ALAS_DIR}"
+    _log_message "INFO" "  启动命令: ${SCRIPT_OUT_DIR}/run_alas.sh"
+
+    cat > /etc/init.d/run_alas <<'SYSV_EOF'
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          run_alas
+# Required-Start:    $network $remote_fs
+# Required-Stop:     $network $remote_fs
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: ALAS Auto Script
+### END INIT INFO
+
+case "$1" in
+    start)
+        echo "Starting ALAS..."
+        start-stop-daemon --start --background --make-pidfile \
+            --pidfile /var/run/run_alas.pid \
+            --chdir DIR_PLACEHOLDER \
+            --user USER_PLACEHOLDER \
+            --exec SCRIPT_PLACEHOLDER
+        ;;
+    stop)
+        echo "Stopping ALAS..."
+        start-stop-daemon --stop --pidfile /var/run/run_alas.pid
+        ;;
+    restart)
+        $0 stop
+        sleep 1
+        $0 start
+        ;;
+    status)
+        if kill -0 "$(cat /var/run/run_alas.pid 2>/dev/null)" 2>/dev/null; then
+            echo "ALAS is running"
+        else
+            echo "ALAS is not running"
+            exit 1
+        fi
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart|status}"
+        exit 1
+        ;;
+esac
+exit 0
+SYSV_EOF
+
+    sed -i "s|USER_PLACEHOLDER|${USER_NAME}|g" /etc/init.d/run_alas
+    sed -i "s|DIR_PLACEHOLDER|${ALAS_DIR}|g" /etc/init.d/run_alas
+    sed -i "s|SCRIPT_PLACEHOLDER|${SCRIPT_OUT_DIR}/run_alas.sh|g" /etc/init.d/run_alas
+    chmod +x /etc/init.d/run_alas
+    _log_message "OK" "✓ SysVinit 服务脚本已创建"
+
+    if command -v update-rc.d &>/dev/null; then
+        _log_message "EXEC" "▶ update-rc.d run_alas defaults"
+        update-rc.d run_alas defaults >> "$LOGFILE" 2>&1
+    elif command -v chkconfig &>/dev/null; then
+        _log_message "EXEC" "▶ chkconfig --add run_alas"
+        chkconfig --add run_alas >> "$LOGFILE" 2>&1
+    fi
+    _log_message "OK" "✓ 服务已添加至启动项"
+
+    _log_message "EXEC" "▶ service run_alas start"
+    service run_alas start >> "$LOGFILE" 2>&1
+    _log_message "OK" "✓ 服务已启动"
+
+    if service run_alas status >> "$LOGFILE" 2>&1; then
+        end_step "${ICON_OK}" "SysVinit 服务已启动并设为开机自启"
+    else
+        end_step "${ICON_ERROR}" "SysVinit 服务启动失败，请查看日志: ${LOGFILE}" "${RED}"
+    fi
+}
+
 # ---------------------------- 完成摘要 ----------------------------
 print_completion() {
     echo_line ""
@@ -851,6 +935,21 @@ do_uninstall() {
         _log_message "OK" "✓ 服务已从运行级移除"
         if [[ -f /etc/init.d/run_alas ]]; then
             _log_message "EXEC" "▶ 删除 OpenRC 服务脚本"
+            rm -f /etc/init.d/run_alas
+        fi
+    elif [[ "${INIT_SYSTEM}" == "sysvinit" ]]; then
+        _log_message "EXEC" "▶ service run_alas stop"
+        service run_alas stop >> "$LOGFILE" 2>&1 || true
+        _log_message "OK" "✓ 服务已停止"
+        if command -v update-rc.d &>/dev/null; then
+            _log_message "EXEC" "▶ update-rc.d -f run_alas remove"
+            update-rc.d -f run_alas remove >> "$LOGFILE" 2>&1 || true
+        elif command -v chkconfig &>/dev/null; then
+            _log_message "EXEC" "▶ chkconfig --del run_alas"
+            chkconfig --del run_alas >> "$LOGFILE" 2>&1 || true
+        fi
+        if [[ -f /etc/init.d/run_alas ]]; then
+            _log_message "EXEC" "▶ 删除 SysVinit 服务脚本"
             rm -f /etc/init.d/run_alas
         fi
     fi
