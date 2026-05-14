@@ -364,7 +364,7 @@ install_pixi() {
     fi
 }
 
-# ---------------------------- 第1步: 安装 Git、ADB 和 curl ----------------------------
+# ---------------------------- 第1步: 检查依赖 ----------------------------
 install_deps() {
     start_step "正在检查依赖..."
 
@@ -641,13 +641,11 @@ configure_deploy() {
 # ---------------------------- 第6步: 配置 init 服务 ----------------------------
 configure_service() {
     if [[ "${SKIP_SERVICE}" == true ]]; then
-        _log_message "INFO" "已跳过服务配置 (--skip-service)"
-        end_step "${ICON_INFO}" "已跳过服务配置"
+        end_step "${ICON_INFO}" "检测到 -S、--skip-service 已跳过服务配置"
         return
     fi
 
     if [[ "${INIT_SYSTEM}" == "unknown" ]]; then
-        _log_message "WARNING" "未检测到 init 系统，跳过服务配置"
         end_step "${ICON_WARN}" "未检测到 init 系统，跳过服务配置" "${YELLOW}"
         return
     fi
