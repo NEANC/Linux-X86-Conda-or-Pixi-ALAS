@@ -91,6 +91,7 @@ PIXI_BIN_PATH=""
 USER_NAME="${SUDO_USER:-$(whoami)}"
 USER_GROUP=$(id -gn "${USER_NAME}")
 INIT_SYSTEM=""
+PACKAGE_MANAGER=""
 _SPINNER_PID=""
 
 # ---------------------------- 帮助 ----------------------------
@@ -364,6 +365,139 @@ install_pixi() {
     fi
 }
 
+# ---------------------------- 包管理器检测 ----------------------------
+detect_package_manager() {
+    if command -v apt-get &>/dev/null; then
+        PACKAGE_MANAGER="apt"
+    elif command -v pacman &>/dev/null; then
+        PACKAGE_MANAGER="pacman"
+    elif command -v dnf &>/dev/null; then
+        PACKAGE_MANAGER="dnf"
+    elif command -v yum &>/dev/null; then
+        PACKAGE_MANAGER="yum"
+    elif command -v apk &>/dev/null; then
+        PACKAGE_MANAGER="apk"
+    else
+        PACKAGE_MANAGER="unknown"
+    fi
+    _log_message "INFO" "检测到包管理器: ${PACKAGE_MANAGER}"
+}
+
+# ---------------------------- 国内镜像安装 ----------------------------
+cn_package_mirrors() {
+    local -a pkgs=("$@")
+
+    _cn_apt_install() {
+        local codename
+        codename=$(lsb_release -sc 2>/dev/null || echo "stable")
+        local dist_path="ubuntu/"
+        [[ "${OS_ID}" == "debian" ]] && dist_path="debian/"
+        local -a mirrors=(
+            "https://mirrors.ustc.edu.cn/${dist_path}"
+            "https://mirrors.aliyun.com/${dist_path}"
+            "https://repo.huaweicloud.com/${dist_path}"
+        )
+        local mirror_url
+        for mirror_url in "${mirrors[@]}"; do
+            cat > "/tmp/alas-apt-$$.list" <<EOF
+deb ${mirror_url} ${codename} main universe
+deb ${mirror_url} ${codename}-updates main universe
+deb ${mirror_url} ${codename}-security main universe
+EOF
+            _log_message "INFO" "尝试镜像: ${mirror_url}"
+            if apt-get -o Dir::Etc::sourcelist="/tmp/alas-apt-$$.list" \
+                        -o Dir::Etc::sourceparts="-" \
+                        -o APT::Get::List-Cleanup="0" \
+                        -qq update >> "$LOGFILE" 2>&1; then
+                if apt-get -o Dir::Etc::sourcelist="/tmp/alas-apt-$$.list" \
+                           -o Dir::Etc::sourceparts="-" \
+                           -qq install -y "${pkgs[@]}" >> "$LOGFILE" 2>&1; then
+                    rm -f "/tmp/alas-apt-$$.list"
+                    return 0
+                fi
+            fi
+            rm -f "/tmp/alas-apt-$$.list"
+            _log_message "WARNING" "镜像 ${mirror_url} 不可用，尝试下一个"
+        done
+        return 1
+    }
+
+    _cn_pacman_install() {
+        local -a mirrors=(
+            "https://mirrors.ustc.edu.cn/archlinux/\$repo/os/\$arch"
+            "https://mirrors.aliyun.com/archlinux/\$repo/os/\$arch"
+            "https://repo.huaweicloud.com/archlinux/\$repo/os/\$arch"
+        )
+        local mirror_url
+        for mirror_url in "${mirrors[@]}"; do
+            echo "Server = ${mirror_url}" > "/tmp/alas-mirrorlist-$$"
+            sed "s|^Include = /etc/pacman.d/mirrorlist|Include = /tmp/alas-mirrorlist-$$|" \
+                /etc/pacman.conf > "/tmp/alas-pacman-$$.conf"
+            _log_message "INFO" "尝试镜像: ${mirror_url}"
+            if pacman --config "/tmp/alas-pacman-$$.conf" -Syy --noconfirm "${pkgs[@]}" >> "$LOGFILE" 2>&1; then
+                rm -f "/tmp/alas-pacman-$$.conf" "/tmp/alas-mirrorlist-$$"
+                return 0
+            fi
+            rm -f "/tmp/alas-pacman-$$.conf" "/tmp/alas-mirrorlist-$$"
+            _log_message "WARNING" "镜像 ${mirror_url} 不可用，尝试下一个"
+        done
+        return 1
+    }
+
+    _cn_dnf_install() {
+        local -a mirrors=(
+            "https://mirrors.ustc.edu.cn/centos/\$releasever/BaseOS/\$basearch/os/"
+            "https://mirrors.aliyun.com/centos/\$releasever/BaseOS/\$basearch/os/"
+            "https://repo.huaweicloud.com/centos/\$releasever/BaseOS/\$basearch/os/"
+        )
+        local mirror_url
+        for mirror_url in "${mirrors[@]}"; do
+            _log_message "INFO" "尝试镜像: ${mirror_url}"
+            if dnf --disablerepo='*' --repofrompath="cn-temp-$$,${mirror_url}" --enablerepo="cn-temp-$$" \
+                   -q makecache >> "$LOGFILE" 2>&1; then
+                if dnf --disablerepo='*' --repofrompath="cn-temp-$$,${mirror_url}" --enablerepo="cn-temp-$$" \
+                       -q install -y "${pkgs[@]}" >> "$LOGFILE" 2>&1; then
+                    return 0
+                fi
+            fi
+            _log_message "WARNING" "镜像 ${mirror_url} 不可用，尝试下一个"
+        done
+        return 1
+    }
+
+    _cn_apk_install() {
+        local alpine_ver
+        alpine_ver=$(cat /etc/alpine-release 2>/dev/null | cut -d. -f1,2 || echo "latest-stable")
+        local -a mirrors=(
+            "https://mirrors.ustc.edu.cn/alpine/v${alpine_ver}/main"
+            "https://mirrors.ustc.edu.cn/alpine/v${alpine_ver}/community"
+            "https://mirrors.aliyun.com/alpine/v${alpine_ver}/main"
+            "https://mirrors.aliyun.com/alpine/v${alpine_ver}/community"
+            "https://repo.huaweicloud.com/alpine/v${alpine_ver}/main"
+            "https://repo.huaweicloud.com/alpine/v${alpine_ver}/community"
+        )
+        local mirror_url
+        for mirror_url in "${mirrors[@]}"; do
+            _log_message "INFO" "尝试镜像: ${mirror_url}"
+            if apk add --no-cache --repository="${mirror_url}" "${pkgs[@]}" >> "$LOGFILE" 2>&1; then
+                return 0
+            fi
+            _log_message "WARNING" "镜像 ${mirror_url} 不可用，尝试下一个"
+        done
+        return 1
+    }
+
+    case "${PACKAGE_MANAGER}" in
+        apt)    _cn_apt_install ;;
+        pacman) _cn_pacman_install ;;
+        dnf)    _cn_dnf_install ;;
+        apk)    _cn_apk_install ;;
+        *)
+            _log_message "ERROR" "CN 镜像不支持包管理器: ${PACKAGE_MANAGER}"
+            return 1 ;;
+    esac
+}
+
 # ---------------------------- 第1步: 检查依赖 ----------------------------
 install_deps() {
     start_step "正在检查依赖..."
@@ -425,59 +559,70 @@ install_deps() {
 
     start_step "正在安装缺失的依赖: ${missing_pkgs[*]}..."
 
-    case "${OS_ID}" in
-        debian|ubuntu)
-            _log_message "EXEC" "▶ apt-get update"
-            if ! apt-get -qq update >> "$LOGFILE" 2>&1; then
-                _log_message "ERROR" "✗ apt-get update 失败"
-                end_step "${ICON_ERROR}" "依赖更新错误，详情请阅读日志：${LOGFILE}" "${RED}"
-                exit 1
-            fi
-            _log_message "OK" "✓ apt-get update 完成"
-            _log_message "EXEC" "▶ apt-get install -y ${missing_pkgs[*]}"
-            if ! apt-get -qq install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
-                _log_message "ERROR" "✗ apt-get install 失败"
-                end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
-                exit 1
-            fi ;;
-        arch)
-            _log_message "EXEC" "▶ pacman -Syy --noconfirm ${missing_pkgs[*]}"
-            if ! pacman -Syy --noconfirm "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
-                _log_message "ERROR" "✗ pacman 安装失败"
-                end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
-                exit 1
-            fi ;;
-        centos|rhel|fedora)
-            if command -v dnf &>/dev/null; then
-                _log_message "EXEC" "▶ dnf makecache"
-                if ! dnf -q makecache >> "$LOGFILE" 2>&1; then
-                    _log_message "ERROR" "✗ dnf makecache 失败"
+    detect_package_manager
+
+    if [[ "${USE_CN_MIRROR}" == true ]]; then
+        _log_message "EXEC" "▶ ${PACKAGE_MANAGER} (CN mirrors) ${missing_pkgs[*]}"
+        cn_package_mirrors "${missing_pkgs[@]}" || {
+            _log_message "ERROR" "✗ CN 镜像安装失败"
+            end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+            exit 1
+        }
+    else
+        case "${OS_ID}" in
+            debian|ubuntu)
+                _log_message "EXEC" "▶ apt-get update"
+                if ! apt-get -qq update >> "$LOGFILE" 2>&1; then
+                    _log_message "ERROR" "✗ apt-get update 失败"
                     end_step "${ICON_ERROR}" "依赖更新错误，详情请阅读日志：${LOGFILE}" "${RED}"
                     exit 1
                 fi
-                _log_message "OK" "✓ dnf makecache 完成"
-                _log_message "EXEC" "▶ dnf install -y ${missing_pkgs[*]}"
-                if ! dnf -q install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
-                    _log_message "ERROR" "✗ dnf install 失败"
+                _log_message "OK" "✓ apt-get update 完成"
+                _log_message "EXEC" "▶ apt-get install -y ${missing_pkgs[*]}"
+                if ! apt-get -qq install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
+                    _log_message "ERROR" "✗ apt-get install 失败"
                     end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
                     exit 1
-                fi
-            else
-                _log_message "EXEC" "▶ yum install -y ${missing_pkgs[*]}"
-                if ! yum -q install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
-                    _log_message "ERROR" "✗ yum install 失败"
+                fi ;;
+            arch)
+                _log_message "EXEC" "▶ pacman -Syy --noconfirm ${missing_pkgs[*]}"
+                if ! pacman -Syy --noconfirm "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
+                    _log_message "ERROR" "✗ pacman 安装失败"
                     end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
                     exit 1
-                fi
-            fi ;;
-        alpine)
-            _log_message "EXEC" "▶ apk add --no-cache ${missing_pkgs[*]}"
-            if ! apk add --no-cache "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
-                _log_message "ERROR" "✗ apk add 失败"
-                end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
-                exit 1
-            fi ;;
-    esac
+                fi ;;
+            centos|rhel|fedora)
+                if command -v dnf &>/dev/null; then
+                    _log_message "EXEC" "▶ dnf makecache"
+                    if ! dnf -q makecache >> "$LOGFILE" 2>&1; then
+                        _log_message "ERROR" "✗ dnf makecache 失败"
+                        end_step "${ICON_ERROR}" "依赖更新错误，详情请阅读日志：${LOGFILE}" "${RED}"
+                        exit 1
+                    fi
+                    _log_message "OK" "✓ dnf makecache 完成"
+                    _log_message "EXEC" "▶ dnf install -y ${missing_pkgs[*]}"
+                    if ! dnf -q install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
+                        _log_message "ERROR" "✗ dnf install 失败"
+                        end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+                        exit 1
+                    fi
+                else
+                    _log_message "EXEC" "▶ yum install -y ${missing_pkgs[*]}"
+                    if ! yum -q install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
+                        _log_message "ERROR" "✗ yum install 失败"
+                        end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+                        exit 1
+                    fi
+                fi ;;
+            alpine)
+                _log_message "EXEC" "▶ apk add --no-cache ${missing_pkgs[*]}"
+                if ! apk add --no-cache "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
+                    _log_message "ERROR" "✗ apk add 失败"
+                    end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+                    exit 1
+                fi ;;
+        esac
+    fi
 
     end_step "${ICON_OK}" "curl 已安装: $(curl --version 2>/dev/null | head -n1 | awk '{print $2}')"
     end_step "${ICON_OK}" "Git 已安装: $(git --version 2>/dev/null | awk '{print $NF}')"
