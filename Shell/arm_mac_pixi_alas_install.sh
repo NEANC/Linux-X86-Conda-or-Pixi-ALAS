@@ -313,11 +313,38 @@ install_packages() {
 
     start_step "正在安装缺失的依赖: ${missing_formulae[*]}..."
 
-    _log_message "EXEC" "▶ brew install ${missing_formulae[*]}"
-    if ! brew install "${missing_formulae[@]}" >> "$LOGFILE" 2>&1; then
-        _log_message "ERROR" "✗ brew install 失败"
-        end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
-        exit 1
+    if [[ "${USE_CN_MIRROR}" == true ]]; then
+        local -a brew_mirrors=(
+            "https://mirrors.ustc.edu.cn/homebrew-bottles"
+            "https://mirrors.aliyun.com/homebrew/homebrew-bottles"
+            "https://repo.huaweicloud.com/homebrew"
+        )
+        local mirror_url
+        for mirror_url in "${brew_mirrors[@]}"; do
+            _log_message "INFO" "尝试 Homebrew 镜像: ${mirror_url}"
+            if HOMEBREW_BREW_GIT_REMOTE="${mirror_url}/brew.git" \
+               HOMEBREW_CORE_GIT_REMOTE="${mirror_url}/homebrew-core.git" \
+               HOMEBREW_BOTTLE_DOMAIN="${mirror_url}" \
+               brew install "${missing_formulae[@]}" >> "$LOGFILE" 2>&1; then
+                _log_message "OK" "✓ Homebrew 镜像 ${mirror_url} 安装成功"
+                break
+            fi
+            _log_message "WARNING" "镜像 ${mirror_url} 不可用，尝试下一个"
+        done
+        if [[ ${#missing_formulae[@]} -gt 0 ]]; then
+            if ! brew list --formula "${missing_formulae[@]}" &>/dev/null; then
+                _log_message "ERROR" "✗ CN 镜像 brew install 失败"
+                end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+                exit 1
+            fi
+        fi
+    else
+        _log_message "EXEC" "▶ brew install ${missing_formulae[*]}"
+        if ! brew install "${missing_formulae[@]}" >> "$LOGFILE" 2>&1; then
+            _log_message "ERROR" "✗ brew install 失败"
+            end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+            exit 1
+        fi
     fi
 
     if [[ -x /opt/homebrew/bin/brew ]]; then
