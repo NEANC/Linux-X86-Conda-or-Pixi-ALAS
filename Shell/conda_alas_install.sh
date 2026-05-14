@@ -496,10 +496,12 @@ EOF
 install_deps() {
     start_step "正在检查依赖..."
 
+    detect_package_manager
+
     local missing_pkgs=()
 
-    case "${OS_ID}" in
-        debian|ubuntu)
+    case "${PACKAGE_MANAGER}" in
+        apt)
             local check_list=(curl git adb)
             for pkg in "${check_list[@]}"; do
                 if dpkg -s "$pkg" &>/dev/null; then
@@ -509,7 +511,7 @@ install_deps() {
                     missing_pkgs+=("$pkg")
                 fi
             done ;;
-        arch)
+        pacman)
             local check_list=(curl git android-tools)
             for pkg in "${check_list[@]}"; do
                 if pacman -Q "$pkg" &>/dev/null; then
@@ -519,7 +521,7 @@ install_deps() {
                     missing_pkgs+=("$pkg")
                 fi
             done ;;
-        centos|rhel|fedora)
+        dnf|yum)
             local check_list=(curl git adb)
             for pkg in "${check_list[@]}"; do
                 if rpm -q "$pkg" &>/dev/null; then
@@ -529,7 +531,7 @@ install_deps() {
                     missing_pkgs+=("$pkg")
                 fi
             done ;;
-        alpine)
+        apk)
             local check_list=(curl git android-tools)
             for pkg in "${check_list[@]}"; do
                 if apk info -e "$pkg" &>/dev/null; then
@@ -540,7 +542,7 @@ install_deps() {
                 fi
             done ;;
         *)
-            end_step "${ICON_ERROR}" "不支持的发行版: ${OS_ID}" "${RED}"
+            end_step "${ICON_ERROR}" "不支持的包管理器: ${PACKAGE_MANAGER}" "${RED}"
             exit 1 ;;
     esac
 
@@ -553,8 +555,6 @@ install_deps() {
 
     start_step "正在安装缺失的依赖: ${missing_pkgs[*]}..."
 
-    detect_package_manager
-
     if [[ "${USE_CN_MIRROR}" == true ]]; then
         _log_message "EXEC" "▶ ${PACKAGE_MANAGER} (CN mirrors) ${missing_pkgs[*]}"
         cn_package_mirrors "${missing_pkgs[@]}" || {
@@ -563,8 +563,8 @@ install_deps() {
             exit 1
         }
     else
-        case "${OS_ID}" in
-            debian|ubuntu)
+        case "${PACKAGE_MANAGER}" in
+            apt)
                 _log_message "EXEC" "▶ apt-get update"
                 if ! apt-get -qq update >> "$LOGFILE" 2>&1; then
                     _log_message "ERROR" "✗ apt-get update 失败"
@@ -578,37 +578,35 @@ install_deps() {
                     end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
                     exit 1
                 fi ;;
-            arch)
+            pacman)
                 _log_message "EXEC" "▶ pacman -Syy --noconfirm ${missing_pkgs[*]}"
                 if ! pacman -Syy --noconfirm "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
                     _log_message "ERROR" "✗ pacman 安装失败"
                     end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
                     exit 1
                 fi ;;
-            centos|rhel|fedora)
-                if command -v dnf &>/dev/null; then
-                    _log_message "EXEC" "▶ dnf makecache"
-                    if ! dnf -q makecache >> "$LOGFILE" 2>&1; then
-                        _log_message "ERROR" "✗ dnf makecache 失败"
-                        end_step "${ICON_ERROR}" "依赖更新错误，详情请阅读日志：${LOGFILE}" "${RED}"
-                        exit 1
-                    fi
-                    _log_message "OK" "✓ dnf makecache 完成"
-                    _log_message "EXEC" "▶ dnf install -y ${missing_pkgs[*]}"
-                    if ! dnf -q install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
-                        _log_message "ERROR" "✗ dnf install 失败"
-                        end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
-                        exit 1
-                    fi
-                else
-                    _log_message "EXEC" "▶ yum install -y ${missing_pkgs[*]}"
-                    if ! yum -q install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
-                        _log_message "ERROR" "✗ yum install 失败"
-                        end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
-                        exit 1
-                    fi
+            dnf)
+                _log_message "EXEC" "▶ dnf makecache"
+                if ! dnf -q makecache >> "$LOGFILE" 2>&1; then
+                    _log_message "ERROR" "✗ dnf makecache 失败"
+                    end_step "${ICON_ERROR}" "依赖更新错误，详情请阅读日志：${LOGFILE}" "${RED}"
+                    exit 1
+                fi
+                _log_message "OK" "✓ dnf makecache 完成"
+                _log_message "EXEC" "▶ dnf install -y ${missing_pkgs[*]}"
+                if ! dnf -q install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
+                    _log_message "ERROR" "✗ dnf install 失败"
+                    end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+                    exit 1
                 fi ;;
-            alpine)
+            yum)
+                _log_message "EXEC" "▶ yum install -y ${missing_pkgs[*]}"
+                if ! yum -q install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
+                    _log_message "ERROR" "✗ yum install 失败"
+                    end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+                    exit 1
+                fi ;;
+            apk)
                 _log_message "EXEC" "▶ apk add --no-cache ${missing_pkgs[*]}"
                 if ! apk add --no-cache "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
                     _log_message "ERROR" "✗ apk add 失败"
