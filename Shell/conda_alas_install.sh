@@ -25,11 +25,15 @@ touch "$LOGFILE" || { echo "无法创建日志文件 $LOGFILE"; exit 1; }
 # (等效于 Python: '%(levelname)s | %(asctime)s.%(msecs)03d | %(message)s', datefmt='%H:%M:%S')
 _LOG_DATEFMT='%H:%M:%S'
 
+if date "+%3N" &>/dev/null; then
+    _LOG_DATEFMT='%H:%M:%S.%3N'
+fi
+
 _log_message() {
     local level="$1"
     local msg="$2"
     local timestamp
-    timestamp=$(date "+${_LOG_DATEFMT}.%3N")
+    timestamp=$(date "+${_LOG_DATEFMT}")
     echo "${level} | ${timestamp} | ${msg}" >> "$LOGFILE"
 }
 
@@ -86,6 +90,8 @@ ALAS_DIR=""
 CONDA_BIN=""
 USER_NAME="${SUDO_USER:-$(whoami)}"
 USER_GROUP=$(id -gn "${USER_NAME}")
+INIT_SYSTEM=""
+PACKAGE_MANAGER=""
 _SPINNER_PID=""
 
 # ---------------------------- 帮助 ----------------------------
@@ -209,23 +215,62 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# ---------------------------- 检测 init 系统 ----------------------------
+detect_init_system() {
+    if command -v systemctl &>/dev/null; then
+        INIT_SYSTEM="systemd"
+        _log_message "INFO" "检测到 init 系统: systemd"
+    elif command -v rc-service &>/dev/null; then
+        INIT_SYSTEM="openrc"
+        _log_message "INFO" "检测到 init 系统: OpenRC"
+    elif command -v service &>/dev/null && [[ -d /etc/init.d ]]; then
+        INIT_SYSTEM="sysvinit"
+        _log_message "INFO" "检测到 init 系统: SysVinit"
+    else
+        INIT_SYSTEM="unknown"
+        _log_message "WARNING" "无法检测 init 系统，将跳过服务配置"
+    fi
+}
+
 # ---------------------------- 权限检查 ----------------------------
-if [[ "$(id -u)" -ne 0 ]]; then
-    echo -e "${RED}请使用 root 权限运行此脚本 (sudo bash $0)${NC}"
-    exit 1
-fi
+check_root() {
+    if [[ "$(id -u)" -ne 0 ]]; then
+        end_step "${ICON_ERROR}" "请使用 root 权限运行 (sudo bash $0)" "${RED}"
+        exit 1
+    fi
+}
 
 # ---------------------------- 系统信息收集 ----------------------------
 gather_system_info() {
-    NET_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+    NET_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
+    if [[ -z "${NET_IP}" ]]; then
+        NET_IP=$(ip route get 1 2>/dev/null | grep -oP 'src \K[\d.]+' || true)
+    fi
     [[ -z "${NET_IP}" ]] && NET_IP="未获取"
+
     KERNEL=$(uname -r)
-    CPU_MODEL=$(lscpu | grep "Model name" | sed 's/Model name:\s*//' || echo "未知")
-    CPU_CORES=$(nproc)
-    DISK_AVAIL=$(df -h / | awk 'NR==2{print $4}')
-    DISK_USED=$(df -h / | awk 'NR==2{print $3}')
+
+    CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed 's/Model name:\s*//' || true)
+    if [[ -z "${CPU_MODEL}" ]]; then
+        CPU_MODEL=$(grep -m1 "model name" /proc/cpuinfo 2>/dev/null | sed 's/.*: //' || true)
+    fi
+    [[ -z "${CPU_MODEL}" ]] && CPU_MODEL="未知"
+
+    CPU_CORES=$(nproc 2>/dev/null || true)
+    if [[ -z "${CPU_CORES}" ]]; then
+        CPU_CORES=$(grep -c "^processor" /proc/cpuinfo 2>/dev/null || true)
+    fi
+    [[ -z "${CPU_CORES}" ]] && CPU_CORES="未知"
+
+    DISK_AVAIL=$(df -h / 2>/dev/null | awk 'NR==2{print $4}' || true)
+    DISK_USED=$(df -h / 2>/dev/null | awk 'NR==2{print $3}' || true)
     DISK_INFO="可用: ${DISK_AVAIL}  已用: ${DISK_USED}"
-    RAM_SIZE_MIB=$(free -m | awk '/Mem:/{print $2}')
+
+    RAM_SIZE_MIB=$(free -m 2>/dev/null | awk '/Mem:/{print $2}' || true)
+    if [[ -z "${RAM_SIZE_MIB}" ]]; then
+        RAM_SIZE_MIB=$(awk '/MemTotal:/{printf "%.0f", $2/1024}' /proc/meminfo 2>/dev/null || true)
+    fi
+    [[ -z "${RAM_SIZE_MIB}" ]] && RAM_SIZE_MIB="未知"
 }
 
 # ---------------------------- 打印标题与系统面板 ----------------------------
@@ -275,7 +320,7 @@ detect_os() {
     fi
 }
 
-# ---------------------------- 第1步: 安装/激活 Miniforge ----------------------------
+# ---------------------------- 第2步: 安装/激活 Miniforge ----------------------------
 install_miniforge() {
     start_step "正在检查 Miniforge..."
 
@@ -321,15 +366,143 @@ install_miniforge() {
     fi
 }
 
-# ---------------------------- 第2步: 安装 Git 和 ADB ----------------------------
-install_git_adb() {
+# ---------------------------- 包管理器检测 ----------------------------
+detect_package_manager() {
+    if command -v apt-get &>/dev/null; then
+        PACKAGE_MANAGER="apt"
+    elif command -v pacman &>/dev/null; then
+        PACKAGE_MANAGER="pacman"
+    elif command -v dnf &>/dev/null; then
+        PACKAGE_MANAGER="dnf"
+    elif command -v yum &>/dev/null; then
+        PACKAGE_MANAGER="yum"
+    elif command -v apk &>/dev/null; then
+        PACKAGE_MANAGER="apk"
+    else
+        PACKAGE_MANAGER="unknown"
+    fi
+    _log_message "INFO" "检测到包管理器: ${PACKAGE_MANAGER}"
+}
+
+# ---------------------------- 国内镜像安装 ----------------------------
+cn_package_mirrors() {
+    local -a pkgs=("$@")
+
+    case "${PACKAGE_MANAGER}" in
+        apt)
+            local codename
+            codename=$(lsb_release -sc 2>/dev/null || echo "stable")
+            local dist_path="ubuntu/"
+            [[ "${OS_ID}" == "debian" ]] && dist_path="debian/"
+            local -a apt_mirrors=(
+                "https://mirrors.ustc.edu.cn/${dist_path}"
+                "https://mirrors.aliyun.com/${dist_path}"
+                "https://repo.huaweicloud.com/${dist_path}"
+            )
+            local mirror_url
+            for mirror_url in "${apt_mirrors[@]}"; do
+                cat > "/tmp/alas-apt-$$.list" <<EOF
+deb ${mirror_url} ${codename} main universe
+deb ${mirror_url} ${codename}-updates main universe
+deb ${mirror_url} ${codename}-security main universe
+EOF
+                _log_message "INFO" "尝试镜像: ${mirror_url}"
+                if apt-get -o Dir::Etc::sourcelist="/tmp/alas-apt-$$.list" \
+                            -o Dir::Etc::sourceparts="-" \
+                            -o APT::Get::List-Cleanup="0" \
+                            -qq update >> "$LOGFILE" 2>&1; then
+                    if apt-get -o Dir::Etc::sourcelist="/tmp/alas-apt-$$.list" \
+                               -o Dir::Etc::sourceparts="-" \
+                               -qq install -y "${pkgs[@]}" >> "$LOGFILE" 2>&1; then
+                        rm -f "/tmp/alas-apt-$$.list"
+                        return 0
+                    fi
+                fi
+                rm -f "/tmp/alas-apt-$$.list"
+                _log_message "WARNING" "镜像 ${mirror_url} 不可用，尝试下一个"
+            done
+            return 1
+            ;;
+        pacman)
+            local -a pacman_mirrors=(
+                "https://mirrors.ustc.edu.cn/archlinux/\$repo/os/\$arch"
+                "https://mirrors.aliyun.com/archlinux/\$repo/os/\$arch"
+                "https://repo.huaweicloud.com/archlinux/\$repo/os/\$arch"
+            )
+            local mirror_url
+            for mirror_url in "${pacman_mirrors[@]}"; do
+                echo "Server = ${mirror_url}" > "/tmp/alas-mirrorlist-$$"
+                sed "s|^Include = /etc/pacman.d/mirrorlist|Include = /tmp/alas-mirrorlist-$$|" \
+                    /etc/pacman.conf > "/tmp/alas-pacman-$$.conf"
+                _log_message "INFO" "尝试镜像: ${mirror_url}"
+                if pacman --config "/tmp/alas-pacman-$$.conf" -Syy --noconfirm "${pkgs[@]}" >> "$LOGFILE" 2>&1; then
+                    rm -f "/tmp/alas-pacman-$$.conf" "/tmp/alas-mirrorlist-$$"
+                    return 0
+                fi
+                rm -f "/tmp/alas-pacman-$$.conf" "/tmp/alas-mirrorlist-$$"
+                _log_message "WARNING" "镜像 ${mirror_url} 不可用，尝试下一个"
+            done
+            return 1
+            ;;
+        dnf)
+            local -a dnf_mirrors=(
+                "https://mirrors.ustc.edu.cn/centos/\$releasever/BaseOS/\$basearch/os/"
+                "https://mirrors.aliyun.com/centos/\$releasever/BaseOS/\$basearch/os/"
+                "https://repo.huaweicloud.com/centos/\$releasever/BaseOS/\$basearch/os/"
+            )
+            local mirror_url
+            for mirror_url in "${dnf_mirrors[@]}"; do
+                _log_message "INFO" "尝试镜像: ${mirror_url}"
+                if dnf --disablerepo='*' --repofrompath="cn-temp-$$,${mirror_url}" --enablerepo="cn-temp-$$" \
+                       -q makecache >> "$LOGFILE" 2>&1; then
+                    if dnf --disablerepo='*' --repofrompath="cn-temp-$$,${mirror_url}" --enablerepo="cn-temp-$$" \
+                           -q install -y "${pkgs[@]}" >> "$LOGFILE" 2>&1; then
+                        return 0
+                    fi
+                fi
+                _log_message "WARNING" "镜像 ${mirror_url} 不可用，尝试下一个"
+            done
+            return 1
+            ;;
+        apk)
+            local alpine_ver
+            alpine_ver=$(cat /etc/alpine-release 2>/dev/null | cut -d. -f1,2 || echo "latest-stable")
+            local -a apk_mirrors=(
+                "https://mirrors.ustc.edu.cn/alpine/v${alpine_ver}/main"
+                "https://mirrors.ustc.edu.cn/alpine/v${alpine_ver}/community"
+                "https://mirrors.aliyun.com/alpine/v${alpine_ver}/main"
+                "https://mirrors.aliyun.com/alpine/v${alpine_ver}/community"
+                "https://repo.huaweicloud.com/alpine/v${alpine_ver}/main"
+                "https://repo.huaweicloud.com/alpine/v${alpine_ver}/community"
+            )
+            local mirror_url
+            for mirror_url in "${apk_mirrors[@]}"; do
+                _log_message "INFO" "尝试镜像: ${mirror_url}"
+                if apk add --no-cache --repository="${mirror_url}" "${pkgs[@]}" >> "$LOGFILE" 2>&1; then
+                    return 0
+                fi
+                _log_message "WARNING" "镜像 ${mirror_url} 不可用，尝试下一个"
+            done
+            return 1
+            ;;
+        *)
+            _log_message "ERROR" "CN 镜像不支持包管理器: ${PACKAGE_MANAGER}"
+            return 1
+            ;;
+    esac
+}
+
+# ---------------------------- 第1步: 检查依赖 ----------------------------
+install_deps() {
     start_step "正在检查依赖..."
+
+    detect_package_manager
 
     local missing_pkgs=()
 
-    case "${OS_ID}" in
-        debian|ubuntu)
-            local check_list=(git adb)
+    case "${PACKAGE_MANAGER}" in
+        apt)
+            local check_list=(curl git adb)
             for pkg in "${check_list[@]}"; do
                 if dpkg -s "$pkg" &>/dev/null; then
                     _log_message "OK" "依赖已存在: ${pkg}"
@@ -338,8 +511,8 @@ install_git_adb() {
                     missing_pkgs+=("$pkg")
                 fi
             done ;;
-        arch)
-            local check_list=(git android-tools)
+        pacman)
+            local check_list=(curl git android-tools)
             for pkg in "${check_list[@]}"; do
                 if pacman -Q "$pkg" &>/dev/null; then
                     _log_message "OK" "依赖已存在: ${pkg}"
@@ -348,8 +521,8 @@ install_git_adb() {
                     missing_pkgs+=("$pkg")
                 fi
             done ;;
-        centos|rhel|fedora)
-            local check_list=(git adb)
+        dnf|yum)
+            local check_list=(curl git adb)
             for pkg in "${check_list[@]}"; do
                 if rpm -q "$pkg" &>/dev/null; then
                     _log_message "OK" "依赖已存在: ${pkg}"
@@ -358,12 +531,23 @@ install_git_adb() {
                     missing_pkgs+=("$pkg")
                 fi
             done ;;
+        apk)
+            local check_list=(curl git android-tools)
+            for pkg in "${check_list[@]}"; do
+                if apk info -e "$pkg" &>/dev/null; then
+                    _log_message "OK" "依赖已存在: ${pkg}"
+                else
+                    _log_message "WARNING" "依赖缺失: ${pkg}"
+                    missing_pkgs+=("$pkg")
+                fi
+            done ;;
         *)
-            end_step "${ICON_ERROR}" "不支持的发行版: ${OS_ID}" "${RED}"
+            end_step "${ICON_ERROR}" "不支持的包管理器: ${PACKAGE_MANAGER}" "${RED}"
             exit 1 ;;
     esac
 
     if [[ ${#missing_pkgs[@]} -eq 0 ]]; then
+        end_step "${ICON_OK}" "curl 已安装: $(curl --version 2>/dev/null | head -n1 | awk '{print $2}')"
         end_step "${ICON_OK}" "Git 已安装: $(git --version 2>/dev/null | awk '{print $NF}')"
         end_step "${ICON_OK}" "ADB 已安装: $(adb --version 2>/dev/null | head -n1 | awk '{print $NF}')"
         return
@@ -371,30 +555,37 @@ install_git_adb() {
 
     start_step "正在安装缺失的依赖: ${missing_pkgs[*]}..."
 
-    case "${OS_ID}" in
-        debian|ubuntu)
-            _log_message "EXEC" "▶ apt-get update"
-            if ! apt-get -qq update >> "$LOGFILE" 2>&1; then
-                _log_message "ERROR" "✗ apt-get update 失败"
-                end_step "${ICON_ERROR}" "依赖更新错误，详情请阅读日志：${LOGFILE}" "${RED}"
-                exit 1
-            fi
-            _log_message "OK" "✓ apt-get update 完成"
-            _log_message "EXEC" "▶ apt-get install -y ${missing_pkgs[*]}"
-            if ! apt-get -qq install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
-                _log_message "ERROR" "✗ apt-get install 失败"
-                end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
-                exit 1
-            fi ;;
-        arch)
-            _log_message "EXEC" "▶ pacman -Syy --noconfirm ${missing_pkgs[*]}"
-            if ! pacman -Syy --noconfirm "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
-                _log_message "ERROR" "✗ pacman 安装失败"
-                end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
-                exit 1
-            fi ;;
-        centos|rhel|fedora)
-            if command -v dnf &>/dev/null; then
+    if [[ "${USE_CN_MIRROR}" == true ]]; then
+        _log_message "EXEC" "▶ ${PACKAGE_MANAGER} (CN mirrors) ${missing_pkgs[*]}"
+        cn_package_mirrors "${missing_pkgs[@]}" || {
+            _log_message "ERROR" "✗ CN 镜像安装失败"
+            end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+            exit 1
+        }
+    else
+        case "${PACKAGE_MANAGER}" in
+            apt)
+                _log_message "EXEC" "▶ apt-get update"
+                if ! apt-get -qq update >> "$LOGFILE" 2>&1; then
+                    _log_message "ERROR" "✗ apt-get update 失败"
+                    end_step "${ICON_ERROR}" "依赖更新错误，详情请阅读日志：${LOGFILE}" "${RED}"
+                    exit 1
+                fi
+                _log_message "OK" "✓ apt-get update 完成"
+                _log_message "EXEC" "▶ apt-get install -y ${missing_pkgs[*]}"
+                if ! apt-get -qq install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
+                    _log_message "ERROR" "✗ apt-get install 失败"
+                    end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+                    exit 1
+                fi ;;
+            pacman)
+                _log_message "EXEC" "▶ pacman -Syy --noconfirm ${missing_pkgs[*]}"
+                if ! pacman -Syy --noconfirm "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
+                    _log_message "ERROR" "✗ pacman 安装失败"
+                    end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+                    exit 1
+                fi ;;
+            dnf)
                 _log_message "EXEC" "▶ dnf makecache"
                 if ! dnf -q makecache >> "$LOGFILE" 2>&1; then
                     _log_message "ERROR" "✗ dnf makecache 失败"
@@ -407,17 +598,25 @@ install_git_adb() {
                     _log_message "ERROR" "✗ dnf install 失败"
                     end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
                     exit 1
-                fi
-            else
+                fi ;;
+            yum)
                 _log_message "EXEC" "▶ yum install -y ${missing_pkgs[*]}"
                 if ! yum -q install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
                     _log_message "ERROR" "✗ yum install 失败"
                     end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
                     exit 1
-                fi
-            fi ;;
-    esac
+                fi ;;
+            apk)
+                _log_message "EXEC" "▶ apk add --no-cache ${missing_pkgs[*]}"
+                if ! apk add --no-cache "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
+                    _log_message "ERROR" "✗ apk add 失败"
+                    end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+                    exit 1
+                fi ;;
+        esac
+    fi
 
+    end_step "${ICON_OK}" "curl 已安装: $(curl --version 2>/dev/null | head -n1 | awk '{print $2}')"
     end_step "${ICON_OK}" "Git 已安装: $(git --version 2>/dev/null | awk '{print $NF}')"
     end_step "${ICON_OK}" "ADB 已安装: $(adb --version 2>/dev/null | head -n1 | awk '{print $NF}')"
     _log_message "OK" "✓ 依赖安装完成"
@@ -602,14 +801,28 @@ EOF
     end_step "${ICON_OK}" "启动脚本已生成: ${SCRIPT_OUT_DIR}/run_alas.sh"
 }
 
-# ---------------------------- 第7步: systemd 服务 ----------------------------
+# ---------------------------- 第7步: 配置 init 服务 ----------------------------
 configure_service() {
     if [[ "${SKIP_SERVICE}" == true ]]; then
-        _log_message "INFO" "已跳过 systemd 服务配置 (--skip-service)"
-        end_step "${ICON_INFO}" "已跳过 systemd 服务配置"
+        end_step "${ICON_INFO}" "检测到 -S、--skip-service 已跳过服务配置"
         return
     fi
 
+    if [[ "${INIT_SYSTEM}" == "unknown" ]]; then
+        end_step "${ICON_WARN}" "未检测到 init 系统，跳过服务配置" "${YELLOW}"
+        return
+    fi
+
+    if [[ "${INIT_SYSTEM}" == "systemd" ]]; then
+        _configure_systemd
+    elif [[ "${INIT_SYSTEM}" == "openrc" ]]; then
+        _configure_openrc
+    elif [[ "${INIT_SYSTEM}" == "sysvinit" ]]; then
+        _configure_sysvinit
+    fi
+}
+
+_configure_systemd() {
     start_step "正在配置 systemd 开机自启..."
 
     _log_message "EXEC" "▶ 生成 /etc/systemd/system/run_alas.service"
@@ -656,6 +869,141 @@ EOF
     fi
 }
 
+_configure_openrc() {
+    start_step "正在配置 OpenRC 开机自启..."
+
+    _log_message "EXEC" "▶ 生成 /etc/init.d/run_alas"
+    _log_message "INFO" "  用户: ${USER_NAME}, 组: ${USER_GROUP}"
+    _log_message "INFO" "  工作目录: ${ALAS_DIR}"
+    _log_message "INFO" "  启动命令: ${SCRIPT_OUT_DIR}/run_alas.sh"
+
+    cat > /etc/init.d/run_alas <<'OPENRC_EOF'
+#!/sbin/openrc-run
+name="run_alas"
+description="ALAS Auto Script"
+
+depend() {
+    need net
+    after bootmisc
+}
+
+start() {
+    ebegin "Starting ALAS"
+    start-stop-daemon --start --background --make-pidfile \
+        --pidfile /var/run/run_alas.pid \
+        --chdir ALAS_DIR_PLACEHOLDER \
+        --user USER_PLACEHOLDER \
+        --exec SCRIPT_PLACEHOLDER
+    eend $?
+}
+
+stop() {
+    ebegin "Stopping ALAS"
+    start-stop-daemon --stop --pidfile /var/run/run_alas.pid
+    eend $?
+}
+OPENRC_EOF
+
+    sed -i "s|ALAS_DIR_PLACEHOLDER|${ALAS_DIR}|g" /etc/init.d/run_alas
+    sed -i "s|USER_PLACEHOLDER|${USER_NAME}|g" /etc/init.d/run_alas
+    sed -i "s|SCRIPT_PLACEHOLDER|${SCRIPT_OUT_DIR}/run_alas.sh|g" /etc/init.d/run_alas
+    chmod +x /etc/init.d/run_alas
+    _log_message "OK" "✓ OpenRC 服务脚本已创建"
+
+    _log_message "EXEC" "▶ rc-update add run_alas default"
+    rc-update add run_alas default >> "$LOGFILE" 2>&1
+    _log_message "OK" "✓ 服务已添加至 default 运行级"
+
+    _log_message "EXEC" "▶ rc-service run_alas start"
+    rc-service run_alas start >> "$LOGFILE" 2>&1
+    _log_message "OK" "✓ 服务已启动"
+
+    if rc-service run_alas status &>/dev/null; then
+        end_step "${ICON_OK}" "OpenRC 服务已启动并设为开机自启"
+    else
+        end_step "${ICON_ERROR}" "OpenRC 服务启动失败，请查看日志: ${LOGFILE}" "${RED}"
+    fi
+}
+
+_configure_sysvinit() {
+    start_step "正在配置 SysVinit 开机自启..."
+
+    _log_message "EXEC" "▶ 生成 /etc/init.d/run_alas"
+    _log_message "INFO" "  用户: ${USER_NAME}, 组: ${USER_GROUP}"
+    _log_message "INFO" "  工作目录: ${ALAS_DIR}"
+    _log_message "INFO" "  启动命令: ${SCRIPT_OUT_DIR}/run_alas.sh"
+
+    cat > /etc/init.d/run_alas <<'SYSV_EOF'
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          run_alas
+# Required-Start:    $network $remote_fs
+# Required-Stop:     $network $remote_fs
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: ALAS Auto Script
+### END INIT INFO
+
+case "$1" in
+    start)
+        echo "Starting ALAS..."
+        start-stop-daemon --start --background --make-pidfile \
+            --pidfile /var/run/run_alas.pid \
+            --chdir DIR_PLACEHOLDER \
+            --user USER_PLACEHOLDER \
+            --exec SCRIPT_PLACEHOLDER
+        ;;
+    stop)
+        echo "Stopping ALAS..."
+        start-stop-daemon --stop --pidfile /var/run/run_alas.pid
+        ;;
+    restart)
+        $0 stop
+        sleep 1
+        $0 start
+        ;;
+    status)
+        if kill -0 "$(cat /var/run/run_alas.pid 2>/dev/null)" 2>/dev/null; then
+            echo "ALAS is running"
+        else
+            echo "ALAS is not running"
+            exit 1
+        fi
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart|status}"
+        exit 1
+        ;;
+esac
+exit 0
+SYSV_EOF
+
+    sed -i "s|USER_PLACEHOLDER|${USER_NAME}|g" /etc/init.d/run_alas
+    sed -i "s|DIR_PLACEHOLDER|${ALAS_DIR}|g" /etc/init.d/run_alas
+    sed -i "s|SCRIPT_PLACEHOLDER|${SCRIPT_OUT_DIR}/run_alas.sh|g" /etc/init.d/run_alas
+    chmod +x /etc/init.d/run_alas
+    _log_message "OK" "✓ SysVinit 服务脚本已创建"
+
+    if command -v update-rc.d &>/dev/null; then
+        _log_message "EXEC" "▶ update-rc.d run_alas defaults"
+        update-rc.d run_alas defaults >> "$LOGFILE" 2>&1
+    elif command -v chkconfig &>/dev/null; then
+        _log_message "EXEC" "▶ chkconfig --add run_alas"
+        chkconfig --add run_alas >> "$LOGFILE" 2>&1
+    fi
+    _log_message "OK" "✓ 服务已添加至启动项"
+
+    _log_message "EXEC" "▶ service run_alas start"
+    service run_alas start >> "$LOGFILE" 2>&1
+    _log_message "OK" "✓ 服务已启动"
+
+    if service run_alas status >> "$LOGFILE" 2>&1; then
+        end_step "${ICON_OK}" "SysVinit 服务已启动并设为开机自启"
+    else
+        end_step "${ICON_ERROR}" "SysVinit 服务启动失败，请查看日志: ${LOGFILE}" "${RED}"
+    fi
+}
+
 # ---------------------------- 完成摘要 ----------------------------
 print_completion() {
     echo_line ""
@@ -691,21 +1039,53 @@ do_uninstall() {
 
     echo_line ""
 
+    detect_init_system
+
     start_step "正在停止 ALAS 服务..."
-    if systemctl is-active --quiet run_alas.service 2>/dev/null; then
-        _log_message "EXEC" "▶ systemctl stop run_alas.service"
-        systemctl stop run_alas.service >> "$LOGFILE" 2>&1
+    if [[ "${INIT_SYSTEM}" == "systemd" ]]; then
+        if systemctl is-active --quiet run_alas.service 2>/dev/null; then
+            _log_message "EXEC" "▶ systemctl stop run_alas.service"
+            systemctl stop run_alas.service >> "$LOGFILE" 2>&1
+            _log_message "OK" "✓ 服务已停止"
+        fi
+        if systemctl is-enabled --quiet run_alas.service 2>/dev/null; then
+            _log_message "EXEC" "▶ systemctl disable run_alas.service"
+            systemctl disable run_alas.service >> "$LOGFILE" 2>&1
+            _log_message "OK" "✓ 服务已禁用"
+        fi
+        if [[ -f /etc/systemd/system/run_alas.service ]]; then
+            _log_message "EXEC" "▶ 删除服务单元文件"
+            rm -f /etc/systemd/system/run_alas.service
+            systemctl daemon-reload >> "$LOGFILE" 2>&1
+        fi
+    elif [[ "${INIT_SYSTEM}" == "openrc" ]]; then
+        if rc-service run_alas status &>/dev/null; then
+            _log_message "EXEC" "▶ rc-service run_alas stop"
+            rc-service run_alas stop >> "$LOGFILE" 2>&1
+            _log_message "OK" "✓ 服务已停止"
+        fi
+        _log_message "EXEC" "▶ rc-update del run_alas"
+        rc-update del run_alas >> "$LOGFILE" 2>&1 || true
+        _log_message "OK" "✓ 服务已从运行级移除"
+        if [[ -f /etc/init.d/run_alas ]]; then
+            _log_message "EXEC" "▶ 删除 OpenRC 服务脚本"
+            rm -f /etc/init.d/run_alas
+        fi
+    elif [[ "${INIT_SYSTEM}" == "sysvinit" ]]; then
+        _log_message "EXEC" "▶ service run_alas stop"
+        service run_alas stop >> "$LOGFILE" 2>&1 || true
         _log_message "OK" "✓ 服务已停止"
-    fi
-    if systemctl is-enabled --quiet run_alas.service 2>/dev/null; then
-        _log_message "EXEC" "▶ systemctl disable run_alas.service"
-        systemctl disable run_alas.service >> "$LOGFILE" 2>&1
-        _log_message "OK" "✓ 服务已禁用"
-    fi
-    if [[ -f /etc/systemd/system/run_alas.service ]]; then
-        _log_message "EXEC" "▶ 删除服务单元文件"
-        rm -f /etc/systemd/system/run_alas.service
-        systemctl daemon-reload >> "$LOGFILE" 2>&1
+        if command -v update-rc.d &>/dev/null; then
+            _log_message "EXEC" "▶ update-rc.d -f run_alas remove"
+            update-rc.d -f run_alas remove >> "$LOGFILE" 2>&1 || true
+        elif command -v chkconfig &>/dev/null; then
+            _log_message "EXEC" "▶ chkconfig --del run_alas"
+            chkconfig --del run_alas >> "$LOGFILE" 2>&1 || true
+        fi
+        if [[ -f /etc/init.d/run_alas ]]; then
+            _log_message "EXEC" "▶ 删除 SysVinit 服务脚本"
+            rm -f /etc/init.d/run_alas
+        fi
     fi
     end_step "${ICON_OK}" "服务已停止并移除"
 
@@ -747,14 +1127,17 @@ main() {
         detect_os
         gather_system_info
         print_header
+        check_root
         do_uninstall
         exit 0
     fi
     detect_os
     gather_system_info
     print_header
+    check_root
+    detect_init_system
+    install_deps
     install_miniforge
-    install_git_adb
     clone_alas
     setup_conda_env
     configure_deploy
