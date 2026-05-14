@@ -387,114 +387,107 @@ detect_package_manager() {
 cn_package_mirrors() {
     local -a pkgs=("$@")
 
-    _cn_apt_install() {
-        local codename
-        codename=$(lsb_release -sc 2>/dev/null || echo "stable")
-        local dist_path="ubuntu/"
-        [[ "${OS_ID}" == "debian" ]] && dist_path="debian/"
-        local -a mirrors=(
-            "https://mirrors.ustc.edu.cn/${dist_path}"
-            "https://mirrors.aliyun.com/${dist_path}"
-            "https://repo.huaweicloud.com/${dist_path}"
-        )
-        local mirror_url
-        for mirror_url in "${mirrors[@]}"; do
-            cat > "/tmp/alas-apt-$$.list" <<EOF
+    case "${PACKAGE_MANAGER}" in
+        apt)
+            local codename
+            codename=$(lsb_release -sc 2>/dev/null || echo "stable")
+            local dist_path="ubuntu/"
+            [[ "${OS_ID}" == "debian" ]] && dist_path="debian/"
+            local -a apt_mirrors=(
+                "https://mirrors.ustc.edu.cn/${dist_path}"
+                "https://mirrors.aliyun.com/${dist_path}"
+                "https://repo.huaweicloud.com/${dist_path}"
+            )
+            local mirror_url
+            for mirror_url in "${apt_mirrors[@]}"; do
+                cat > "/tmp/alas-apt-$$.list" <<EOF
 deb ${mirror_url} ${codename} main universe
 deb ${mirror_url} ${codename}-updates main universe
 deb ${mirror_url} ${codename}-security main universe
 EOF
-            _log_message "INFO" "尝试镜像: ${mirror_url}"
-            if apt-get -o Dir::Etc::sourcelist="/tmp/alas-apt-$$.list" \
-                        -o Dir::Etc::sourceparts="-" \
-                        -o APT::Get::List-Cleanup="0" \
-                        -qq update >> "$LOGFILE" 2>&1; then
+                _log_message "INFO" "尝试镜像: ${mirror_url}"
                 if apt-get -o Dir::Etc::sourcelist="/tmp/alas-apt-$$.list" \
-                           -o Dir::Etc::sourceparts="-" \
-                           -qq install -y "${pkgs[@]}" >> "$LOGFILE" 2>&1; then
-                    rm -f "/tmp/alas-apt-$$.list"
+                            -o Dir::Etc::sourceparts="-" \
+                            -o APT::Get::List-Cleanup="0" \
+                            -qq update >> "$LOGFILE" 2>&1; then
+                    if apt-get -o Dir::Etc::sourcelist="/tmp/alas-apt-$$.list" \
+                               -o Dir::Etc::sourceparts="-" \
+                               -qq install -y "${pkgs[@]}" >> "$LOGFILE" 2>&1; then
+                        rm -f "/tmp/alas-apt-$$.list"
+                        return 0
+                    fi
+                fi
+                rm -f "/tmp/alas-apt-$$.list"
+                _log_message "WARNING" "镜像 ${mirror_url} 不可用，尝试下一个"
+            done
+            return 1
+            ;;
+        pacman)
+            local -a pacman_mirrors=(
+                "https://mirrors.ustc.edu.cn/archlinux/\$repo/os/\$arch"
+                "https://mirrors.aliyun.com/archlinux/\$repo/os/\$arch"
+                "https://repo.huaweicloud.com/archlinux/\$repo/os/\$arch"
+            )
+            local mirror_url
+            for mirror_url in "${pacman_mirrors[@]}"; do
+                echo "Server = ${mirror_url}" > "/tmp/alas-mirrorlist-$$"
+                sed "s|^Include = /etc/pacman.d/mirrorlist|Include = /tmp/alas-mirrorlist-$$|" \
+                    /etc/pacman.conf > "/tmp/alas-pacman-$$.conf"
+                _log_message "INFO" "尝试镜像: ${mirror_url}"
+                if pacman --config "/tmp/alas-pacman-$$.conf" -Syy --noconfirm "${pkgs[@]}" >> "$LOGFILE" 2>&1; then
+                    rm -f "/tmp/alas-pacman-$$.conf" "/tmp/alas-mirrorlist-$$"
                     return 0
                 fi
-            fi
-            rm -f "/tmp/alas-apt-$$.list"
-            _log_message "WARNING" "镜像 ${mirror_url} 不可用，尝试下一个"
-        done
-        return 1
-    }
-
-    _cn_pacman_install() {
-        local -a mirrors=(
-            "https://mirrors.ustc.edu.cn/archlinux/\$repo/os/\$arch"
-            "https://mirrors.aliyun.com/archlinux/\$repo/os/\$arch"
-            "https://repo.huaweicloud.com/archlinux/\$repo/os/\$arch"
-        )
-        local mirror_url
-        for mirror_url in "${mirrors[@]}"; do
-            echo "Server = ${mirror_url}" > "/tmp/alas-mirrorlist-$$"
-            sed "s|^Include = /etc/pacman.d/mirrorlist|Include = /tmp/alas-mirrorlist-$$|" \
-                /etc/pacman.conf > "/tmp/alas-pacman-$$.conf"
-            _log_message "INFO" "尝试镜像: ${mirror_url}"
-            if pacman --config "/tmp/alas-pacman-$$.conf" -Syy --noconfirm "${pkgs[@]}" >> "$LOGFILE" 2>&1; then
                 rm -f "/tmp/alas-pacman-$$.conf" "/tmp/alas-mirrorlist-$$"
-                return 0
-            fi
-            rm -f "/tmp/alas-pacman-$$.conf" "/tmp/alas-mirrorlist-$$"
-            _log_message "WARNING" "镜像 ${mirror_url} 不可用，尝试下一个"
-        done
-        return 1
-    }
-
-    _cn_dnf_install() {
-        local -a mirrors=(
-            "https://mirrors.ustc.edu.cn/centos/\$releasever/BaseOS/\$basearch/os/"
-            "https://mirrors.aliyun.com/centos/\$releasever/BaseOS/\$basearch/os/"
-            "https://repo.huaweicloud.com/centos/\$releasever/BaseOS/\$basearch/os/"
-        )
-        local mirror_url
-        for mirror_url in "${mirrors[@]}"; do
-            _log_message "INFO" "尝试镜像: ${mirror_url}"
-            if dnf --disablerepo='*' --repofrompath="cn-temp-$$,${mirror_url}" --enablerepo="cn-temp-$$" \
-                   -q makecache >> "$LOGFILE" 2>&1; then
+                _log_message "WARNING" "镜像 ${mirror_url} 不可用，尝试下一个"
+            done
+            return 1
+            ;;
+        dnf)
+            local -a dnf_mirrors=(
+                "https://mirrors.ustc.edu.cn/centos/\$releasever/BaseOS/\$basearch/os/"
+                "https://mirrors.aliyun.com/centos/\$releasever/BaseOS/\$basearch/os/"
+                "https://repo.huaweicloud.com/centos/\$releasever/BaseOS/\$basearch/os/"
+            )
+            local mirror_url
+            for mirror_url in "${dnf_mirrors[@]}"; do
+                _log_message "INFO" "尝试镜像: ${mirror_url}"
                 if dnf --disablerepo='*' --repofrompath="cn-temp-$$,${mirror_url}" --enablerepo="cn-temp-$$" \
-                       -q install -y "${pkgs[@]}" >> "$LOGFILE" 2>&1; then
+                       -q makecache >> "$LOGFILE" 2>&1; then
+                    if dnf --disablerepo='*' --repofrompath="cn-temp-$$,${mirror_url}" --enablerepo="cn-temp-$$" \
+                           -q install -y "${pkgs[@]}" >> "$LOGFILE" 2>&1; then
+                        return 0
+                    fi
+                fi
+                _log_message "WARNING" "镜像 ${mirror_url} 不可用，尝试下一个"
+            done
+            return 1
+            ;;
+        apk)
+            local alpine_ver
+            alpine_ver=$(cat /etc/alpine-release 2>/dev/null | cut -d. -f1,2 || echo "latest-stable")
+            local -a apk_mirrors=(
+                "https://mirrors.ustc.edu.cn/alpine/v${alpine_ver}/main"
+                "https://mirrors.ustc.edu.cn/alpine/v${alpine_ver}/community"
+                "https://mirrors.aliyun.com/alpine/v${alpine_ver}/main"
+                "https://mirrors.aliyun.com/alpine/v${alpine_ver}/community"
+                "https://repo.huaweicloud.com/alpine/v${alpine_ver}/main"
+                "https://repo.huaweicloud.com/alpine/v${alpine_ver}/community"
+            )
+            local mirror_url
+            for mirror_url in "${apk_mirrors[@]}"; do
+                _log_message "INFO" "尝试镜像: ${mirror_url}"
+                if apk add --no-cache --repository="${mirror_url}" "${pkgs[@]}" >> "$LOGFILE" 2>&1; then
                     return 0
                 fi
-            fi
-            _log_message "WARNING" "镜像 ${mirror_url} 不可用，尝试下一个"
-        done
-        return 1
-    }
-
-    _cn_apk_install() {
-        local alpine_ver
-        alpine_ver=$(cat /etc/alpine-release 2>/dev/null | cut -d. -f1,2 || echo "latest-stable")
-        local -a mirrors=(
-            "https://mirrors.ustc.edu.cn/alpine/v${alpine_ver}/main"
-            "https://mirrors.ustc.edu.cn/alpine/v${alpine_ver}/community"
-            "https://mirrors.aliyun.com/alpine/v${alpine_ver}/main"
-            "https://mirrors.aliyun.com/alpine/v${alpine_ver}/community"
-            "https://repo.huaweicloud.com/alpine/v${alpine_ver}/main"
-            "https://repo.huaweicloud.com/alpine/v${alpine_ver}/community"
-        )
-        local mirror_url
-        for mirror_url in "${mirrors[@]}"; do
-            _log_message "INFO" "尝试镜像: ${mirror_url}"
-            if apk add --no-cache --repository="${mirror_url}" "${pkgs[@]}" >> "$LOGFILE" 2>&1; then
-                return 0
-            fi
-            _log_message "WARNING" "镜像 ${mirror_url} 不可用，尝试下一个"
-        done
-        return 1
-    }
-
-    case "${PACKAGE_MANAGER}" in
-        apt)    _cn_apt_install ;;
-        pacman) _cn_pacman_install ;;
-        dnf)    _cn_dnf_install ;;
-        apk)    _cn_apk_install ;;
+                _log_message "WARNING" "镜像 ${mirror_url} 不可用，尝试下一个"
+            done
+            return 1
+            ;;
         *)
             _log_message "ERROR" "CN 镜像不支持包管理器: ${PACKAGE_MANAGER}"
-            return 1 ;;
+            return 1
+            ;;
     esac
 }
 
