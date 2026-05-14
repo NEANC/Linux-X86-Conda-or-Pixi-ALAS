@@ -210,10 +210,12 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ---------------------------- 权限检查 ----------------------------
-if [[ "$(id -u)" -ne 0 ]]; then
-    echo -e "${RED}请使用 root 权限运行此脚本 (sudo bash $0)${NC}"
-    exit 1
-fi
+check_root() {
+    if [[ "$(id -u)" -ne 0 ]]; then
+        end_step "${ICON_ERROR}" "请使用 root 权限运行 (sudo bash $0)" "${RED}"
+        exit 1
+    fi
+}
 
 # ---------------------------- 系统信息收集 ----------------------------
 gather_system_info() {
@@ -738,12 +740,14 @@ main() {
         detect_os
         gather_system_info
         print_header
+        check_root
         do_uninstall
         exit 0
     fi
     detect_os
     gather_system_info
     print_header
+    check_root
     install_pixi
     install_git_adb
     clone_alas
