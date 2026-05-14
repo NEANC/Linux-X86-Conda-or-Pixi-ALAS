@@ -277,7 +277,7 @@ detect_os() {
     fi
 }
 
-# ---------------------------- 第1步: 安装/激活 Pixi ----------------------------
+# ---------------------------- 第2步: 安装/激活 Pixi ----------------------------
 install_pixi() {
     start_step "正在检查 Pixi..."
 
@@ -322,15 +322,15 @@ install_pixi() {
     fi
 }
 
-# ---------------------------- 第2步: 安装 Git 和 ADB 及相关依赖库 ----------------------------
-install_git_adb() {
+# ---------------------------- 第1步: 安装 Git、ADB 和 curl ----------------------------
+install_deps() {
     start_step "正在检查依赖..."
 
     local missing_pkgs=()
 
     case "${OS_ID}" in
         debian|ubuntu)
-            local check_list=(git adb)
+            local check_list=(curl git adb)
             for pkg in "${check_list[@]}"; do
                 if dpkg -s "$pkg" &>/dev/null; then
                     _log_message "OK" "依赖已存在: ${pkg}"
@@ -340,7 +340,7 @@ install_git_adb() {
                 fi
             done ;;
         arch)
-            local check_list=(git android-tools)
+            local check_list=(curl git android-tools)
             for pkg in "${check_list[@]}"; do
                 if pacman -Q "$pkg" &>/dev/null; then
                     _log_message "OK" "依赖已存在: ${pkg}"
@@ -350,7 +350,7 @@ install_git_adb() {
                 fi
             done ;;
         centos|rhel|fedora)
-            local check_list=(git adb)
+            local check_list=(curl git adb)
             for pkg in "${check_list[@]}"; do
                 if rpm -q "$pkg" &>/dev/null; then
                     _log_message "OK" "依赖已存在: ${pkg}"
@@ -360,7 +360,7 @@ install_git_adb() {
                 fi
             done ;;
         alpine)
-            local check_list=(git android-tools)
+            local check_list=(curl git android-tools)
             for pkg in "${check_list[@]}"; do
                 if apk info -e "$pkg" &>/dev/null; then
                     _log_message "OK" "依赖已存在: ${pkg}"
@@ -375,6 +375,7 @@ install_git_adb() {
     esac
 
     if [[ ${#missing_pkgs[@]} -eq 0 ]]; then
+        end_step "${ICON_OK}" "curl 已安装: $(curl --version 2>/dev/null | head -n1 | awk '{print $2}')"
         end_step "${ICON_OK}" "Git 已安装: $(git --version 2>/dev/null | awk '{print $NF}')"
         end_step "${ICON_OK}" "ADB 已安装: $(adb --version 2>/dev/null | head -n1 | awk '{print $NF}')"
         return
@@ -436,6 +437,7 @@ install_git_adb() {
             fi ;;
     esac
 
+    end_step "${ICON_OK}" "curl 已安装: $(curl --version 2>/dev/null | head -n1 | awk '{print $2}')"
     end_step "${ICON_OK}" "Git 已安装: $(git --version 2>/dev/null | awk '{print $NF}')"
     end_step "${ICON_OK}" "ADB 已安装: $(adb --version 2>/dev/null | head -n1 | awk '{print $NF}')"
     _log_message "OK" "✓ 依赖安装完成"
@@ -748,8 +750,8 @@ main() {
     gather_system_info
     print_header
     check_root
+    install_deps
     install_pixi
-    install_git_adb
     clone_alas
     setup_pixi_env
     configure_deploy
