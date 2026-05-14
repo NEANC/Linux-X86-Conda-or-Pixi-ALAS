@@ -90,6 +90,7 @@ ALAS_DIR=""
 CONDA_BIN=""
 USER_NAME="${SUDO_USER:-$(whoami)}"
 USER_GROUP=$(id -gn "${USER_NAME}")
+INIT_SYSTEM=""
 _SPINNER_PID=""
 
 # ---------------------------- 帮助 ----------------------------
@@ -212,6 +213,20 @@ while [[ $# -gt 0 ]]; do
         *) log_error "未知参数: $1"; usage; exit 1 ;;
     esac
 done
+
+# ---------------------------- 检测 init 系统 ----------------------------
+detect_init_system() {
+    if command -v systemctl &>/dev/null; then
+        INIT_SYSTEM="systemd"
+        _log_message "INFO" "检测到 init 系统: systemd"
+    elif command -v rc-service &>/dev/null; then
+        INIT_SYSTEM="openrc"
+        _log_message "INFO" "检测到 init 系统: OpenRC"
+    else
+        INIT_SYSTEM="unknown"
+        _log_message "WARNING" "无法检测 init 系统，将跳过服务配置"
+    fi
+}
 
 # ---------------------------- 权限检查 ----------------------------
 check_root() {
@@ -647,14 +662,28 @@ EOF
     end_step "${ICON_OK}" "启动脚本已生成: ${SCRIPT_OUT_DIR}/run_alas.sh"
 }
 
-# ---------------------------- 第7步: systemd 服务 ----------------------------
+# ---------------------------- 第7步: 配置 init 服务 ----------------------------
 configure_service() {
     if [[ "${SKIP_SERVICE}" == true ]]; then
-        _log_message "INFO" "已跳过 systemd 服务配置 (--skip-service)"
-        end_step "${ICON_INFO}" "已跳过 systemd 服务配置"
+        _log_message "INFO" "已跳过服务配置 (--skip-service)"
+        end_step "${ICON_INFO}" "已跳过服务配置"
         return
     fi
 
+    if [[ "${INIT_SYSTEM}" == "unknown" ]]; then
+        _log_message "WARNING" "未检测到 init 系统，跳过服务配置"
+        end_step "${ICON_WARN}" "未检测到 init 系统，跳过服务配置" "${YELLOW}"
+        return
+    fi
+
+    if [[ "${INIT_SYSTEM}" == "systemd" ]]; then
+        _configure_systemd
+    elif [[ "${INIT_SYSTEM}" == "openrc" ]]; then
+        _configure_openrc
+    fi
+}
+
+_configure_systemd() {
     start_step "正在配置 systemd 开机自启..."
 
     _log_message "EXEC" "▶ 生成 /etc/systemd/system/run_alas.service"
@@ -701,6 +730,62 @@ EOF
     fi
 }
 
+_configure_openrc() {
+    start_step "正在配置 OpenRC 开机自启..."
+
+    _log_message "EXEC" "▶ 生成 /etc/init.d/run_alas"
+    _log_message "INFO" "  用户: ${USER_NAME}, 组: ${USER_GROUP}"
+    _log_message "INFO" "  工作目录: ${ALAS_DIR}"
+    _log_message "INFO" "  启动命令: ${SCRIPT_OUT_DIR}/run_alas.sh"
+
+    cat > /etc/init.d/run_alas <<'OPENRC_EOF'
+#!/sbin/openrc-run
+name="run_alas"
+description="ALAS Auto Script"
+
+depend() {
+    need net
+    after bootmisc
+}
+
+start() {
+    ebegin "Starting ALAS"
+    start-stop-daemon --start --background --make-pidfile \
+        --pidfile /var/run/run_alas.pid \
+        --chdir ALAS_DIR_PLACEHOLDER \
+        --user USER_PLACEHOLDER \
+        --exec SCRIPT_PLACEHOLDER
+    eend $?
+}
+
+stop() {
+    ebegin "Stopping ALAS"
+    start-stop-daemon --stop --pidfile /var/run/run_alas.pid
+    eend $?
+}
+OPENRC_EOF
+
+    sed -i "s|ALAS_DIR_PLACEHOLDER|${ALAS_DIR}|g" /etc/init.d/run_alas
+    sed -i "s|USER_PLACEHOLDER|${USER_NAME}|g" /etc/init.d/run_alas
+    sed -i "s|SCRIPT_PLACEHOLDER|${SCRIPT_OUT_DIR}/run_alas.sh|g" /etc/init.d/run_alas
+    chmod +x /etc/init.d/run_alas
+    _log_message "OK" "✓ OpenRC 服务脚本已创建"
+
+    _log_message "EXEC" "▶ rc-update add run_alas default"
+    rc-update add run_alas default >> "$LOGFILE" 2>&1
+    _log_message "OK" "✓ 服务已添加至 default 运行级"
+
+    _log_message "EXEC" "▶ rc-service run_alas start"
+    rc-service run_alas start >> "$LOGFILE" 2>&1
+    _log_message "OK" "✓ 服务已启动"
+
+    if rc-service run_alas status &>/dev/null; then
+        end_step "${ICON_OK}" "OpenRC 服务已启动并设为开机自启"
+    else
+        end_step "${ICON_ERROR}" "OpenRC 服务启动失败，请查看日志: ${LOGFILE}" "${RED}"
+    fi
+}
+
 # ---------------------------- 完成摘要 ----------------------------
 print_completion() {
     echo_line ""
@@ -736,21 +821,38 @@ do_uninstall() {
 
     echo_line ""
 
+    detect_init_system
+
     start_step "正在停止 ALAS 服务..."
-    if systemctl is-active --quiet run_alas.service 2>/dev/null; then
-        _log_message "EXEC" "▶ systemctl stop run_alas.service"
-        systemctl stop run_alas.service >> "$LOGFILE" 2>&1
-        _log_message "OK" "✓ 服务已停止"
-    fi
-    if systemctl is-enabled --quiet run_alas.service 2>/dev/null; then
-        _log_message "EXEC" "▶ systemctl disable run_alas.service"
-        systemctl disable run_alas.service >> "$LOGFILE" 2>&1
-        _log_message "OK" "✓ 服务已禁用"
-    fi
-    if [[ -f /etc/systemd/system/run_alas.service ]]; then
-        _log_message "EXEC" "▶ 删除服务单元文件"
-        rm -f /etc/systemd/system/run_alas.service
-        systemctl daemon-reload >> "$LOGFILE" 2>&1
+    if [[ "${INIT_SYSTEM}" == "systemd" ]]; then
+        if systemctl is-active --quiet run_alas.service 2>/dev/null; then
+            _log_message "EXEC" "▶ systemctl stop run_alas.service"
+            systemctl stop run_alas.service >> "$LOGFILE" 2>&1
+            _log_message "OK" "✓ 服务已停止"
+        fi
+        if systemctl is-enabled --quiet run_alas.service 2>/dev/null; then
+            _log_message "EXEC" "▶ systemctl disable run_alas.service"
+            systemctl disable run_alas.service >> "$LOGFILE" 2>&1
+            _log_message "OK" "✓ 服务已禁用"
+        fi
+        if [[ -f /etc/systemd/system/run_alas.service ]]; then
+            _log_message "EXEC" "▶ 删除服务单元文件"
+            rm -f /etc/systemd/system/run_alas.service
+            systemctl daemon-reload >> "$LOGFILE" 2>&1
+        fi
+    elif [[ "${INIT_SYSTEM}" == "openrc" ]]; then
+        if rc-service run_alas status &>/dev/null; then
+            _log_message "EXEC" "▶ rc-service run_alas stop"
+            rc-service run_alas stop >> "$LOGFILE" 2>&1
+            _log_message "OK" "✓ 服务已停止"
+        fi
+        _log_message "EXEC" "▶ rc-update del run_alas"
+        rc-update del run_alas >> "$LOGFILE" 2>&1 || true
+        _log_message "OK" "✓ 服务已从运行级移除"
+        if [[ -f /etc/init.d/run_alas ]]; then
+            _log_message "EXEC" "▶ 删除 OpenRC 服务脚本"
+            rm -f /etc/init.d/run_alas
+        fi
     fi
     end_step "${ICON_OK}" "服务已停止并移除"
 
@@ -800,6 +902,7 @@ main() {
     gather_system_info
     print_header
     check_root
+    detect_init_system
     install_deps
     install_miniforge
     clone_alas
