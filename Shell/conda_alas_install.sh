@@ -376,6 +376,8 @@ detect_package_manager() {
         PACKAGE_MANAGER="dnf"
     elif command -v yum &>/dev/null; then
         PACKAGE_MANAGER="yum"
+    elif command -v zypper &>/dev/null; then
+        PACKAGE_MANAGER="zypper"
     elif command -v apk &>/dev/null; then
         PACKAGE_MANAGER="apk"
     else
@@ -485,6 +487,25 @@ EOF
             done
             return 1
             ;;
+        zypper)
+            local zypp_ver
+            zypp_ver=$(grep -oP 'VERSION_ID="?\K[^"]+' /etc/os-release 2>/dev/null || echo "15.6")
+            local -a zypp_mirrors=(
+                "https://mirrors.ustc.edu.cn/opensuse/distribution/leap/${zypp_ver}/repo/oss/"
+                "https://mirrors.aliyun.com/opensuse/distribution/leap/${zypp_ver}/repo/oss/"
+                "https://repo.huaweicloud.com/opensuse/distribution/leap/${zypp_ver}/repo/oss/"
+            )
+            local mirror_url
+            for mirror_url in "${zypp_mirrors[@]}"; do
+                _log_message "INFO" "尝试镜像: ${mirror_url}"
+                if zypper --non-interactive --no-gpg-checks --plus-repo "${mirror_url}" \
+                       install -y "${pkgs[@]}" >> "$LOGFILE" 2>&1; then
+                    return 0
+                fi
+                _log_message "WARNING" "镜像 ${mirror_url} 不可用，尝试下一个"
+            done
+            return 1
+            ;;
         *)
             _log_message "ERROR" "CN 镜像不支持包管理器: ${PACKAGE_MANAGER}"
             return 1
@@ -521,7 +542,7 @@ install_deps() {
                     missing_pkgs+=("$pkg")
                 fi
             done ;;
-        dnf|yum)
+        dnf|yum|zypper)
             local check_list=(curl git adb)
             for pkg in "${check_list[@]}"; do
                 if rpm -q "$pkg" &>/dev/null; then
@@ -603,6 +624,20 @@ install_deps() {
                 _log_message "EXEC" "▶ yum install -y ${missing_pkgs[*]}"
                 if ! yum -q install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
                     _log_message "ERROR" "✗ yum install 失败"
+                    end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+                    exit 1
+                fi ;;
+            zypper)
+                _log_message "EXEC" "▶ zypper --non-interactive refresh"
+                if ! zypper --non-interactive refresh >> "$LOGFILE" 2>&1; then
+                    _log_message "ERROR" "✗ zypper refresh 失败"
+                    end_step "${ICON_ERROR}" "依赖更新错误，详情请阅读日志：${LOGFILE}" "${RED}"
+                    exit 1
+                fi
+                _log_message "OK" "✓ zypper refresh 完成"
+                _log_message "EXEC" "▶ zypper --non-interactive install -y ${missing_pkgs[*]}"
+                if ! zypper --non-interactive install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
+                    _log_message "ERROR" "✗ zypper install 失败"
                     end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
                     exit 1
                 fi ;;
