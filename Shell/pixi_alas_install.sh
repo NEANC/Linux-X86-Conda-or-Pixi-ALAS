@@ -235,7 +235,8 @@ detect_init_system() {
 # ---------------------------- 权限检查 ----------------------------
 check_root() {
     if [[ "$(id -u)" -ne 0 ]]; then
-        end_step "${ICON_ERROR}" "请使用 root 权限运行 (sudo bash $0)" "${RED}"
+        _log_message "ERROR" "请使用 root 权限运行 (sudo bash $0)"
+        echo_line "  ${ICON_ERROR}  ${RED}请使用 root 权限运行 (sudo bash $0)${NC}"
         exit 1
     fi
 }
