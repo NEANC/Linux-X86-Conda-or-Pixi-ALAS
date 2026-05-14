@@ -311,12 +311,52 @@ print_header() {
 
 # ---------------------------- 发行版检测 ----------------------------
 detect_os() {
+    local kernel_name
+    kernel_name=$(uname -s 2>/dev/null || true)
+    case "${kernel_name}" in
+        FreeBSD|OpenBSD|NetBSD)
+            _log_message "ERROR" "非 Linux 内核 (${kernel_name})，Unix 系统请手动安装"
+            echo_line "  ${ICON_ERROR}  ${RED}非 Linux 内核 (${kernel_name})，Unix 系统请手动安装${NC}"
+            exit 1 ;;
+        Linux) ;;
+        *)
+            _log_message "ERROR" "不支持的操作系统: ${kernel_name}"
+            echo_line "  ${ICON_ERROR}  ${RED}不支持的操作系统: ${kernel_name}${NC}"
+            exit 1 ;;
+    esac
+
     if [[ -f /etc/os-release ]]; then
         . /etc/os-release
         OS_ID="${ID}"
-        OS_VERSION="${VERSION_ID}"
+        OS_VERSION="${VERSION_ID:-${BUILD_ID:-${VERSION:-}}}"
+    elif [[ -f /etc/lsb-release ]]; then
+        . /etc/lsb-release
+        OS_ID="${DISTRIB_ID,,}"
+        OS_VERSION="${DISTRIB_RELEASE}"
+    elif [[ -f /etc/debian_version ]]; then
+        OS_ID="debian"
+        OS_VERSION=$(cat /etc/debian_version 2>/dev/null)
+    elif [[ -f /etc/redhat-release ]]; then
+        OS_ID="rhel"
+        OS_VERSION=$(grep -oP '\d+\.\d+' /etc/redhat-release 2>/dev/null || echo "unknown")
+    elif [[ -f /etc/centos-release ]]; then
+        OS_ID="centos"
+        OS_VERSION=$(grep -oP '\d+\.\d+' /etc/centos-release 2>/dev/null || echo "unknown")
+    elif [[ -f /etc/fedora-release ]]; then
+        OS_ID="fedora"
+        OS_VERSION=$(grep -oP '\d+' /etc/fedora-release 2>/dev/null || echo "unknown")
+    elif [[ -f /etc/arch-release ]]; then
+        OS_ID="arch"
+        OS_VERSION="rolling"
+    elif [[ -f /etc/alpine-release ]]; then
+        OS_ID="alpine"
+        OS_VERSION=$(cat /etc/alpine-release 2>/dev/null)
+    elif [[ -f /etc/SuSE-release ]]; then
+        OS_ID="opensuse"
+        OS_VERSION=$(grep -oP 'VERSION = \K\d+\.\d+' /etc/SuSE-release 2>/dev/null || echo "unknown")
     else
-        log_error "无法检测 Linux 发行版"
+        _log_message "ERROR" "无法检测 Linux 发行版，请检查 /etc/os-release"
+        echo_line "  ${ICON_ERROR}  ${RED}无法检测 Linux 发行版，请检查 /etc/os-release${NC}"
         exit 1
     fi
 }
