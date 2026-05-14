@@ -25,11 +25,15 @@ touch "$LOGFILE" || { echo "无法创建日志文件 $LOGFILE"; exit 1; }
 # (等效于 Python: '%(levelname)s | %(asctime)s.%(msecs)03d | %(message)s', datefmt='%H:%M:%S')
 _LOG_DATEFMT='%H:%M:%S'
 
+if date "+%3N" &>/dev/null; then
+    _LOG_DATEFMT='%H:%M:%S.%3N'
+fi
+
 _log_message() {
     local level="$1"
     local msg="$2"
     local timestamp
-    timestamp=$(date "+${_LOG_DATEFMT}.%3N")
+    timestamp=$(date "+${_LOG_DATEFMT}")
     echo "${level} | ${timestamp} | ${msg}" >> "$LOGFILE"
 }
 
