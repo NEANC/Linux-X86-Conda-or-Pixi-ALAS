@@ -256,7 +256,7 @@ print_header() {
     echo_line ""
 }
 
-# ---------------------------- 第1步: 安装 Homebrew ----------------------------
+# ---------------------------- 安装 Homebrew ----------------------------
 install_homebrew() {
     start_step "正在检查 Homebrew..."
 
@@ -289,12 +289,12 @@ install_homebrew() {
     fi
 }
 
-# ---------------------------- 第2步: 安装 Git 和 ADB ----------------------------
+# ---------------------------- 检查依赖 ----------------------------
 install_packages() {
     start_step "正在检查依赖..."
 
     local missing_formulae=()
-    local check_list=(git android-platform-tools)
+    local check_list=(git android-platform-tools pixi)
 
     for pkg in "${check_list[@]}"; do
         if brew list --formula "$pkg" &>/dev/null; then
@@ -308,6 +308,7 @@ install_packages() {
     if [[ ${#missing_formulae[@]} -eq 0 ]]; then
         end_step "${ICON_OK}" "Git 已安装: $(git --version 2>/dev/null | awk '{print $NF}')"
         end_step "${ICON_OK}" "ADB 已安装: $(adb --version 2>/dev/null | head -n1 | awk '{print $NF}')"
+        end_step "${ICON_OK}" "Pixi 已安装: $(pixi --version 2>/dev/null | awk '{print $NF}')"
         return
     fi
 
@@ -352,56 +353,11 @@ install_packages() {
     fi
     end_step "${ICON_OK}" "Git 已安装: $(git --version 2>/dev/null | awk '{print $NF}')"
     end_step "${ICON_OK}" "ADB 已安装: $(adb --version 2>/dev/null | head -n1 | awk '{print $NF}')"
+    end_step "${ICON_OK}" "Pixi 已安装: $(pixi --version 2>/dev/null | awk '{print $NF}')"
     _log_message "OK" "✓ 依赖安装完成"
 }
 
-# ---------------------------- 第3步: 安装 Pixi 包管理器 ----------------------------
-install_pixi() {
-    start_step "正在检查 Pixi 包管理器..."
-
-    if command -v pixi &>/dev/null; then
-        PIXI_VER=$(pixi --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')
-        end_step "${ICON_OK}" "Pixi 已安装: ${PIXI_VER}"
-        return
-    fi
-
-    if [[ -x "${HOME}/.pixi/bin/pixi" ]]; then
-        export PATH="${HOME}/.pixi/bin:${PATH}"
-        PIXI_VER=$(pixi --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')
-        end_step "${ICON_OK}" "Pixi 已激活: ${PIXI_VER}"
-        return
-    fi
-
-    start_step "正在安装 Pixi 包管理器..."
-
-    if [[ "${USE_CN_MIRROR}" == true ]]; then
-        local pixi_dl="${GH_PROXY}https://github.com/prefix-dev/pixi/releases/latest/download/pixi-aarch64-apple-darwin.tar.gz"
-        _log_message "EXEC" "▶ 安装 Pixi (国内源): PIXI_DOWNLOAD_URL=${pixi_dl}"
-        if ! curl -fsSL https://pixi.sh/install.sh | PIXI_DOWNLOAD_URL="${pixi_dl}" bash >> "$LOGFILE" 2>&1; then
-            end_step "${ICON_ERROR}" "Pixi 安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
-            exit 1
-        fi
-    else
-        _log_message "EXEC" "▶ 安装 Pixi: curl -fsSL https://pixi.sh/install.sh | sh"
-        if ! curl -fsSL https://pixi.sh/install.sh | sh >> "$LOGFILE" 2>&1; then
-            end_step "${ICON_ERROR}" "Pixi 安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
-            exit 1
-        fi
-    fi
-    _log_message "OK" "✓ Pixi 安装命令已完成"
-
-    export PATH="${HOME}/.pixi/bin:${PATH}"
-    if command -v pixi &>/dev/null; then
-        PIXI_VER=$(pixi --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')
-        end_step "${ICON_OK}" "Pixi 已安装: ${PIXI_VER}"
-    else
-        _log_message "ERROR" "Pixi 安装后未找到可执行文件"
-        end_step "${ICON_ERROR}" "Pixi 安装失败，请查看日志: ${LOGFILE}" "${RED}"
-        exit 1
-    fi
-}
-
-# ---------------------------- 第4步: 克隆 ALAS 仓库 ----------------------------
+# ---------------------------- 克隆 ALAS 仓库 ----------------------------
 clone_alas() {
     start_step "正在克隆 ALAS 仓库..."
 
@@ -429,7 +385,7 @@ clone_alas() {
     end_step "${ICON_OK}" "ALAS 仓库已克隆"
 }
 
-# ---------------------------- 第5步: 配置 Pixi 虚拟环境 ----------------------------
+# ---------------------------- 配置 Pixi 虚拟环境 ----------------------------
 setup_pixi_env() {
     start_step "正在配置 Pixi 虚拟环境..."
 
@@ -727,7 +683,7 @@ PIXI_EOF
     end_step "${ICON_OK}" "虚拟环境已构建"
 }
 
-# ---------------------------- 第6步: 配置部署 ----------------------------
+# ---------------------------- 配置部署 ----------------------------
 configure_deploy() {
     start_step "复制 deploy.yaml..."
 
@@ -749,7 +705,7 @@ configure_deploy() {
     fi
 }
 
-# ---------------------------- 第7步: 创建启动脚本 ----------------------------
+# ---------------------------- 创建启动脚本 ----------------------------
 create_launcher() {
     start_step "正在创建启动脚本..."
 
@@ -766,7 +722,7 @@ EOF
     end_step "${ICON_OK}" "启动脚本已创建: ${SCRIPT_OUT_DIR}/run_alas.sh"
 }
 
-# ---------------------------- 第8步: 配置 launchctl 服务 ----------------------------
+# ---------------------------- 配置 launchctl 服务 ----------------------------
 configure_service() {
     start_step "正在配置 launchctl 服务..."
 
@@ -825,7 +781,7 @@ end_step "${ICON_WARN}" "未成功注册 launchd 服务，请检查 plist 文件
     fi
 }
 
-# ---------------------------- 第9步: 创建桌面快捷脚本 ----------------------------
+# ---------------------------- 创建桌面快捷脚本 ----------------------------
 create_desktop_commands() {
     start_step "正在创建桌面快捷脚本..."
 
@@ -965,7 +921,6 @@ main() {
     print_header
     install_homebrew
     install_packages
-    install_pixi
     clone_alas
     setup_pixi_env
     configure_deploy
