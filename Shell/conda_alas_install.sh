@@ -245,7 +245,7 @@ check_root() {
 gather_system_info() {
     NET_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
     if [[ -z "${NET_IP}" ]]; then
-        NET_IP=$(ip route get 1 2>/dev/null | grep -oP 'src \K[\d.]+' || true)
+        NET_IP=$(ip route get 1 2>/dev/null | sed -n 's/.*src \([0-9.]*\).*/\1/p' || true)
     fi
     [[ -z "${NET_IP}" ]] && NET_IP="未获取"
 
@@ -338,13 +338,13 @@ detect_os() {
         OS_VERSION=$(cat /etc/debian_version 2>/dev/null)
     elif [[ -f /etc/redhat-release ]]; then
         OS_ID="rhel"
-        OS_VERSION=$(grep -oP '\d+\.\d+' /etc/redhat-release 2>/dev/null || echo "unknown")
+        OS_VERSION=$(grep -oE '[0-9]+\.[0-9]+' /etc/redhat-release 2>/dev/null || echo "unknown")
     elif [[ -f /etc/centos-release ]]; then
         OS_ID="centos"
-        OS_VERSION=$(grep -oP '\d+\.\d+' /etc/centos-release 2>/dev/null || echo "unknown")
+        OS_VERSION=$(grep -oE '[0-9]+\.[0-9]+' /etc/centos-release 2>/dev/null || echo "unknown")
     elif [[ -f /etc/fedora-release ]]; then
         OS_ID="fedora"
-        OS_VERSION=$(grep -oP '\d+' /etc/fedora-release 2>/dev/null || echo "unknown")
+        OS_VERSION=$(grep -oE '[0-9]+' /etc/fedora-release 2>/dev/null || echo "unknown")
     elif [[ -f /etc/arch-release ]]; then
         OS_ID="arch"
         OS_VERSION="rolling"
@@ -353,7 +353,7 @@ detect_os() {
         OS_VERSION=$(cat /etc/alpine-release 2>/dev/null)
     elif [[ -f /etc/SuSE-release ]]; then
         OS_ID="opensuse"
-        OS_VERSION=$(grep -oP 'VERSION = \K\d+\.\d+' /etc/SuSE-release 2>/dev/null || echo "unknown")
+        OS_VERSION=$(sed -n 's/.*VERSION = \([0-9.]*\).*/\1/p' /etc/SuSE-release 2>/dev/null || echo "unknown")
     else
         _log_message "ERROR" "无法检测 Linux 发行版，请检查 /etc/os-release"
         echo_line "  ${ICON_ERROR}  ${RED}无法检测 Linux 发行版，请检查 /etc/os-release${NC}"
@@ -530,7 +530,7 @@ EOF
             ;;
         zypper)
             local zypp_ver
-            zypp_ver=$(grep -oP 'VERSION_ID="?\K[^"]+' /etc/os-release 2>/dev/null || echo "15.6")
+            zypp_ver=$(sed -n 's/.*VERSION_ID="\?\([^"]*\).*/\1/p' /etc/os-release 2>/dev/null || echo "15.6")
             local -a zypp_mirrors=(
                 "https://mirrors.ustc.edu.cn/opensuse/distribution/leap/${zypp_ver}/repo/oss/"
                 "https://mirrors.aliyun.com/opensuse/distribution/leap/${zypp_ver}/repo/oss/"
