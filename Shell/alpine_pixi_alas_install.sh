@@ -573,76 +573,9 @@ detect_os() {
     fi
 }
 
-# ---------------------------- Pixi 二进制下载（顶层函数，可被多处调用）----------------------------
-# 用法: _install_pixi_binary <download_url>
-# 下载 pixi tar.gz 并解压到 ~/.pixi/bin/pixi，支持 curl/wget 自动切换
-_install_pixi_binary() {
-    _ip_dl_url="$1"
-    _ip_tmp_tar="/tmp/pixi_install_$$.tar.gz"
-    _log_message "EXEC" "▶ 下载 Pixi 二进制: ${_ip_dl_url}"
-    mkdir -p "${HOME}/.pixi/bin"
-
-    _cleanup_spinner
-    printf "  ${CYAN}📥  正在下载 Pixi...${NC}\n"
-
-    _ip_download_ok=false
-
-    if command -v curl >/dev/null 2>&1; then
-        if curl -fSL --retry 3 --retry-delay 2 --progress-bar \
-               -o "${_ip_tmp_tar}" "${_ip_dl_url}" 2>&1; then
-            _ip_download_ok=true
-            _log_message "OK" "✓ curl 下载完成"
-        else
-            _log_message "ERROR" "✗ curl 下载失败，尝试 wget..."
-            printf "  ${YELLOW}${ICON_WARN}  curl 失败，切换 wget...${NC}\n"
-        fi
-    else
-        _log_message "WARNING" "未找到 curl，尝试 wget..."
-    fi
-
-    if [ "${_ip_download_ok}" = false ] && command -v wget >/dev/null 2>&1; then
-        _ip_wget_cmd="wget -O \"${_ip_tmp_tar}\" \"${_ip_dl_url}\""
-        if wget --help 2>&1 | grep -q -- '--show-progress'; then
-            _ip_wget_cmd="wget --show-progress -q --tries=3 -O \"${_ip_tmp_tar}\" \"${_ip_dl_url}\""
-        fi
-        if eval "${_ip_wget_cmd}" 2>&1; then
-            _ip_download_ok=true
-            _log_message "OK" "✓ wget 下载完成"
-        else
-            _log_message "ERROR" "✗ wget 下载也失败"
-        fi
-    fi
-
-    if [ "${_ip_download_ok}" = false ]; then
-        rm -f "${_ip_tmp_tar}"
-        return 1
-    fi
-
-    printf "  ${GREEN}✓  下载完成，正在解压...${NC}\n"
-    _log_message "EXEC" "▶ tar 解压 pixi 到 ${HOME}/.pixi/bin/"
-    if tar -xz -C "${HOME}/.pixi/bin/" pixi < "${_ip_tmp_tar}" >> "$LOGFILE" 2>&1; then
-        chmod +x "${HOME}/.pixi/bin/pixi"
-        rm -f "${_ip_tmp_tar}"
-        _log_message "OK" "✓ Pixi 二进制解压完成"
-        return 0
-    fi
-
-    rm -f "${_ip_tmp_tar}"
-    _log_message "ERROR" "✗ tar 解压失败"
-    return 1
-}
-
 # ---------------------------- 第1步: 安装/激活 Pixi ----------------------------
 install_pixi() {
     start_step "正在检查 Pixi..."
-    arch pixi_archive
-    arch=$(uname -m)
-    case "${arch}" in
-        x86_64|amd64) pixi_archive="pixi-x86_64-unknown-linux-musl.tar.gz" ;;
-        *)
-            end_step "${ICON_ERROR}" "当前脚本仅支持 x86-64 Linux，当前架构: ${arch}" "${RED}"
-            exit 1 ;;
-    esac
 
     if command -v pixi >/dev/null 2>&1; then
         PIXI_VER=$(pixi --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')
@@ -650,27 +583,28 @@ install_pixi() {
         return
     fi
 
-    if [ -x "${HOME}/.pixi/bin/pixi"  ]; then
+    if [ -x "${HOME}/.pixi/bin/pixi" ]; then
         export PATH="${HOME}/.pixi/bin:${PATH}"
         PIXI_VER=$(pixi --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')
         end_step "${ICON_OK}" "Pixi 已激活: ${PIXI_VER}"
         return
     fi
 
-    _log_message "INFO" "未检测到 Pixi，开始安装..."
+    _log_message "ERROR" "未检测到 Pixi"
     start_step "正在安装 Pixi..."
-    pixi_dl
     if [ "${USE_CN_MIRROR}" = true ]; then
-        pixi_dl="${GH_PROXY}https://github.com/prefix-dev/pixi/releases/latest/download/${pixi_archive}"
-        _log_message "EXEC" "▶ 安装 Pixi (国内源): ${pixi_dl}"
+        _ip_pixi_dl="${GH_PROXY}https://github.com/prefix-dev/pixi/releases/latest/download/pixi-x86_64-unknown-linux-musl.tar.gz"
+        _log_message "EXEC" "▶ 安装 Pixi (国内源): PIXI_DOWNLOAD_URL=${_ip_pixi_dl}"
+        if ! PIXI_DOWNLOAD_URL="${_ip_pixi_dl}" curl -fsSL https://pixi.sh/install.sh | sh >> "$LOGFILE" 2>&1; then
+            end_step "${ICON_ERROR}" "Pixi 安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+            exit 1
+        fi
     else
-        pixi_dl="https://github.com/prefix-dev/pixi/releases/latest/download/${pixi_archive}"
-        _log_message "EXEC" "▶ 安装 Pixi (直连): ${pixi_dl}"
-    fi
-
-    if ! _install_pixi_binary "${pixi_dl}"; then
-        end_step "${ICON_ERROR}" "Pixi 安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
-        exit 1
+        _log_message "EXEC" "▶ 安装 Pixi: curl -fsSL https://pixi.sh/install.sh | sh"
+        if ! curl -fsSL https://pixi.sh/install.sh | sh >> "$LOGFILE" 2>&1; then
+            end_step "${ICON_ERROR}" "Pixi 安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+            exit 1
+        fi
     fi
     _log_message "OK" "✓ Pixi 安装已完成"
 
