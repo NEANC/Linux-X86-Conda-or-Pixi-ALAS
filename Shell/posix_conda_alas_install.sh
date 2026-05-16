@@ -8,7 +8,7 @@
 #   - 静默执行，系统信息面板，步骤反馈
 #   - 国内镜像加速 (-t cn)，开机自启
 #==============================================================================
-# 用法: sh posix_conda_alas_install.sh [-t cn] [-S] [-d DIR] [-l] [--uninstall]
+# 用法: sh posix_conda_alas_install.sh [-t cn] [-S] [-d DIR] [-l] [--uninstall [-Y]]
 #       sh posix_conda_alas_install.sh -h  # 查看完整帮助
 
 set -eu
@@ -102,6 +102,7 @@ ALPINE_GLIBC_LOADER="/lib64/ld-linux-x86-64.so.2"
 ALPINE_GLIBC_VERSION="${ALPINE_GLIBC_VERSION:-2.35-r1}"
 ALPINE_GLIBC_OVERRIDE="${CONDA_OVERRIDE_GLIBC:-2.28}"
 ALPINE_GLIBC_RETRY_DONE=false
+UNINSTALL_YES=false
 
 # ---------------------------- 帮助 ----------------------------
 usage() {
@@ -113,7 +114,7 @@ usage() {
   -s, --script-dir DIR   指定启动脚本输出目录 (默认: ~/AzurLaneAutoScript)
   -t TEMPLATE            控制使用的 deploy 模板与国内镜像源
   -S, --skip-service     跳过开机自启服务配置
-  --uninstall            反向安装：停止并删除 ALAS、虚拟环境、开机自启
+  --uninstall [-Y]       反向安装：停止并删除 ALAS、虚拟环境、开机自启
   -l, --log              保留安装日志，不自动删除
   -h, --help             显示帮助信息
 EOF
@@ -222,7 +223,12 @@ while [ $# -gt 0 ]; do
                 DEPLOY_TEMPLATE="$2"
                 shift 2 ;;
             esac ;;
-        --uninstall) UNINSTALL=true; shift ;;
+        --uninstall)
+            UNINSTALL=true
+            case "$2" in
+                -Y|-y|--yes) UNINSTALL_YES=true; shift ;;
+            esac
+            shift ;;
         -l|--log) KEEP_LOG=true; shift ;;
         -S|--skip-service) SKIP_SERVICE=true; shift ;;
         -h|--help) usage; exit 0 ;;
@@ -1386,25 +1392,31 @@ do_uninstall() {
     echo_line "  ${ICON_INFO}  ${GREEN}  Git, ADB, Miniforge 不会被删除${NC}"
     echo_line ""
     _log_message "WARNING" "等待确认卸载"
-    while true; do
-        printf "  确认继续吗？ [yes/N] ："
-        if [ -c /dev/tty ] && [ -r /dev/tty ]; then
-            read -r CONFIRM < /dev/tty
-        else
-            read -r CONFIRM
-        fi
-        CONFIRM=$(printf '%s' "${CONFIRM}" | tr -d '\r')
-        case "${CONFIRM}" in
-            yes|YES)
-                _log_message "INFO" "已确认卸载"
-                break ;;
-            no|NO|n|N)
-                _log_message "INFO" "卸载取消"
-                echo_line "  ${ICON_INFO}  已取消卸载"; exit 0 ;;
-            *)
-                echo_line "  ${ICON_WARN}  ${YELLOW}无效输入，请输入 yes 或 N${NC}" ;;
-        esac
-    done
+    if [ "${UNINSTALL_YES}" = true ]; then
+        _log_message "INFO" "已通过 -Y 自动确认卸载"
+    else
+        while true; do
+            printf "  确认继续吗？ [yes/N] ："
+            if [ -c /dev/tty ] && [ -r /dev/tty ]; then
+                read -r CONFIRM < /dev/tty
+            else
+                read -r CONFIRM
+            fi
+            CONFIRM=$(printf '%s' "${CONFIRM}" | tr -d '\r')
+            # 去除字符串末尾的所有空白字符，等效 CONFIRM=$(printf "%s" "$CONFIRM" | sed -e 's/[[:space:]]*$//')
+            CONFIRM=${CONFIRM%"${CONFIRM##*[![:space:]]}"}
+            case "${CONFIRM}" in
+                yes|Yes|YES)
+                    _log_message "INFO" "已确认卸载"
+                    break ;;
+                no|NO|n|N)
+                    _log_message "INFO" "卸载取消"
+                    echo_line "  ${ICON_INFO}  已取消卸载"; exit 0 ;;
+                *)
+                    echo_line "  ${ICON_WARN}  ${YELLOW}无效输入，请输入 yes 或 N${NC}" ;;
+            esac
+        done
+    fi
 
     echo_line ""
 

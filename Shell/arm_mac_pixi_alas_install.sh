@@ -84,6 +84,7 @@ USER_NAME="$(whoami)"
 _SPINNER_PID=""
 SKIP_SERVICE=true
 UNINSTALL=false
+UNINSTALL_YES=false
 KEEP_LOG=false
 
 # ---------------------------- 帮助 ----------------------------
@@ -96,7 +97,7 @@ usage() {
   -s, --script-dir DIR   指定脚本输出目录 (默认: ~/AzurLaneAutoScript)
   -t TEMPLATE            控制使用的 deploy 模板与国内镜像源
   -S, --setup-service    配置 ALAS 开机自启
-  --uninstall            反向安装：停止并删除 ALAS、虚拟环境、开机自启
+  --uninstall [-Y]       反向安装：停止并删除 ALAS、虚拟环境、开机自启
   -l, --log              保留安装日志，不自动删除
   -h, --help             显示帮助信息
 EOF
@@ -199,7 +200,13 @@ while [[ $# -gt 0 ]]; do
                 DEPLOY_TEMPLATE="$2"
             fi
             shift 2 ;;
-        --uninstall) UNINSTALL=true; shift ;;
+        --uninstall)
+            UNINSTALL=true
+            if [[ "$2" == -Y || "$2" == -y || "$2" == --yes ]]; then
+                UNINSTALL_YES=true
+                shift
+            fi
+            shift ;;
         -l|--log) KEEP_LOG=true; shift ;;
         -S|--setup-service) SKIP_SERVICE=false; shift ;;
         -h|--help) usage; exit 0 ;;
@@ -858,20 +865,25 @@ do_uninstall() {
     echo_line "  ${ICON_INFO}  ${GREEN}  Homebrew, git, adb, pixi 不会被删除${NC}"
     echo_line ""
     _log_message "WARNING" "等待确认卸载"
-    while true; do
-        echo -n "  确认继续吗？ [yes/N] ："
-        read -r CONFIRM < /dev/tty
-        case "${CONFIRM}" in
-            yes|YES)
-                _log_message "INFO" "已确认卸载"
-                break ;;
-            no|NO|n|N)
-                _log_message "INFO" "卸载取消"
-                echo_line "  ${ICON_INFO}  已取消卸载"; exit 0 ;;
-            *)
-                echo_line "  ${ICON_WARN}  无效输入，请输入 yes 或 N" "${YELLOW}" ;;
-        esac
-    done
+    if [[ "${UNINSTALL_YES}" == true ]]; then
+        _log_message "INFO" "已通过 -Y 自动确认卸载"
+    else
+        while true; do
+            echo -n "  确认继续吗？ [yes/N] ："
+            read -r CONFIRM < /dev/tty
+            CONFIRM=$(printf '%s' "${CONFIRM}" | tr -d '\r')
+            case "${CONFIRM}" in
+                yes|Yes|YES)
+                    _log_message "INFO" "已确认卸载"
+                    break ;;
+                no|NO|n|N)
+                    _log_message "INFO" "卸载取消"
+                    echo_line "  ${ICON_INFO}  已取消卸载"; exit 0 ;;
+                *)
+                    echo_line "  ${ICON_WARN}  ${YELLOW}无效输入，请输入 yes 或 N${NC}" ;;
+            esac
+        done
+    fi
 
     echo_line ""
 
