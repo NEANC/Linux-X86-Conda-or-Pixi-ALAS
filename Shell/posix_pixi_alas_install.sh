@@ -731,7 +731,7 @@ diagnose_pixi_install_failure() {
 
     if pixi_install_needs_real_glibc "${_df_install_log}"; then
         _log_message "ERROR" "Alpine glibc 兼容层不足，Pixi 的 linux-64 Python 无法启动"
-        end_step "${ICON_ERROR}" "Pixi 无法启动 linux-64 Python：第三方 glibc 已安装但仍失败，请查看日志" "${RED}"
+        end_step "${ICON_ERROR}" "Pixi 无法启动 linux-64 Python：第三方 glibc 已安装但仍失败，请查看日志: ${LOGFILE}" "${RED}"
         return
     fi
 
