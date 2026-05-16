@@ -504,20 +504,31 @@ detect_package_manager() {
 cn_package_mirrors() {
     case "${PACKAGE_MANAGER}" in
         apt)
-            _cm_codename=$(lsb_release -sc 2>/dev/null || echo "stable")
-            _cm_dist_path="ubuntu/"
+            _cm_codename=$(lsb_release -sc 2>/dev/null)
+            if [ -z "${_cm_codename}" ]; then
+                _cm_codename=$(. /etc/os-release 2>/dev/null; printf '%s' "${VERSION_CODENAME:-stable}")
+            fi
             if [ "${OS_ID}" = "debian" ]; then
                 _cm_dist_path="debian/"
+                _cm_components="main contrib non-free"
+            else
+                _cm_dist_path="ubuntu/"
+                _cm_components="main universe"
             fi
             for _cm_mirror in \
                 "https://mirrors.ustc.edu.cn/${_cm_dist_path}" \
                 "https://mirrors.aliyun.com/${_cm_dist_path}" \
                 "https://repo.huaweicloud.com/${_cm_dist_path}"; do
                 cat > "/tmp/alas-apt-$$.list" <<EOF
-deb ${_cm_mirror} ${_cm_codename} main universe
-deb ${_cm_mirror} ${_cm_codename}-updates main universe
-deb ${_cm_mirror} ${_cm_codename}-security main universe
+deb ${_cm_mirror} ${_cm_codename} ${_cm_components}
+deb ${_cm_mirror} ${_cm_codename}-updates ${_cm_components}
 EOF
+                if [ "${OS_ID}" = "debian" ]; then
+                    _cm_sec_mirror=$(printf '%s' "${_cm_mirror}" | sed 's|/debian/|/debian-security/|')
+                    printf 'deb %s %s %s\n' "${_cm_sec_mirror}" "${_cm_codename}-security" "${_cm_components}" >> "/tmp/alas-apt-$$.list"
+                else
+                    printf 'deb %s %s %s\n' "${_cm_mirror}" "${_cm_codename}-security" "${_cm_components}" >> "/tmp/alas-apt-$$.list"
+                fi
                 _log_message "INFO" "尝试镜像: ${_cm_mirror}"
                 if apt-get -o Dir::Etc::sourcelist="/tmp/alas-apt-$$.list" \
                             -o Dir::Etc::sourceparts="-" \
@@ -541,7 +552,7 @@ EOF
                 "https://mirrors.aliyun.com/archlinux/\$repo/os/\$arch" \
                 "https://repo.huaweicloud.com/archlinux/\$repo/os/\$arch"; do
                 echo "Server = ${_cm_mirror}" > "/tmp/alas-mirrorlist-$$"
-                sed "s|^Include = /etc/pacman.d/mirrorlist|Include = /tmp/alas-mirrorlist-$$|" \
+                sed "s|^Include = /etc/pacman.d/mirrorlist|Include = /tmp/alas-mirrorlist-$$|g" \
                     /etc/pacman.conf > "/tmp/alas-pacman-$$.conf"
                 _log_message "INFO" "尝试镜像: ${_cm_mirror}"
                 if pacman --config "/tmp/alas-pacman-$$.conf" -Syy --noconfirm "$@" >> "$LOGFILE" 2>&1; then
@@ -554,10 +565,15 @@ EOF
             return 1
             ;;
         dnf)
+            if [ "${OS_ID}" = "fedora" ]; then
+                _cm_dnf_base="fedora/linux/releases/\$releasever/Everything/\$basearch/os/"
+            else
+                _cm_dnf_base="centos/\$releasever/BaseOS/\$basearch/os/"
+            fi
             for _cm_mirror in \
-                "https://mirrors.ustc.edu.cn/centos/\$releasever/BaseOS/\$basearch/os/" \
-                "https://mirrors.aliyun.com/centos/\$releasever/BaseOS/\$basearch/os/" \
-                "https://repo.huaweicloud.com/centos/\$releasever/BaseOS/\$basearch/os/"; do
+                "https://mirrors.ustc.edu.cn/${_cm_dnf_base}" \
+                "https://mirrors.aliyun.com/${_cm_dnf_base}" \
+                "https://repo.huaweicloud.com/${_cm_dnf_base}"; do
                 _log_message "INFO" "尝试镜像: ${_cm_mirror}"
                 if dnf --disablerepo='*' --repofrompath="cn-temp-$$,${_cm_mirror}" --enablerepo="cn-temp-$$" \
                        -q makecache >> "$LOGFILE" 2>&1; then
@@ -777,15 +793,18 @@ install_deps() {
 
     start_step "正在安装缺失的依赖:${_id_missing}..."
 
+    _cn_fallback=false
     if [ "${USE_CN_MIRROR}" = true ]; then
         _log_message "EXEC" "▶ ${PACKAGE_MANAGER} (CN mirrors)${_id_missing}"
         # shellcheck disable=SC2086
-        if ! cn_package_mirrors ${_id_missing}; then
-            _log_message "ERROR" "✗ CN 镜像安装失败"
-            end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
-            exit 1
+        if cn_package_mirrors ${_id_missing}; then
+            _log_message "OK" "✓ CN 镜像安装完成"
+        else
+            _log_message "WARNING" "CN 镜像全部不可用，自动回退官方源"
+            _cn_fallback=true
         fi
-    else
+    fi
+    if [ "${USE_CN_MIRROR}" != true ] || [ "${_cn_fallback}" = true ]; then
         case "${PACKAGE_MANAGER}" in
             apt)
                 _log_message "EXEC" "▶ apt-get update"
