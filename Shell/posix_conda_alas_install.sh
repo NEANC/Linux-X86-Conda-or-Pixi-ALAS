@@ -953,8 +953,8 @@ dependencies:
 YML_EOF
     _log_message "OK" "✓ environment.yml 已生成"
 
-    eval "$("${CONDA_BIN}" shell.bash hook)" >> "$LOGFILE" 2>&1
-    _log_message "OK" "✓ Conda shell hook 已加载"
+    . "$(dirname "$(dirname "${CONDA_BIN}")")/etc/profile.d/conda.sh" >> "$LOGFILE" 2>&1
+    _log_message "OK" "✓ Conda shell 已加载 (POSIX)"
 
     if [ "${USE_CN_MIRROR}" = true ]; then
         _se_cernet_conda="https://mirrors.cernet.edu.cn/anaconda"
@@ -1031,7 +1031,7 @@ create_launcher() {
 #!/bin/sh
 # ALAS 启动脚本 (由 posix_conda_alas_install.sh 自动生成)
 # 用法: sh ${SCRIPT_OUT_DIR}/run_alas.sh
-eval "\$(${CONDA_BIN} shell.bash hook)"
+. "$(dirname "$(dirname "${CONDA_BIN}")")/etc/profile.d/conda.sh"
 conda activate alas
 cd ${ALAS_DIR}
 python gui.py
@@ -1311,7 +1311,7 @@ do_uninstall() {
     start_step "正在清理 Conda 虚拟环境..."
     CONDA_BIN="${HOME}/miniforge3/bin/conda"
     command -v conda >/dev/null 2>&1 && CONDA_BIN=$(command -v conda)
-    eval "$("${CONDA_BIN}" shell.bash hook)" >> "$LOGFILE" 2>&1
+    . "$(dirname "$(dirname "${CONDA_BIN}")")/etc/profile.d/conda.sh" >> "$LOGFILE" 2>&1
     if conda env list 2>/dev/null | grep -q "^alas "; then
         _log_message "EXEC" "▶ conda env remove -n alas"
         _log_exec "移除 Conda 环境 (方法1: conda env remove)" conda env remove -n alas -y || \
