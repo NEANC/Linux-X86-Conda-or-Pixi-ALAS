@@ -8,6 +8,7 @@
 
 | 脚本                            | 适用平台              | 管理器                         |
 | ------------------------------- | --------------------- | ------------------------------ |
+| `alpine_pixi_alas_install.sh`   | Alpine Linux x86-64   | Pixi                           |
 | `pixi_alas_install.sh`          | Linux x86-64          | Pixi                           |
 | `conda_alas_install.sh`         | Linux x86-64          | Conda (Miniforge)              |
 | `arm_mac_conda_alas_install.sh` | macOS (Apple Silicon) | Conda (Miniforge via Homebrew) |
@@ -28,6 +29,9 @@
 | `-h, --help`           | 显示帮助信息                                         |                                             |
 
 ---
+
+> [!IMPORTANT]  
+> Alpine 版脚本仅支持 Alpine Linux x86-64 平台，不支持其他 Linux 发行版，其他版本也不支持 Alpine
 
 ## Linux
 
@@ -55,6 +59,21 @@ curl -fsSL https://ghfast.top/https://raw.githubusercontent.com/NEANC/Linux-X86-
 
 # 卸载
 curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/conda_alas_install.sh | sudo bash -s -- --uninstall
+```
+
+> [!WARNING]
+
+### Alpine Linux 版
+
+```bash
+# 标准安装
+curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/alpine_pixi_alas_install.sh | sudo sh
+
+# 使用国内镜像
+curl -fsSL https://ghfast.top/https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/alpine_pixi_alas_install.sh | sudo sh -s -- -t CN
+
+# 卸载
+curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/alpine_pixi_alas_install.sh | sudo sh -s -- --uninstall
 ```
 
 ---
