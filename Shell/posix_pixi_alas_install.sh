@@ -261,38 +261,85 @@ check_root() {
 
 # ---------------------------- 系统信息收集 ----------------------------
 gather_system_info() {
-    NET_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
-    if [ -z "${NET_IP}" ]; then
-        NET_IP=$(ip route get 1 2>/dev/null | sed -n 's/.*src \([0-9.]*\).*/\1/p' || true)
-    fi
+    # 优先用 ip 命令（Alpine/BusyBox hostname -I 不一定可用）
+    NET_IP=$(ip route get 1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}')
+    [ -z "${NET_IP}" ] && NET_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
     [ -z "${NET_IP}" ] && NET_IP="未获取"
-
     KERNEL=$(uname -r)
-
-    CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed 's/Model name:\s*//' || true)
-    if [ -z "${CPU_MODEL}" ]; then
-        CPU_MODEL=$(grep -m1 "model name" /proc/cpuinfo 2>/dev/null | sed 's/.*: //' || true)
+    # lscpu 在 Alpine 不一定可用，回退到 /proc/cpuinfo
+    if command -v lscpu >/dev/null 2>&1; then
+        CPU_MODEL=$(lscpu | grep -i "Model name" | sed 's/.*:\s*//' | xargs || echo "未知")
+    else
+        CPU_MODEL=$(grep "model name" /proc/cpuinfo 2>/dev/null | head -1 | sed 's/.*: //' | xargs || echo "未知")
     fi
-    [ -z "${CPU_MODEL}" ] && CPU_MODEL="未知"
-
-    CPU_CORES=$(nproc 2>/dev/null || true)
-    if [ -z "${CPU_CORES}" ]; then
-        CPU_CORES=$(grep -c "^processor" /proc/cpuinfo 2>/dev/null || true)
+    CPU_CORES=$(nproc 2>/dev/null || grep -c "^processor" /proc/cpuinfo 2>/dev/null || echo "1")
+    # 磁盘信息：通过匹配挂载点 / 定位数据行，从行尾反向取列，
+    _gs_disk_used=""
+    _gs_disk_avail=""
+    # 方法1: df -h（人类可读）
+    _gs_df_inner=$(df -h / 2>/dev/null | awk '$NF == "/" {print $(NF-3), $(NF-2)}')
+    if [ -n "${_gs_df_inner}" ]; then
+        _gs_disk_used=$(echo "${_gs_df_inner}" | awk '{print $1}')
+        _gs_disk_avail=$(echo "${_gs_df_inner}" | awk '{print $2}')
     fi
-    [ -z "${CPU_CORES}" ] && CPU_CORES="未知"
-
-    DISK_AVAIL=$(df -h / 2>/dev/null | awk 'NR==2{print $4}' || true)
-    DISK_USED=$(df -h / 2>/dev/null | awk 'NR==2{print $3}' || true)
+    # 方法2: df -P（POSIX 标准，1K 块）
+    if [ -z "${_gs_disk_avail}" ]; then
+        _gs_df_inner=$(df -P / 2>/dev/null | awk '$NF == "/" {print $(NF-3), $(NF-2)}')
+        if [ -n "${_gs_df_inner}" ]; then
+            _gs_disk_used=$(echo "${_gs_df_inner}" | awk '{print $1}')
+            _gs_disk_avail=$(echo "${_gs_df_inner}" | awk '{print $2}')
+        fi
+    fi
+    # 方法3: df（默认格式，1K 块）
+    if [ -z "${_gs_disk_avail}" ]; then
+        _gs_df_inner=$(df / 2>/dev/null | awk '$NF == "/" {print $(NF-3), $(NF-2)}')
+        if [ -n "${_gs_df_inner}" ]; then
+            _gs_disk_used=$(echo "${_gs_df_inner}" | awk '{print $1}')
+            _gs_disk_avail=$(echo "${_gs_df_inner}" | awk '{print $2}')
+        fi
+    fi
+    # 将 1K 块数值转换为可读格式（非数值原样保留，如 df -h 的 "4.7G"）
+    if [ -n "${_gs_disk_used}" ]; then
+        if echo "${_gs_disk_used}" | grep -qE '^[0-9]+$'; then
+            DISK_USED=$(awk -v v="${_gs_disk_used}" 'BEGIN{if(v>=1048576) printf "%.1fG",v/1048576; else if(v>=1024) printf "%.1fM",v/1024; else printf "%dK",v}')
+        else
+            DISK_USED="${_gs_disk_used}"
+        fi
+    else
+        DISK_USED="?"
+    fi
+    if [ -n "${_gs_disk_avail}" ]; then
+        if echo "${_gs_disk_avail}" | grep -qE '^[0-9]+$'; then
+            DISK_AVAIL=$(awk -v v="${_gs_disk_avail}" 'BEGIN{if(v>=1048576) printf "%.1fG",v/1048576; else if(v>=1024) printf "%.1fM",v/1024; else printf "%dK",v}')
+        else
+            DISK_AVAIL="${_gs_disk_avail}"
+        fi
+    else
+        DISK_AVAIL="?"
+    fi
     DISK_INFO="可用: ${DISK_AVAIL}  已用: ${DISK_USED}"
 
-    RAM_SIZE_MIB=$(free -m 2>/dev/null | awk '/Mem:/{print $2}' || true)
-    if [ -z "${RAM_SIZE_MIB}" ]; then
-        RAM_SIZE_MIB=$(awk '/MemTotal:/{printf "%.0f", $2/1024}' /proc/meminfo 2>/dev/null || true)
+    # 内存大小：优选 /proc/meminfo（Linux 内核接口，不受容器 cgroup 偏差影响）
+    RAM_SIZE_MIB=""
+    RAM_SIZE_MIB=$(awk '/MemTotal/{printf "%.0f", $2/1024}' /proc/meminfo 2>/dev/null || true)
+    if [ -z "${RAM_SIZE_MIB}" ] || [ "${RAM_SIZE_MIB}" = "0" ]; then
+        if [ -r /sys/fs/cgroup/memory.max ]; then
+            _gs_cg_mem=$(cat /sys/fs/cgroup/memory.max 2>/dev/null)
+            if [ "${_gs_cg_mem}" != "max" ] && [ -n "${_gs_cg_mem}" ]; then
+                RAM_SIZE_MIB=$(( _gs_cg_mem / 1048576 ))
+            fi
+        elif [ -r /sys/fs/cgroup/memory/memory.limit_in_bytes ]; then
+            _gs_cg_mem=$(cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null)
+            if [ -n "${_gs_cg_mem}" ] && [ "${_gs_cg_mem}" -lt 1099511627776 ]; then
+                RAM_SIZE_MIB=$(( _gs_cg_mem / 1048576 ))
+            fi
+        fi
     fi
-    [ -z "${RAM_SIZE_MIB}" ] && RAM_SIZE_MIB="0"
-    return 0
+    if [ -z "${RAM_SIZE_MIB}" ]; then
+        RAM_SIZE_MIB=$(free -m 2>/dev/null | awk '/Mem:/{print $2}' || \
+                       awk '/MemTotal/{printf "%d", $2/1024}' /proc/meminfo 2>/dev/null || echo "0")
+    fi
 }
-
 # ---------------------------- 打印标题与系统面板 ----------------------------
 print_header() {
     clear 2>/dev/null || printf '\033[2J\033[H' 2>/dev/null || true
