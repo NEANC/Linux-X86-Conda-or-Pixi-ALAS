@@ -845,70 +845,26 @@ PIXI_EOF
     end_step "${ICON_OK}" "虚拟环境已构建"
 }
 
-# ---------------------------- 第5步: 配置 config/deploy.yaml ----------------------------
+# ---------------------------- 配置 config/deploy.yaml ----------------------------
 configure_deploy() {
-    start_step "正在配置 ALAS (config/deploy.yaml)..."
+    start_step "配置 config/deploy.yaml"
 
     cd "${ALAS_DIR}"
-    backup_file_once "config/deploy.yaml"
+    if [ -f config/deploy.yaml ]; then
+        _log_message "EXEC" "▶ 备份已有 deploy.yaml → deploy.yaml.bak"
+        cp config/deploy.yaml config/deploy.yaml.bak
+        _log_message "OK" "✓ 备份完成"
+    fi
 
-    # ── 选择官方模板：CN 优先用 CN 模板，否则用标准 Linux 模板 ─────────────
-    base_tmpl
-    if [ "${USE_CN_MIRROR}" = true ] && [ -f "config/deploy.template-linux-cn.yaml" ]; then
-        base_tmpl="config/deploy.template-linux-cn.yaml"
-    elif [ -f "config/deploy.template-linux.yaml"  ]; then
-        base_tmpl="config/deploy.template-linux.yaml"
+    TEMPLATE="${DEPLOY_TEMPLATE}"
+
+    if [ -f "${TEMPLATE}" ]; then
+        _log_message "EXEC" "▶ cp ${TEMPLATE} config/deploy.yaml"
+        cp "${TEMPLATE}" config/deploy.yaml
+        end_step "${ICON_OK}" "cp ${TEMPLATE} config/deploy.yaml"
     else
-        end_step "${ICON_WARN}" "未找到官方模板文件，跳过 deploy.yaml 配置" "${YELLOW}"
-        return
+        end_step "${ICON_WARN}" "模板文件 ${TEMPLATE} 不存在，请手动执行 cp ${TEMPLATE} config/deploy.yaml" "${YELLOW}"
     fi
-
-    _log_message "EXEC" "▶ 使用官方模板: ${base_tmpl}"
-    cp "${base_tmpl}" config/deploy.yaml
-    _log_message "OK" "✓ 已复制: ${base_tmpl} → config/deploy.yaml"
-
-    # ── 自动探测可执行文件路径 ─────────────────────────────────────────────
-    adb_path git_path
-    adb_path=$(command -v adb 2>/dev/null || echo "/usr/bin/adb")
-    git_path=$(command -v git 2>/dev/null || echo "/usr/bin/git")
-
-    # AdbExecutable: 使用系统实际 adb 路径
-    sed -i "s|AdbExecutable:.*|AdbExecutable: ${adb_path}|" config/deploy.yaml
-    _log_message "OK" "✓ AdbExecutable  → ${adb_path}"
-
-    # GitExecutable: 使用系统实际 git 路径
-    sed -i "s|GitExecutable:.*|GitExecutable: ${git_path}|" config/deploy.yaml
-    _log_message "OK" "✓ GitExecutable  → ${git_path}"
-
-    # PythonExecutable: pixi run 激活后 python 在 PATH 中，保持 'python' 即可
-    sed -i "s|PythonExecutable:.*|PythonExecutable: python|" config/deploy.yaml
-    _log_message "OK" "✓ PythonExecutable → python  (via pixi 虚拟环境)"
-
-    # WebuiHost: 服务器/PVE CT 部署必须监听所有网卡
-    sed -i "s|WebuiHost:.*|WebuiHost: 0.0.0.0|" config/deploy.yaml
-    _log_message "OK" "✓ WebuiHost      → 0.0.0.0  (服务器模式，局域网可访问)"
-
-    # ── CN 镜像额外修正（若使用标准模板且 -t cn）─────────────────────────
-    if [ "${USE_CN_MIRROR}" = true ] && echo "${base_tmpl}" | grep -q 'linux.yaml'; then
-        sed -i "s|Repository:.*github.*|Repository: git://git.lyoko.io/AzurLaneAutoScript|" config/deploy.yaml
-        _log_message "OK" "✓ Repository     → git://git.lyoko.io/AzurLaneAutoScript (CN 镜像)"
-        sed -i "s|PypiMirror: null|PypiMirror: https://mirrors.aliyun.com/pypi/simple|" config/deploy.yaml
-        _log_message "OK" "✓ PypiMirror     → mirrors.aliyun.com/pypi/simple"
-        sed -i "s|Language:.*|Language: zh-CN|" config/deploy.yaml
-        _log_message "OK" "✓ Language       → zh-CN"
-    fi
-
-    # ── 打印关键配置摘要 ───────────────────────────────────────────────────
-    _log_message "INFO" "── deploy.yaml 关键配置 ──────────────────────────"
-    key
-    for key in Repository PythonExecutable AdbExecutable GitExecutable \
-                WebuiHost WebuiPort Language PypiMirror RequirementsFile; do
-    val
-        val=$(grep -E "^\s+${key}:" config/deploy.yaml 2>/dev/null | head -1 | sed 's/.*: *//')
-        [ -n "${val}" ] && _log_message "INFO" "  ${key}: ${val}"
-    done
-
-    end_step "${ICON_OK}" "deploy.yaml 已配置（官方模板 + 环境自适应）"
 }
 
 # ---------------------------- 第6步: 开机自启服务（OpenRC）----------------------------
