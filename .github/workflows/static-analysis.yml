@@ -47,7 +47,14 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Cache PSScriptAnalyzer
+        id: cache-psanalyzer
+        uses: actions/cache@v4
+        with:
+          path: ~\Documents\PowerShell\Modules\PSScriptAnalyzer
+          key: ${{ runner.os }}-psanalyzer-1
       - name: Install PSScriptAnalyzer
+        if: steps.cache-psanalyzer.outputs.cache-hit != 'true'
         run: Install-Module -Name PSScriptAnalyzer -Force -SkipPublisherCheck -Scope CurrentUser
         shell: pwsh
       - name: Run PSScriptAnalyzer
