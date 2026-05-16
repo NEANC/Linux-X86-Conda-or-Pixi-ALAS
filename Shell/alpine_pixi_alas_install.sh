@@ -439,10 +439,10 @@ print_header() {
     echo_line ""
 
     # Alpine 系统检查
-    [ "${OS_ID}" != "alpine" ] && {
+    if [ "${OS_ID}" != "alpine" ]; then
         echo_line "  ${ICON_ERROR}  ${RED}此脚本仅支持 Alpine Linux，当前系统: ${OS_ID}，请阅读发行说明${NC}"
         exit 1
-    }
+    fi
 }
 
 # ---------------------------- 发行版检测 ----------------------------
@@ -541,7 +541,7 @@ install_deps() {
         fi
     fi
 
-    # ── 第2部分：Alpine glibc 兼容层（gcompat → 自动降级第三方 glibc）────
+    # Alpine glibc 兼容层（gcompat → 自动降级第三方 glibc）
     _ga_gcompat_missing=""
     for _ga_pkg in gcompat; do
         if apk info -e "${_ga_pkg}" >/dev/null 2>&1; then
