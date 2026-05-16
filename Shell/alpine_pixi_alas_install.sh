@@ -937,12 +937,21 @@ EOF
 # ---------------------------- 完成摘要 ----------------------------
 print_completion() {
     echo_line ""
-    echo_line "  ${ICON_ROCKET}  ${GREEN}ALAS 安装完成！${NC}"
+    echo_line "${ICON_ROCKET}  ${GREEN}ALAS 已经完成安装，请通过 ${CYAN}http://${NET_IP}:22267${NC} ${GREEN}访问 WEBUI${NC}"
     echo_line "  ─────────────────────────────────────────────────"
-    echo_line "  ${ICON_INFO}  WebUI 地址  : ${CYAN}http://${NET_IP}:22267${NC}"
-    echo_line "  ${ICON_INFO}  手动启动    : ${CYAN}bash ${ALAS_DIR}/run_alas.sh${NC}"
     echo_line "  ${ICON_INFO}  安装目录    : ${BLUE}${ALAS_DIR}${NC}"
-    echo_line ""
+
+
+    if [ "${SKIP_SERVICE}" = true ]; then
+        echo_line "  ${ICON_INFO}  手动启动    : ${CYAN}sh ${ALAS_DIR}/run_alas.sh${NC}"
+    else
+        echo_line ""
+        echo_line "  ${ICON_INFO}  init 服务管理："
+        echo_line "      启动服务:  ${CYAN}rc-service run_alas start${NC}"
+        echo_line "      停止服务:  ${CYAN}rc-service run_alas stop${NC}"
+        echo_line "      重启服务:  ${CYAN}rc-service run_alas restart${NC}"
+        echo_line "      检查状态:  ${CYAN}rc-service run_alas status${NC}"
+    fi
 }
 
 # ---------------------------- 反向安装（卸载） ----------------------------

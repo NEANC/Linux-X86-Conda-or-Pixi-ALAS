@@ -811,6 +811,22 @@ CMD_EOF
 print_completion() {
     echo_line ""
     echo_line "${ICON_ROCKET}  ALAS 已经完成安装，请通过 ${CYAN}http://${NET_IP}:22267${NC} 访问 WEBUI"
+    echo_line "  ─────────────────────────────────────────────────"
+    echo_line "  ${ICON_INFO}  安装目录    : ${BLUE}${ALAS_DIR}${NC}"
+
+    if [ "${SKIP_SERVICE}" = false ]; then
+        echo_line "  ${ICON_INFO}  开机自启    : ${GREEN}已启用${NC}"
+    fi
+    echo_line ""
+    echo_line "  ${ICON_INFO}  桌面快捷脚本 (双击即可)："
+    echo_line "      ${CYAN}运行ALAS.command${NC}"
+    echo_line "      ${CYAN}停止ALAS.command${NC}"
+    echo_line "      ${CYAN}重启ALAS.command${NC}"
+    echo_line ""
+    echo_line "  ${ICON_INFO}  命令行管理："
+    echo_line "      启动服务: ${CYAN}launchctl start com.alas.run${NC}"
+    echo_line "      停止服务: ${CYAN}launchctl stop com.alas.run${NC}"
+    echo_line "      检查状态: ${CYAN}launchctl list com.alas.run${NC}"
     echo_line ""
 }
 

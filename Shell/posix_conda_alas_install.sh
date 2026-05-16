@@ -1325,7 +1325,35 @@ SYSV_EOF
 print_completion() {
     echo_line ""
     echo_line "${ICON_ROCKET}  ${GREEN}ALAS 已经完成安装，请通过 ${CYAN}http://${NET_IP}:22267${NC} ${GREEN}访问 WEBUI${NC}"
-    echo_line ""
+    echo_line "  ─────────────────────────────────────────────────"
+    echo_line "  ${ICON_INFO}  安装目录    : ${BLUE}${ALAS_DIR}${NC}"
+
+    if [ "${SKIP_SERVICE}" = true ]; then
+        echo_line "  ${ICON_INFO}  手动启动    : ${CYAN}sh ${SCRIPT_OUT_DIR}/run_alas.sh${NC}"
+    else
+        echo_line ""
+        echo_line "  ${ICON_INFO}  init 服务管理："
+        case "${INIT_SYSTEM}" in
+            systemd)
+                echo_line "      启动服务:  ${CYAN}systemctl start run_alas.service${NC}"
+                echo_line "      停止服务:  ${CYAN}systemctl stop run_alas.service${NC}"
+                echo_line "      重启服务:  ${CYAN}systemctl restart run_alas.service${NC}"
+                echo_line "      检查状态:  ${CYAN}systemctl status run_alas.service${NC}"
+                ;;
+            openrc)
+                echo_line "      启动服务:  ${CYAN}rc-service run_alas start${NC}"
+                echo_line "      停止服务:  ${CYAN}rc-service run_alas stop${NC}"
+                echo_line "      重启服务:  ${CYAN}rc-service run_alas restart${NC}"
+                echo_line "      检查状态:  ${CYAN}rc-service run_alas status${NC}"
+                ;;
+            sysvinit)
+                echo_line "      启动服务:  ${CYAN}service run_alas start${NC}"
+                echo_line "      停止服务:  ${CYAN}service run_alas stop${NC}"
+                echo_line "      重启服务:  ${CYAN}service run_alas restart${NC}"
+                echo_line "      检查状态:  ${CYAN}service run_alas status${NC}"
+                ;;
+        esac
+    fi
 }
 
 # ---------------------------- 反向安装（卸载） ----------------------------
