@@ -100,6 +100,8 @@ _SPINNER_PID=""
 RAM_SIZE_MIB=""
 ALPINE_GLIBC_LOADER="/lib64/ld-linux-x86-64.so.2"
 ALPINE_GLIBC_VERSION="${ALPINE_GLIBC_VERSION:-2.35-r1}"
+ALPINE_GLIBC_OVERRIDE="${CONDA_OVERRIDE_GLIBC:-2.28}"
+ALPINE_GLIBC_RETRY_DONE=false
 
 # ---------------------------- 帮助 ----------------------------
 usage() {
@@ -642,7 +644,7 @@ ensure_alpine_glibc_loader() {
             return 0
         fi
     done
-    _log_message "ERROR" "未找到 glibc loader，Pixi/Conda 的 linux-64 Python 可能无法启动"
+    _log_message "ERROR" "未找到 glibc loader，Conda 的 linux-64 Python 可能无法启动"
     return 1
 }
 
@@ -752,7 +754,7 @@ install_deps() {
                 fi
             done ;;
         apk)
-            for _id_pkg in git android-tools curl ca-certificates tar xz libstdc++ libgcc; do
+            for _id_pkg in git android-tools curl ca-certificates tar xz libstdc++ libgcc gcompat; do
                 if apk info -e "$_id_pkg" >/dev/null 2>&1; then
                     _log_message "OK" "依赖已存在: ${_id_pkg}"
                 else
@@ -766,6 +768,7 @@ install_deps() {
     esac
 
     if [ -z "${_id_missing}" ]; then
+        _alpine_glibc_compat_setup
         end_step "${ICON_OK}" "curl 已安装: $(curl --version 2>/dev/null | head -n1 | awk '{print $2}')"
         end_step "${ICON_OK}" "Git 已安装: $(git --version 2>/dev/null | awk '{print $NF}')"
         end_step "${ICON_OK}" "ADB 已安装: $(adb --version 2>/dev/null | head -n1 | awk '{print $NF}')"
@@ -856,46 +859,50 @@ install_deps() {
         esac
     fi
 
-    # Alpine glibc 兼容层（gcompat → 自动降级第三方 glibc）
-    if [ "${PACKAGE_MANAGER}" = "apk" ]; then
-        _log_message "INFO" "正在配置 Alpine glibc 兼容层..."
-        _ga_gcompat_missing=""
-        if apk info -e gcompat >/dev/null 2>&1; then
-            _log_message "OK" "glibc 兼容层已存在: gcompat"
-        else
-            _ga_gcompat_missing="gcompat"
-        fi
-
-        if [ -n "${_ga_gcompat_missing}" ]; then
-            _log_message "WARNING" "glibc 兼容层缺失: gcompat"
-            enable_alpine_community_repo
-            _log_message "EXEC" "▶ apk add --no-cache gcompat"
-            if [ "${USE_CN_MIRROR}" = true ]; then
-                cn_package_mirrors gcompat
-                _ga_gcompat_ok=$?
-            else
-                apk add --no-cache gcompat >> "$LOGFILE" 2>&1
-                _ga_gcompat_ok=$?
-            fi
-            if [ "${_ga_gcompat_ok}" = 0 ]; then
-                _log_message "OK" "✓ gcompat 安装成功"
-            else
-                _log_message "WARNING" "gcompat 在当前仓库不可用，自动降级到第三方 glibc"
-                install_alpine_real_glibc
-            fi
-        fi
-
-        # 确保 glibc loader 存在（gcompat 或第三方 glibc 都应提供）
-        if ! ensure_alpine_glibc_loader; then
-            _log_message "WARNING" "gcompat 未提供 glibc loader，自动降级到第三方 glibc"
-            install_alpine_real_glibc
-        fi
-    fi
+    _alpine_glibc_compat_setup
 
     end_step "${ICON_OK}" "curl 已安装: $(curl --version 2>/dev/null | head -n1 | awk '{print $2}')"
     end_step "${ICON_OK}" "Git 已安装: $(git --version 2>/dev/null | awk '{print $NF}')"
     end_step "${ICON_OK}" "ADB 已安装: $(adb --version 2>/dev/null | head -n1 | awk '{print $NF}')"
     _log_message "OK" "✓ 依赖安装完成"
+}
+
+# ---------------------------- Alpine 专用：glibc 兼容层辅助函数 ----------------------------
+_alpine_glibc_compat_setup() {
+    if [ "${PACKAGE_MANAGER}" != "apk" ]; then
+        return 0
+    fi
+    _log_message "INFO" "正在配置 Alpine glibc 兼容层..."
+    _ag_missing=""
+    if apk info -e gcompat >/dev/null 2>&1; then
+        _log_message "OK" "glibc 兼容层已存在: gcompat"
+    else
+        _ag_missing="gcompat"
+    fi
+
+    if [ -n "${_ag_missing}" ]; then
+        _log_message "WARNING" "glibc 兼容层缺失: gcompat"
+        enable_alpine_community_repo
+        _log_message "EXEC" "▶ apk add --no-cache gcompat"
+        if [ "${USE_CN_MIRROR}" = true ]; then
+            cn_package_mirrors gcompat
+            _ag_ok=$?
+        else
+            apk add --no-cache gcompat >> "$LOGFILE" 2>&1
+            _ag_ok=$?
+        fi
+        if [ "${_ag_ok}" = 0 ]; then
+            _log_message "OK" "✓ gcompat 安装成功"
+        else
+            _log_message "WARNING" "gcompat 在当前仓库不可用，自动降级到第三方 glibc"
+            install_alpine_real_glibc
+        fi
+    fi
+
+    if ! ensure_alpine_glibc_loader; then
+        _log_message "WARNING" "gcompat 未提供 glibc loader，自动降级到第三方 glibc"
+        install_alpine_real_glibc
+    fi
 }
 
 # ---------------------------- 克隆仓库 ----------------------------
@@ -936,6 +943,13 @@ clone_alas() {
 
     _log_message "OK" "ALAS 目录: ${ALAS_DIR}"
     end_step "${ICON_OK}" "ALAS 仓库已克隆"
+}
+
+# ---------------------------- Conda 安装 glibc 检测 ----------------------------
+conda_install_needs_real_glibc() {
+    _cr_install_log="$1"
+    [ -f "${_cr_install_log}" ] || return 1
+    grep -Eqi 'failed to query interpreter|build dispatch initialization failed|ld-linux|No such file or directory|not found' "${_cr_install_log}"
 }
 
 # ---------------------------- 配置虚拟环境 ----------------------------
@@ -1026,11 +1040,43 @@ YML_EOF
         _log_message "OK" "✓ 旧环境已移除"
     fi
 
-    _log_message "EXEC" "▶ conda env create -f environment.yml (这可能需要较长时间)"
-    if ! conda env create -f environment.yml >> "$LOGFILE" 2>&1; then
-        end_step "${ICON_ERROR}" "虚拟环境构建错误，详情请阅读日志：${LOGFILE}" "${RED}"
-        exit 1
+    if [ "${PACKAGE_MANAGER}" = "apk" ]; then
+        export CONDA_OVERRIDE_GLIBC="${CONDA_OVERRIDE_GLIBC:-${ALPINE_GLIBC_OVERRIDE}}"
+        _log_message "INFO" "Alpine 已设置 CONDA_OVERRIDE_GLIBC=${CONDA_OVERRIDE_GLIBC}"
+        ensure_alpine_glibc_loader || {
+            end_step "${ICON_ERROR}" "Alpine glibc 兼容层不足，经过 gcompat 和第三方 glibc 多轮尝试后仍缺少 loader，请检查日志：${LOGFILE}" "${RED}"
+            exit 1
+        }
     fi
+
+    _se_install_log="/tmp/conda_install_$$.log"
+    _se_install_attempt=1
+    while true; do
+        _log_message "EXEC" "▶ conda env create -f environment.yml (第 ${_se_install_attempt} 次，这可能需要较长时间)"
+        if conda env create -f environment.yml > "${_se_install_log}" 2>&1; then
+            cat "${_se_install_log}" >> "$LOGFILE" 2>/dev/null || true
+            rm -f "${_se_install_log}"
+            break
+        fi
+
+        cat "${_se_install_log}" >> "$LOGFILE" 2>/dev/null || true
+        if [ "${PACKAGE_MANAGER}" = "apk" ] && [ "${ALPINE_GLIBC_RETRY_DONE}" != true ] && \
+           conda_install_needs_real_glibc "${_se_install_log}"; then
+            _log_message "WARNING" "gcompat 无法启动 conda linux-64 Python，自动切换到第三方 glibc 并重试"
+            end_step "${ICON_WARN}" "gcompat 不足，正在安装第三方 glibc 后自动重试" "${YELLOW}"
+            rm -f "${_se_install_log}"
+            ALPINE_GLIBC_RETRY_DONE=true
+            install_alpine_real_glibc
+            conda env remove -n alas -y >> "$LOGFILE" 2>&1 || true
+            _se_install_attempt=$((_se_install_attempt + 1))
+            start_step "正在重新配置 Conda 虚拟环境..."
+            continue
+        fi
+
+        end_step "${ICON_ERROR}" "虚拟环境构建错误，详情请阅读日志：${LOGFILE}" "${RED}"
+        rm -f "${_se_install_log}"
+        exit 1
+    done
     _log_message "OK" "✓ conda env create 完成"
 
     unset PIP_INDEX_URL

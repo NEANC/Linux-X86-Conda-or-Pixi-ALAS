@@ -101,6 +101,7 @@ RAM_SIZE_MIB=""
 ALPINE_GLIBC_OVERRIDE="${CONDA_OVERRIDE_GLIBC:-2.28}"
 ALPINE_GLIBC_LOADER="/lib64/ld-linux-x86-64.so.2"
 ALPINE_GLIBC_VERSION="${ALPINE_GLIBC_VERSION:-2.35-r1}"
+ALPINE_GLIBC_RETRY_DONE=false
 
 if [ -x "${HOME}/.pixi/bin/pixi"  ]; then
     export PATH="${HOME}/.pixi/bin:${PATH}"
@@ -1080,17 +1081,41 @@ PIXI_MIRROR_EOF
     if [ "${PACKAGE_MANAGER}" = "apk" ]; then
         export CONDA_OVERRIDE_GLIBC="${CONDA_OVERRIDE_GLIBC:-${ALPINE_GLIBC_OVERRIDE}}"
         _log_message "INFO" "Alpine 已设置 CONDA_OVERRIDE_GLIBC=${CONDA_OVERRIDE_GLIBC}"
+        ensure_alpine_glibc_loader || {
+            end_step "${ICON_ERROR}" "Alpine glibc 兼容层不足，经过 gcompat 和第三方 glibc 多轮尝试后仍缺少 loader，请检查日志：${LOGFILE}" "${RED}"
+            exit 1
+        }
     fi
 
     _se_install_log="/tmp/pixi_install_$$.log"
-    _log_message "EXEC" "▶ pixi install --manifest-path pixi.toml"
-    if ! pixi install --manifest-path pixi.toml > "${_se_install_log}" 2>&1; then
+    _se_install_attempt=1
+    while true; do
+        _log_message "EXEC" "▶ pixi install --manifest-path pixi.toml (第 ${_se_install_attempt} 次)"
+        if pixi install --manifest-path pixi.toml > "${_se_install_log}" 2>&1; then
+            cat "${_se_install_log}" >> "$LOGFILE" 2>/dev/null || true
+            rm -f "${_se_install_log}"
+            break
+        fi
+
         cat "${_se_install_log}" >> "$LOGFILE" 2>/dev/null || true
+        if [ "${PACKAGE_MANAGER}" = "apk" ] && [ "${ALPINE_GLIBC_RETRY_DONE}" != true ] && \
+           pixi_install_needs_real_glibc "${_se_install_log}"; then
+            _log_message "WARNING" "gcompat 无法启动 conda linux-64 Python，自动切换到第三方 glibc 并重试"
+            end_step "${ICON_WARN}" "gcompat 不足，正在安装第三方 glibc 后自动重试" "${YELLOW}"
+            rm -f "${_se_install_log}"
+            ALPINE_GLIBC_RETRY_DONE=true
+            install_alpine_real_glibc
+            _log_exec "清理失败的 Pixi 环境" pixi clean --environment default || \
+            _log_exec "清理失败的 Pixi 环境 (rm -rf)" rm -rf .pixi pixi.lock
+            _se_install_attempt=$((_se_install_attempt + 1))
+            start_step "正在重新配置 Pixi 虚拟环境..."
+            continue
+        fi
+
         diagnose_pixi_install_failure "${_se_install_log}"
         rm -f "${_se_install_log}"
         exit 1
-    fi
-    rm -f "${_se_install_log}"
+    done
 
     if ! verify_pixi_python_prefix; then
         exit 1
