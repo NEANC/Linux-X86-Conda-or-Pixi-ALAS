@@ -104,7 +104,7 @@ fi
 # ---------------------------- 帮助 ----------------------------
 usage() {
     cat <<EOF
-用法: bash $0 [选项]
+用法: sh $0 [选项]
 
 选项:
   -d, --dir DIR          指定 ALAS 安装目录 (默认: ~/AzurLaneAutoScript)
@@ -256,56 +256,16 @@ ensure_alpine_glibc_loader() {
     return 1
 }
 
-prepare_alpine_glibc_compat() {
-    [ "${OS_ID:-}" = "alpine" ] || return 0
-
-    start_step "正在检查 Alpine glibc 兼容层..."
-    _pg_missing=""
-    for _pg_pkg in gcompat libstdc++ libgcc; do
-        if apk info -e "${_pg_pkg}" >/dev/null 2>&1; then
-            _log_message "OK" "兼容依赖已存在: ${_pg_pkg}"
-        else
-            _log_message "WARNING" "依赖缺失: ${_pg_pkg}"
-            _pg_missing="${_pg_missing} ${_pg_pkg}"
-        fi
-    done
-
-    if [ -n "${_pg_missing}" ]; then
-        enable_alpine_community_repo
-        _log_message "EXEC" "▶ apk update"
-        apk update >> "$LOGFILE" 2>&1
-        # shellcheck disable=SC2086
-        _log_message "EXEC" "▶ apk add --no-cache${_pg_missing}"
-        # shellcheck disable=SC2086
-        if apk add --no-cache ${_pg_missing} >> "$LOGFILE" 2>&1; then
-            _log_message "OK" "✓ gcompat 兼容层安装成功"
-        else
-            _log_message "WARNING" "gcompat 在当前 Alpine 仓库中不可用，自动降级到第三方 glibc"
-            end_step "${ICON_WARN}" "gcompat 不可用，正在安装第三方 glibc..." "${YELLOW}"
-            install_alpine_real_glibc
-            return
-        fi
-    fi
-
-    if ensure_alpine_glibc_loader; then
-        end_step "${ICON_OK}" "Alpine glibc 兼容层检查完成"
-    else
-        _log_message "WARNING" "gcompat 兼容层未提供 glibc loader，自动降级到第三方 glibc"
-        end_step "${ICON_WARN}" "gcompat 兼容层不足，正在安装第三方 glibc..." "${YELLOW}"
-        install_alpine_real_glibc
-    fi
-}
-
 install_alpine_real_glibc() {
     is_alpine || return 0
 
-    start_step "正在安装 Alpine 第三方 glibc 兼容包..."
+    _log_message "INFO" "正在安装 Alpine 第三方 glibc 兼容包..."
     _log_message "WARNING" "将安装 sgerrand/alpine-pkg-glibc (${ALPINE_GLIBC_VERSION})，用于运行 conda linux-64 Python"
 
     if apk info -e glibc >/dev/null 2>&1 && [ -e /usr/glibc-compat/lib/ld-linux-x86-64.so.2 ]; then
         mkdir -p /lib64
         ln -sf /usr/glibc-compat/lib/ld-linux-x86-64.so.2 "${ALPINE_GLIBC_LOADER}"
-        end_step "${ICON_OK}" "第三方 glibc 已存在"
+        _log_message "OK" "第三方 glibc 已存在"
         return
     fi
     tmp_dir="/tmp/alas_glibc_$$"
@@ -354,7 +314,7 @@ install_alpine_real_glibc() {
     rm -rf "${tmp_dir}"
 
     if ensure_alpine_glibc_loader; then
-        end_step "${ICON_OK}" "第三方 glibc 安装完成"
+        _log_message "OK" "第三方 glibc 安装完成"
     else
         end_step "${ICON_ERROR}" "第三方 glibc 安装后仍缺少 loader" "${RED}"
         exit 1
@@ -499,7 +459,7 @@ done
 
 # ---------------------------- 权限检查 ----------------------------
 if [ "$(id -u)" -ne 0  ]; then
-    printf '%b\n' "${RED}请使用 root 权限运行此脚本 (sudo bash $0)${NC}"
+    printf '%b\n' "${RED}请使用 root 权限运行此脚本 (sudo sh $0)${NC}"
     exit 1
 fi
 
@@ -517,10 +477,30 @@ gather_system_info() {
         CPU_MODEL=$(grep "model name" /proc/cpuinfo 2>/dev/null | head -1 | sed 's/.*: //' | xargs || echo "未知")
     fi
     CPU_CORES=$(nproc 2>/dev/null || grep -c "^processor" /proc/cpuinfo 2>/dev/null || echo "1")
-    DISK_AVAIL=$(df -h / | awk 'NR==2{print $4}')
-    DISK_USED=$(df -h / | awk 'NR==2{print $3}')
+    _gs_disk_line=$(df -h / 2>/dev/null | awk 'NR>1{print $3, $4}' | head -1)
+    DISK_USED=$(echo "${_gs_disk_line}" | awk '{print $1}' || true)
+    DISK_AVAIL=$(echo "${_gs_disk_line}" | awk '{print $2}' || true)
+    [ -z "${DISK_USED}" ] && DISK_USED="?"
+    [ -z "${DISK_AVAIL}" ] && DISK_AVAIL="?"
     DISK_INFO="可用: ${DISK_AVAIL}  已用: ${DISK_USED}"
-    RAM_SIZE_MIB=$(free -m 2>/dev/null | awk '/Mem:/{print $2}' || awk '/MemTotal/{printf "%d", $2/1024}' /proc/meminfo 2>/dev/null || echo "0")
+
+    # LXC/PVE 容器：优先读取 cgroup 内存限制；回退到 free -m
+    if [ -r /sys/fs/cgroup/memory.max ]; then
+        _gs_cg_mem=$(cat /sys/fs/cgroup/memory.max 2>/dev/null)
+        if [ "${_gs_cg_mem}" != "max" ] && [ -n "${_gs_cg_mem}" ]; then
+            RAM_SIZE_MIB=$(( _gs_cg_mem / 1048576 ))
+        fi
+    elif [ -r /sys/fs/cgroup/memory/memory.limit_in_bytes ]; then
+        _gs_cg_mem=$(cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null)
+        # 跳过超限值（如 9223372036854771712 表示无限制）
+        if [ -n "${_gs_cg_mem}" ] && [ "${_gs_cg_mem}" -lt 1099511627776 ]; then
+            RAM_SIZE_MIB=$(( _gs_cg_mem / 1048576 ))
+        fi
+    fi
+    if [ -z "${RAM_SIZE_MIB}" ]; then
+        RAM_SIZE_MIB=$(free -m 2>/dev/null | awk '/Mem:/{print $2}' || \
+                       awk '/MemTotal/{printf "%d", $2/1024}' /proc/meminfo 2>/dev/null || echo "0")
+    fi
 }
 
 # ---------------------------- 打印标题与系统面板 ----------------------------
@@ -573,7 +553,7 @@ detect_os() {
     fi
 }
 
-# ---------------------------- 第1步: 安装/激活 Pixi ----------------------------
+# ---------------------------- 安装/激活 Pixi ----------------------------
 install_pixi() {
     start_step "正在检查 Pixi..."
 
@@ -619,12 +599,12 @@ install_pixi() {
     fi
 }
 
-# ---------------------------- 第2步: 安装 Git 和 ADB 及相关依赖库 ----------------------------
+# ---------------------------- 检查依赖----------------------------
 install_git_adb() {
     start_step "正在检查依赖..."
 
     _ga_missing=""
-    for _ga_pkg in bash git android-tools curl ca-certificates tar xz libstdc++ libgcc; do
+    for _ga_pkg in git android-tools curl ca-certificates tar xz libstdc++ libgcc; do
         if apk info -e "${_ga_pkg}" >/dev/null 2>&1; then
             _log_message "OK" "依赖已存在: ${_ga_pkg}"
         else
@@ -633,32 +613,51 @@ install_git_adb() {
         fi
     done
 
-    if [ -z "${_ga_missing}" ]; then
-        end_step "${ICON_OK}" "Git 已安装: $(git --version 2>/dev/null | awk '{print $NF}')"
-        end_step "${ICON_OK}" "ADB 已安装: $(adb --version 2>/dev/null | head -n1 | awk '{print $NF}')"
-        return
+    if [ -n "${_ga_missing}" ]; then
+        start_step "正在安装缺失的依赖:${_ga_missing}..."
+        enable_alpine_community_repo
+        _log_message "EXEC" "▶ apk update"
+        if ! apk update >> "$LOGFILE" 2>&1; then
+            log_error "依赖更新错误，详情请阅读日志：${LOGFILE}"
+            exit 1
+        fi
+        _log_message "EXEC" "▶ apk add --no-cache${_ga_missing}"
+        # shellcheck disable=SC2086
+        if ! apk add --no-cache ${_ga_missing} >> "$LOGFILE" 2>&1; then
+            log_error "依赖安装错误，详情请阅读日志：${LOGFILE}"
+            exit 1
+        fi
+        if command -v update-ca-certificates >/dev/null 2>&1; then
+            _log_exec "更新 CA 证书" update-ca-certificates || true
+        fi
     fi
 
-    start_step "正在安装缺失的依赖:${_ga_missing}..."
+    # ── 第2部分：Alpine glibc 兼容层（gcompat → 自动降级第三方 glibc）────
+    _ga_gcompat_missing=""
+    for _ga_pkg in gcompat; do
+        if apk info -e "${_ga_pkg}" >/dev/null 2>&1; then
+            _log_message "OK" "glibc 兼容层已存在: ${_ga_pkg}"
+        else
+            _ga_gcompat_missing="${_ga_pkg}"
+        fi
+    done
 
-    enable_alpine_community_repo
-    _log_message "EXEC" "▶ apk update"
-    if ! apk update >> "$LOGFILE" 2>&1; then
-        _log_message "ERROR" "✗ apk update 失败"
-        end_step "${ICON_ERROR}" "依赖更新错误，详情请阅读日志：${LOGFILE}" "${RED}"
-        exit 1
+    if [ -n "${_ga_gcompat_missing}" ]; then
+        _log_message "WARNING" "glibc 兼容层缺失: gcompat"
+        enable_alpine_community_repo
+        _log_message "EXEC" "▶ apk add --no-cache gcompat"
+        if apk add --no-cache gcompat >> "$LOGFILE" 2>&1; then
+            _log_message "OK" "✓ gcompat 安装成功"
+        else
+            _log_message "WARNING" "gcompat 在当前仓库不可用，自动降级到第三方 glibc"
+            install_alpine_real_glibc
+        fi
     fi
-    _log_message "OK" "✓ apk update 完成"
-    # shellcheck disable=SC2086
-    _log_message "EXEC" "▶ apk add --no-cache${_ga_missing}"
-    # shellcheck disable=SC2086
-    if ! apk add --no-cache ${_ga_missing} >> "$LOGFILE" 2>&1; then
-        _log_message "ERROR" "✗ apk add 失败"
-        end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
-        exit 1
-    fi
-    if command -v update-ca-certificates >/dev/null 2>&1; then
-        _log_exec "更新 CA 证书" update-ca-certificates || true
+
+    # 确保 glibc loader 存在（gcompat 或第三方 glibc 都应提供）
+    if ! ensure_alpine_glibc_loader; then
+        _log_message "WARNING" "gcompat 未提供 glibc loader，自动降级到第三方 glibc"
+        install_alpine_real_glibc
     fi
 
     end_step "${ICON_OK}" "Git 已安装: $(git --version 2>/dev/null | awk '{print $NF}')"
@@ -666,7 +665,7 @@ install_git_adb() {
     _log_message "OK" "✓ 依赖安装完成"
 }
 
-# ---------------------------- 第3步: 克隆仓库 ----------------------------
+# ---------------------------- 克隆仓库 ----------------------------
 clone_alas() {
     start_step "正在克隆 ALAS 仓库..."
 
@@ -824,7 +823,7 @@ PIXI_EOF
         if [ "${ALPINE_GLIBC_AUTO_RETRY}" = true ] && [ "${ALPINE_GLIBC_RETRY_DONE}" != true ] && \
            pixi_install_needs_real_glibc "${pixi_install_log}"; then
             _log_message "WARNING" "gcompat 无法启动 conda linux-64 Python，自动切换到第三方 glibc 并重试"
-            end_step "${ICON_WARN}" "gcompat 不足，正在安装第三方 glibc 后自动重试" "${YELLOW}"
+            _log_message "WARNING" "gcompat 不足，正在安装第三方 glibc 后自动重试"
             rm -f "${pixi_install_log}"
             ALPINE_GLIBC_RETRY_DONE=true
             install_alpine_real_glibc
@@ -1076,7 +1075,6 @@ main() {
     gather_system_info
     print_header
     install_git_adb
-    prepare_alpine_glibc_compat
     install_pixi
     clone_alas
     setup_pixi_env
