@@ -395,10 +395,72 @@ gather_system_info() {
         CPU_MODEL=$(grep "model name" /proc/cpuinfo 2>/dev/null | head -1 | sed 's/.*: //' | xargs || echo "未知")
     fi
     CPU_CORES=$(nproc 2>/dev/null || grep -c "^processor" /proc/cpuinfo 2>/dev/null || echo "1")
-    DISK_AVAIL=$(df -h / | awk 'NR==2{print $4}')
-    DISK_USED=$(df -h / | awk 'NR==2{print $3}')
+    # 磁盘信息：通过匹配挂载点 / 定位数据行，从行尾反向取列，
+    _gs_disk_used=""
+    _gs_disk_avail=""
+    # 方法1: df -h（人类可读）
+    _gs_df_inner=$(df -h / 2>/dev/null | awk '$NF == "/" {print $(NF-3), $(NF-2)}')
+    if [ -n "${_gs_df_inner}" ]; then
+        _gs_disk_used=$(echo "${_gs_df_inner}" | awk '{print $1}')
+        _gs_disk_avail=$(echo "${_gs_df_inner}" | awk '{print $2}')
+    fi
+    # 方法2: df -P（POSIX 标准，1K 块）
+    if [ -z "${_gs_disk_avail}" ]; then
+        _gs_df_inner=$(df -P / 2>/dev/null | awk '$NF == "/" {print $(NF-3), $(NF-2)}')
+        if [ -n "${_gs_df_inner}" ]; then
+            _gs_disk_used=$(echo "${_gs_df_inner}" | awk '{print $1}')
+            _gs_disk_avail=$(echo "${_gs_df_inner}" | awk '{print $2}')
+        fi
+    fi
+    # 方法3: df（默认格式，1K 块）
+    if [ -z "${_gs_disk_avail}" ]; then
+        _gs_df_inner=$(df / 2>/dev/null | awk '$NF == "/" {print $(NF-3), $(NF-2)}')
+        if [ -n "${_gs_df_inner}" ]; then
+            _gs_disk_used=$(echo "${_gs_df_inner}" | awk '{print $1}')
+            _gs_disk_avail=$(echo "${_gs_df_inner}" | awk '{print $2}')
+        fi
+    fi
+    # 将 1K 块数值转换为可读格式（非数值原样保留，如 df -h 的 "4.7G"）
+    if [ -n "${_gs_disk_used}" ]; then
+        if echo "${_gs_disk_used}" | grep -qE '^[0-9]+$'; then
+            DISK_USED=$(awk -v v="${_gs_disk_used}" 'BEGIN{if(v>=1048576) printf "%.1fG",v/1048576; else if(v>=1024) printf "%.1fM",v/1024; else printf "%dK",v}')
+        else
+            DISK_USED="${_gs_disk_used}"
+        fi
+    else
+        DISK_USED="?"
+    fi
+    if [ -n "${_gs_disk_avail}" ]; then
+        if echo "${_gs_disk_avail}" | grep -qE '^[0-9]+$'; then
+            DISK_AVAIL=$(awk -v v="${_gs_disk_avail}" 'BEGIN{if(v>=1048576) printf "%.1fG",v/1048576; else if(v>=1024) printf "%.1fM",v/1024; else printf "%dK",v}')
+        else
+            DISK_AVAIL="${_gs_disk_avail}"
+        fi
+    else
+        DISK_AVAIL="?"
+    fi
     DISK_INFO="可用: ${DISK_AVAIL}  已用: ${DISK_USED}"
-    RAM_SIZE_MIB=$(free -m 2>/dev/null | awk '/Mem:/{print $2}' || awk '/MemTotal/{printf "%d", $2/1024}' /proc/meminfo 2>/dev/null || echo "0")
+
+    # 内存大小：优选 /proc/meminfo（Linux 内核接口，不受容器 cgroup 偏差影响）
+    RAM_SIZE_MIB=""
+    RAM_SIZE_MIB=$(awk '/MemTotal/{printf "%.0f", $2/1024}' /proc/meminfo 2>/dev/null || true)
+    if [ -z "${RAM_SIZE_MIB}" ] || [ "${RAM_SIZE_MIB}" = "0" ]; then
+        if [ -r /sys/fs/cgroup/memory.max ]; then
+            _gs_cg_mem=$(cat /sys/fs/cgroup/memory.max 2>/dev/null)
+            if [ "${_gs_cg_mem}" != "max" ] && [ -n "${_gs_cg_mem}" ]; then
+                RAM_SIZE_MIB=$(( _gs_cg_mem / 1048576 ))
+            fi
+        elif [ -r /sys/fs/cgroup/memory/memory.limit_in_bytes ]; then
+            _gs_cg_mem=$(cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null)
+            if [ -n "${_gs_cg_mem}" ] && [ "${_gs_cg_mem}" -lt 1099511627776 ]; then
+                RAM_SIZE_MIB=$(( _gs_cg_mem / 1048576 ))
+            fi
+        fi
+    fi
+    if [ -z "${RAM_SIZE_MIB}" ]; then
+        RAM_SIZE_MIB=$(free -m 2>/dev/null | awk '/Mem:/{print $2}' || \
+                       awk '/MemTotal/{printf "%d", $2/1024}' /proc/meminfo 2>/dev/null || echo "0")
+    fi
 }
 
 # ---------------------------- 打印标题与系统面板 ----------------------------
@@ -576,9 +638,15 @@ install_deps() {
         install_alpine_real_glibc
     fi
 
-    end_step "${ICON_OK}" "Git 已安装: $(git --version 2>/dev/null | awk '{print $NF}')"
-    end_step "${ICON_OK}" "ADB 已安装: $(adb --version 2>/dev/null | head -n1 | awk '{print $NF}')"
-    _log_message "OK" "✓ 依赖安装完成"
+    _log_message "OK" "Git 已安装: $(git --version 2>/dev/null | awk '{print $NF}')"
+    _log_message "OK" "ADB 已安装: $(adb --version 2>/dev/null | head -n1 | awk '{print $NF}')"
+    _log_message "OK" "curl 已安装: $(curl --version 2>/dev/null | head -1 | awk '{print $2}')"
+    _log_message "OK" "tar 已安装: $(tar --version 2>/dev/null | head -1 | awk '{print $NF}')"
+    _log_message "OK" "xz 已安装: $(xz --version 2>/dev/null | head -1 | awk '{print $NF}')"
+    _log_message "OK" "ca-certificates 已安装: $(apk info -v ca-certificates 2>/dev/null | sed 's/^ca-certificates-//' || echo '✓')"
+    _log_message "OK" "libstdc++ 已安装: $(apk info -v libstdc++ 2>/dev/null | sed 's/^libstdc++-//' || echo '✓')"
+    _log_message "OK" "libgcc 已安装: $(apk info -v libgcc 2>/dev/null | sed 's/^libgcc-//' || echo '✓')"
+    end_step "${ICON_OK}" "依赖检查完成"
 }
 
 # CN 镜像 APK 安装：尝试中国镜像源；失败时回退官方源
