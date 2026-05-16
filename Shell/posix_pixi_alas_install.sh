@@ -290,6 +290,7 @@ gather_system_info() {
         RAM_SIZE_MIB=$(awk '/MemTotal:/{printf "%.0f", $2/1024}' /proc/meminfo 2>/dev/null || true)
     fi
     [ -z "${RAM_SIZE_MIB}" ] && RAM_SIZE_MIB="0"
+    return 0
 }
 
 # ---------------------------- 打印标题与系统面板 ----------------------------
