@@ -81,7 +81,7 @@ SKIP_SERVICE=false
 UNINSTALL=false
 KEEP_LOG=false
 USE_CN_MIRROR=false
-ALPINE_GLIBC_AUTO_RETRY=true
+RAM_SIZE_MIB=""
 GH_PROXY=""
 DEPLOY_TEMPLATE="config/deploy.template-linux.yaml"
 INSTALL_DIR="${HOME}/AzurLaneAutoScript"
@@ -95,7 +95,6 @@ _SPINNER_PID=""
 ALPINE_GLIBC_OVERRIDE="${CONDA_OVERRIDE_GLIBC:-2.28}"
 ALPINE_GLIBC_LOADER="/lib64/ld-linux-x86-64.so.2"
 ALPINE_GLIBC_VERSION="${ALPINE_GLIBC_VERSION:-2.35-r1}"
-ALPINE_GLIBC_RETRY_DONE=false
 
 if [ -x "${HOME}/.pixi/bin/pixi"  ]; then
     export PATH="${HOME}/.pixi/bin:${PATH}"
@@ -141,78 +140,11 @@ log_ok()      { log_out "${ICON_OK}"   "${GREEN}"  "$1"; }
 log_warn()    { log_out "${ICON_WARN}"  "${YELLOW}" "$1"; }
 log_error()   { log_out "${ICON_ERROR}" "${RED}"    "$1"; }
 
-# ---------------------------- 通用辅助函数 ----------------------------
-is_alpine() {
-    [ "${OS_ID:-}" = "alpine" ]
-}
-
-backup_file_once() {
-    file="$1"
-    backup="${file}.bak"
-    if [ ! -f "${file}"  ]; then
-        return 0
-    fi
-    if [ -f "${backup}"  ]; then
-        _log_message "INFO" "已存在备份 ${backup}，跳过重复覆盖"
-        return 0
-    fi
-    _log_message "EXEC" "▶ 备份 ${file} → ${backup}"
-    cp "${file}" "${backup}"
-    _log_message "OK" "✓ 备份完成"
-}
-
-download_to_file() {
-    url="$1"
-    output="$2"
-
-    rm -f "${output}"
-    if command -v curl >/dev/null 2>&1; then
-        curl -fSL --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 180 \
-            -o "${output}" "${url}" >> "$LOGFILE" 2>&1
-        return $?
-    fi
-    if command -v wget >/dev/null 2>&1; then
-        wget -O "${output}" "${url}" >> "$LOGFILE" 2>&1
-        return $?
-    fi
-    _log_message "ERROR" "未找到 curl 或 wget，无法下载: ${url}"
-    return 1
-}
-
-download_github_asset_to_file() {
-    _dg_github_url="$1"
-    _dg_output="$2"
-
-    if [ -n "${GH_PROXY}" ]; then
-        if download_to_file "${GH_PROXY}${_dg_github_url}" "${_dg_output}"; then
-            return 0
-        fi
-    fi
-
-    if download_to_file "${_dg_github_url}" "${_dg_output}"; then
-        return 0
-    fi
-
-    for _dg_proxy in \
-        "https://gh.llkk.cc/" \
-        "https://ghproxy.net/" \
-        "https://hub.gitmirror.com/" \
-        "https://gh-proxy.com/"; do
-        if download_to_file "${_dg_proxy}${_dg_github_url}" "${_dg_output}"; then
-            return 0
-        fi
-    done
-
-    return 1
-}
-
 enable_alpine_community_repo() {
-    is_alpine || return 0
     if grep -Eq '^[[:space:]]*[^#].*/community([[:space:]]*)?$' /etc/apk/repositories 2>/dev/null; then
         _log_message "OK" "Alpine community 仓库已启用"
         return 0
     fi
-    main_repo community_repo alpine_ver
     main_repo=$(awk '/^[[:space:]]*[^#].*\/main([[:space:]]*)?$/ {print $1; exit}' /etc/apk/repositories 2>/dev/null || true)
     if [ -n "${main_repo}"  ]; then
         community_repo="${main_repo%/main}/community"
@@ -230,35 +162,24 @@ enable_alpine_community_repo() {
 }
 
 ensure_alpine_glibc_loader() {
-    is_alpine || return 0
-
-    if [ -e "${ALPINE_GLIBC_LOADER}"  ]; then
+    if [ -e "${ALPINE_GLIBC_LOADER}" ]; then
         _log_message "OK" "glibc loader 已存在: ${ALPINE_GLIBC_LOADER}"
         return 0
     fi
-    loader=""
-    candidate
-    for candidate in /lib/ld-linux-x86-64.so.2 /usr/glibc-compat/lib/ld-linux-x86-64.so.2; do
-        if [ -e "${candidate}"  ]; then
-            loader="${candidate}"
-            break
+    for _eg_candidate in /lib/ld-linux-x86-64.so.2 /usr/glibc-compat/lib/ld-linux-x86-64.so.2; do
+        if [ -e "${_eg_candidate}" ]; then
+            mkdir -p /lib64
+            ln -sf "${_eg_candidate}" "${ALPINE_GLIBC_LOADER}"
+            _log_message "OK" "已创建 glibc loader 兼容链接: ${ALPINE_GLIBC_LOADER} -> ${_eg_candidate}"
+            return 0
         fi
     done
-
-    if [ -n "${loader}"  ]; then
-        mkdir -p /lib64
-        ln -sf "${loader}" "${ALPINE_GLIBC_LOADER}"
-        _log_message "OK" "已创建 glibc loader 兼容链接: ${ALPINE_GLIBC_LOADER} -> ${loader}"
-        return 0
-    fi
 
     _log_message "ERROR" "未找到 glibc loader，Pixi 的 linux-64 Python 可能无法启动"
     return 1
 }
 
 install_alpine_real_glibc() {
-    is_alpine || return 0
-
     _log_message "INFO" "正在安装 Alpine 第三方 glibc 兼容包..."
     _log_message "WARNING" "将安装 sgerrand/alpine-pkg-glibc (${ALPINE_GLIBC_VERSION})，用于运行 conda linux-64 Python"
 
@@ -279,20 +200,24 @@ install_alpine_real_glibc() {
     mkdir -p "${tmp_dir}" /etc/apk/keys /lib64
 
     _log_message "EXEC" "▶ 下载 sgerrand APK 签名 key"
-    if ! download_to_file "${key_url}" "${key_file}"; then
-        _log_message "WARNING" "sgerrand key 官方地址下载失败，尝试 GitHub fallback"
-        if ! download_github_asset_to_file "${key_fallback}" "${key_file}"; then
+    if ! curl -fSL --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 180 \
+            -o "${key_file}" "${key_url}" >> "$LOGFILE" 2>&1; then
+        _log_message "WARNING" "sgerrand 官方源不可用，尝试 GitHub raw fallback"
+        if ! curl -fSL --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 180 \
+                -o "${key_file}" "${key_fallback}" >> "$LOGFILE" 2>&1; then
             rm -rf "${tmp_dir}"
-            end_step "${ICON_ERROR}" "第三方 glibc key 下载失败，所有下载源均不可用" "${RED}"
+            end_step "${ICON_ERROR}" "第三方 glibc key 下载失败" "${RED}"
             exit 1
         fi
     fi
 
     _log_message "EXEC" "▶ 下载 glibc APK: ${ALPINE_GLIBC_VERSION}"
-    if ! download_github_asset_to_file "${release_url}/glibc-${ALPINE_GLIBC_VERSION}.apk" "${glibc_apk}" || \
-       ! download_github_asset_to_file "${release_url}/glibc-bin-${ALPINE_GLIBC_VERSION}.apk" "${glibc_bin_apk}"; then
+    if ! curl -fSL --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 180 \
+            -o "${glibc_apk}" "${GH_PROXY}${release_url}/glibc-${ALPINE_GLIBC_VERSION}.apk" >> "$LOGFILE" 2>&1 || \
+       ! curl -fSL --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 180 \
+            -o "${glibc_bin_apk}" "${GH_PROXY}${release_url}/glibc-bin-${ALPINE_GLIBC_VERSION}.apk" >> "$LOGFILE" 2>&1; then
         rm -rf "${tmp_dir}"
-        end_step "${ICON_ERROR}" "第三方 glibc APK 下载失败，所有 GitHub/代理源均不可用" "${RED}"
+        end_step "${ICON_ERROR}" "第三方 glibc APK 下载失败: ${release_url}" "${RED}"
         exit 1
     fi
 
@@ -323,7 +248,6 @@ install_alpine_real_glibc() {
 
 pixi_install_needs_real_glibc() {
     _pn_install_log="$1"
-    is_alpine || return 1
     [ -f "${_pn_install_log}" ] || return 1
     grep -Eqi 'failed to query interpreter|build dispatch initialization failed|ld-linux|No such file or directory|not found' "${_pn_install_log}"
 }
@@ -342,33 +266,25 @@ diagnose_pixi_install_failure() {
 }
 
 verify_pixi_python_prefix() {
-    env_python=".pixi/envs/default/bin/python"
-    python_log="/tmp/pixi_python_check_$$.log"
+    _vp_env_python=".pixi/envs/default/bin/python"
+    _vp_python_log="/tmp/pixi_python_check_$$.log"
 
-    if [ ! -x "${env_python}"  ]; then
-        _log_message "ERROR" "Pixi Python 不存在或不可执行: ${env_python}"
-        if is_alpine; then
-            end_step "${ICON_ERROR}" "Pixi 环境缺少 Python，Alpine glibc 兼容层可能不足" "${RED}"
-        else
-            end_step "${ICON_ERROR}" "Pixi 环境缺少 Python，请查看日志: ${LOGFILE}" "${RED}"
-        fi
+    if [ ! -x "${_vp_env_python}" ]; then
+        _log_message "ERROR" "Pixi Python 不存在或不可执行: ${_vp_env_python}"
+        end_step "${ICON_ERROR}" "Pixi 环境缺少 Python，Alpine glibc 兼容层可能不足" "${RED}"
         return 1
     fi
 
-    if ! "${env_python}" -V > "${python_log}" 2>&1; then
-        cat "${python_log}" >> "$LOGFILE" 2>/dev/null || true
-        rm -f "${python_log}"
-        _log_message "ERROR" "Pixi Python 前缀健康检查失败: ${env_python}"
-        if is_alpine; then
-            end_step "${ICON_ERROR}" "Alpine glibc 兼容层不足，Pixi 的 linux-64 Python 无法运行" "${RED}"
-        else
-            end_step "${ICON_ERROR}" "Pixi Python 无法运行，请查看日志: ${LOGFILE}" "${RED}"
-        fi
+    if ! "${_vp_env_python}" -V > "${_vp_python_log}" 2>&1; then
+        cat "${_vp_python_log}" >> "$LOGFILE" 2>/dev/null || true
+        rm -f "${_vp_python_log}"
+        _log_message "ERROR" "Pixi Python 前缀健康检查失败: ${_vp_env_python}"
+        end_step "${ICON_ERROR}" "Alpine glibc 兼容层不足，Pixi 的 linux-64 Python 无法运行" "${RED}"
         return 1
     fi
 
-    _log_message "OK" "✓ Pixi Python 可运行: $(tr -d '\r\n' < "${python_log}")"
-    rm -f "${python_log}"
+    _log_message "OK" "✓ Pixi Python 可运行: $(tr -d '\r\n' < "${_vp_python_log}")"
+    rm -f "${_vp_python_log}"
     return 0
 }
 
@@ -441,14 +357,16 @@ while [ $# -gt 0 ]; do
         -d|--dir) INSTALL_DIR="$2"; shift 2 ;;
         -s|--script-dir) SCRIPT_OUT_DIR="$2"; shift 2 ;;
         -t|--template)
-            if [ "$2" =~ ^[Cc][Nn]$  ]; then
+            case "$2" in
+                [Cc][Nn])
                 DEPLOY_TEMPLATE="config/deploy.template-linux-cn.yaml"
                 USE_CN_MIRROR=true
                 GH_PROXY="https://ghfast.top/"
-            else
+                shift 2 ;;
+            *)
                 DEPLOY_TEMPLATE="$2"
-            fi
-            shift 2 ;;
+                shift 2 ;;
+            esac ;;
         --uninstall) UNINSTALL=true; shift ;;
         -l|--log) KEEP_LOG=true; shift ;;
         -S|--skip-service) SKIP_SERVICE=true; shift ;;
@@ -477,30 +395,10 @@ gather_system_info() {
         CPU_MODEL=$(grep "model name" /proc/cpuinfo 2>/dev/null | head -1 | sed 's/.*: //' | xargs || echo "未知")
     fi
     CPU_CORES=$(nproc 2>/dev/null || grep -c "^processor" /proc/cpuinfo 2>/dev/null || echo "1")
-    _gs_disk_line=$(df -h / 2>/dev/null | awk 'NR>1{print $3, $4}' | head -1)
-    DISK_USED=$(echo "${_gs_disk_line}" | awk '{print $1}' || true)
-    DISK_AVAIL=$(echo "${_gs_disk_line}" | awk '{print $2}' || true)
-    [ -z "${DISK_USED}" ] && DISK_USED="?"
-    [ -z "${DISK_AVAIL}" ] && DISK_AVAIL="?"
+    DISK_AVAIL=$(df -h / | awk 'NR==2{print $4}')
+    DISK_USED=$(df -h / | awk 'NR==2{print $3}')
     DISK_INFO="可用: ${DISK_AVAIL}  已用: ${DISK_USED}"
-
-    # LXC/PVE 容器：优先读取 cgroup 内存限制；回退到 free -m
-    if [ -r /sys/fs/cgroup/memory.max ]; then
-        _gs_cg_mem=$(cat /sys/fs/cgroup/memory.max 2>/dev/null)
-        if [ "${_gs_cg_mem}" != "max" ] && [ -n "${_gs_cg_mem}" ]; then
-            RAM_SIZE_MIB=$(( _gs_cg_mem / 1048576 ))
-        fi
-    elif [ -r /sys/fs/cgroup/memory/memory.limit_in_bytes ]; then
-        _gs_cg_mem=$(cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null)
-        # 跳过超限值（如 9223372036854771712 表示无限制）
-        if [ -n "${_gs_cg_mem}" ] && [ "${_gs_cg_mem}" -lt 1099511627776 ]; then
-            RAM_SIZE_MIB=$(( _gs_cg_mem / 1048576 ))
-        fi
-    fi
-    if [ -z "${RAM_SIZE_MIB}" ]; then
-        RAM_SIZE_MIB=$(free -m 2>/dev/null | awk '/Mem:/{print $2}' || \
-                       awk '/MemTotal/{printf "%d", $2/1024}' /proc/meminfo 2>/dev/null || echo "0")
-    fi
+    RAM_SIZE_MIB=$(free -m 2>/dev/null | awk '/Mem:/{print $2}' || awk '/MemTotal/{printf "%d", $2/1024}' /proc/meminfo 2>/dev/null || echo "0")
 }
 
 # ---------------------------- 打印标题与系统面板 ----------------------------
@@ -539,6 +437,12 @@ print_header() {
     fi
     echo_line "  ${ICON_USER}  当前用户/组    : ${_ph_user_color}${USER_NAME} / ${USER_GROUP}${NC}"
     echo_line ""
+
+    # Alpine 系统检查
+    [ "${OS_ID}" != "alpine" ] && {
+        echo_line "  ${ICON_ERROR}  ${RED}此脚本仅支持 Alpine Linux，当前系统: ${OS_ID}，请阅读发行说明${NC}"
+        exit 1
+    }
 }
 
 # ---------------------------- 发行版检测 ----------------------------
@@ -600,7 +504,7 @@ install_pixi() {
 }
 
 # ---------------------------- 检查依赖----------------------------
-install_git_adb() {
+install_deps() {
     start_step "正在检查依赖..."
 
     _ga_missing=""
@@ -623,7 +527,12 @@ install_git_adb() {
         fi
         _log_message "EXEC" "▶ apk add --no-cache${_ga_missing}"
         # shellcheck disable=SC2086
-        if ! apk add --no-cache ${_ga_missing} >> "$LOGFILE" 2>&1; then
+        if [ "${USE_CN_MIRROR}" = true ]; then
+            if ! _apk_add_cn_mirror ${_ga_missing}; then
+                log_error "依赖安装错误，详情请阅读日志：${LOGFILE}"
+                exit 1
+            fi
+        elif ! apk add --no-cache ${_ga_missing} >> "$LOGFILE" 2>&1; then
             log_error "依赖安装错误，详情请阅读日志：${LOGFILE}"
             exit 1
         fi
@@ -646,7 +555,14 @@ install_git_adb() {
         _log_message "WARNING" "glibc 兼容层缺失: gcompat"
         enable_alpine_community_repo
         _log_message "EXEC" "▶ apk add --no-cache gcompat"
-        if apk add --no-cache gcompat >> "$LOGFILE" 2>&1; then
+        if [ "${USE_CN_MIRROR}" = true ]; then
+            _apk_add_cn_mirror gcompat
+            _ga_gcompat_ok=$?
+        else
+            apk add --no-cache gcompat >> "$LOGFILE" 2>&1
+            _ga_gcompat_ok=$?
+        fi
+        if [ "${_ga_gcompat_ok}" = 0 ]; then
             _log_message "OK" "✓ gcompat 安装成功"
         else
             _log_message "WARNING" "gcompat 在当前仓库不可用，自动降级到第三方 glibc"
@@ -663,6 +579,28 @@ install_git_adb() {
     end_step "${ICON_OK}" "Git 已安装: $(git --version 2>/dev/null | awk '{print $NF}')"
     end_step "${ICON_OK}" "ADB 已安装: $(adb --version 2>/dev/null | head -n1 | awk '{print $NF}')"
     _log_message "OK" "✓ 依赖安装完成"
+}
+
+# CN 镜像 APK 安装：尝试中国镜像源；失败时回退官方源
+_apk_add_cn_mirror() {
+    _ac_pkgs="$*"
+    _ac_alpine_ver=$(cut -d. -f1,2 /etc/alpine-release 2>/dev/null || echo "latest-stable")
+    _log_message "EXEC" "▶ apk add${_ac_pkgs} (CN 镜像)"
+    for _ac_mirror in \
+        "https://mirrors.ustc.edu.cn/alpine/v${_ac_alpine_ver}/main" \
+        "https://mirrors.ustc.edu.cn/alpine/v${_ac_alpine_ver}/community" \
+        "https://mirrors.aliyun.com/alpine/v${_ac_alpine_ver}/main" \
+        "https://mirrors.aliyun.com/alpine/v${_ac_alpine_ver}/community" \
+        "https://repo.huaweicloud.com/alpine/v${_ac_alpine_ver}/main" \
+        "https://repo.huaweicloud.com/alpine/v${_ac_alpine_ver}/community"; do
+        if apk add --no-cache --repository="${_ac_mirror}" ${_ac_pkgs} >> "$LOGFILE" 2>&1; then
+            return 0
+        fi
+        _log_message "WARNING" "镜像 ${_ac_mirror} 不可用，尝试下一个"
+    done
+    # 所有镜像失败，回退官方源
+    _log_message "WARNING" "所有 CN 镜像不可用，回退官方源"
+    apk add --no-cache ${_ac_pkgs} >> "$LOGFILE" 2>&1
 }
 
 # ---------------------------- 克隆仓库 ----------------------------
@@ -710,22 +648,20 @@ setup_pixi_env() {
     start_step "正在配置 Pixi 虚拟环境..."
 
     cd "${ALAS_DIR}"
-    backup_file_once "pixi.toml"
+    if [ -f "pixi.toml" ] && [ ! -f "pixi.toml.bak" ]; then
+        cp pixi.toml pixi.toml.bak
+        _log_message "OK" "✓ 已备份 pixi.toml → pixi.toml.bak"
+    fi
 
-    # 生成最小化 pixi.toml：只保留 conda 系统/科学包，去掉 [pypi-dependencies]
-    # 原因：cnocr(pip) 要求 numpy<1.20，av(conda) 要求 numpy>=1.20，无法共存。
-    # 解决：pixi 只建 conda 基础环境，ALAS 启动时自己 pip install headless/requirements.txt。
-    _log_message "EXEC" "▶ 生成 pixi.toml (conda-only 模式)"
+    _log_message "EXEC" "▶ 生成 pixi.toml"
     cat > pixi.toml << 'PIXI_EOF'
 [workspace]
 channels = ["conda-forge"]
 name = "alas"
 platforms = ["linux-64"]
 version = "0.1.0"
-
 [tasks]
 start = "python gui.py"
-
 [dependencies]
 libglib = "*"
 libgomp = "*"
@@ -760,7 +696,6 @@ websockets = "*"
 h11 = "*"
 python-dotenv = "*"
 requests = "*"
-
 [pypi-dependencies]
 anyio = "==1.3.1"
 adbutils = "==0.11.0"
@@ -782,7 +717,7 @@ PIXI_EOF
     cernet_conda="https://mirrors.cernet.edu.cn/anaconda"
     cernet_pypi="https://mirrors.cernet.edu.cn/pypi/web/simple"
 
-        _log_message "EXEC" "▶ 配置国内镜像源 (cernet)"
+        _log_message "EXEC" "▶ 配置国内镜像源"
     cernet_channel="${cernet_conda}/cloud/conda-forge/"
         sed -i "s|channels = \\[\"conda-forge\"\\]|channels = [\"${cernet_channel}\"]|" pixi.toml
         cat >> pixi.toml << PIXI_EOF
@@ -801,43 +736,18 @@ PIXI_EOF
         _log_message "OK" "✓ 旧环境已清理"
     fi
 
-    if is_alpine; then
-        export CONDA_OVERRIDE_GLIBC="${CONDA_OVERRIDE_GLIBC:-${ALPINE_GLIBC_OVERRIDE}}"
-        _log_message "INFO" "Alpine 已设置 CONDA_OVERRIDE_GLIBC=${CONDA_OVERRIDE_GLIBC}"
-        ensure_alpine_glibc_loader || {
-            end_step "${ICON_ERROR}" "Alpine glibc 兼容层不足，请检查 gcompat" "${RED}"
-            exit 1
-        }
-    fi
-    pixi_install_log="/tmp/pixi_install_$$.log"
-    pixi_install_attempt=1
-    while true; do
-        _log_message "EXEC" "▶ pixi install --manifest-path pixi.toml (第 ${pixi_install_attempt} 次)"
-        if pixi install --manifest-path pixi.toml > "${pixi_install_log}" 2>&1; then
-            cat "${pixi_install_log}" >> "$LOGFILE" 2>/dev/null || true
-            rm -f "${pixi_install_log}"
-            break
-        fi
+    export CONDA_OVERRIDE_GLIBC="${CONDA_OVERRIDE_GLIBC:-${ALPINE_GLIBC_OVERRIDE}}"
+    _log_message "INFO" "Alpine 已设置 CONDA_OVERRIDE_GLIBC=${CONDA_OVERRIDE_GLIBC}"
 
-        cat "${pixi_install_log}" >> "$LOGFILE" 2>/dev/null || true
-        if [ "${ALPINE_GLIBC_AUTO_RETRY}" = true ] && [ "${ALPINE_GLIBC_RETRY_DONE}" != true ] && \
-           pixi_install_needs_real_glibc "${pixi_install_log}"; then
-            _log_message "WARNING" "gcompat 无法启动 conda linux-64 Python，自动切换到第三方 glibc 并重试"
-            _log_message "WARNING" "gcompat 不足，正在安装第三方 glibc 后自动重试"
-            rm -f "${pixi_install_log}"
-            ALPINE_GLIBC_RETRY_DONE=true
-            install_alpine_real_glibc
-            _log_exec "清理失败的 Pixi 环境" pixi clean --environment default || \
-            _log_exec "清理失败的 Pixi 环境 (rm -rf)" rm -rf .pixi pixi.lock
-            pixi_install_attempt=$((pixi_install_attempt + 1))
-            start_step "正在重新配置 Pixi 虚拟环境..."
-            continue
-        fi
-
-        diagnose_pixi_install_failure "${pixi_install_log}"
-        rm -f "${pixi_install_log}"
+    _pe_install_log="/tmp/pixi_install_$$.log"
+    _log_message "EXEC" "▶ pixi install --manifest-path pixi.toml"
+    if ! pixi install --manifest-path pixi.toml > "${_pe_install_log}" 2>&1; then
+        cat "${_pe_install_log}" >> "$LOGFILE" 2>/dev/null || true
+        diagnose_pixi_install_failure "${_pe_install_log}"
+        rm -f "${_pe_install_log}"
         exit 1
-    done
+    fi
+    rm -f "${_pe_install_log}"
 
     if ! verify_pixi_python_prefix; then
         exit 1
@@ -869,7 +779,7 @@ configure_deploy() {
 
 # ---------------------------- 第6步: 开机自启服务（OpenRC）----------------------------
 _configure_openrc() {
-    start_step "正在配置 OpenRC 开机自启 (Alpine)..."
+    start_step "正在配置 OpenRC 开机自启..."
     _log_message "EXEC" "▶ 生成 /etc/init.d/run_alas"
     _log_message "INFO" "  用户: ${USER_NAME}, 组: ${USER_GROUP}"
     _log_message "INFO" "  工作目录: ${ALAS_DIR}"
@@ -914,7 +824,7 @@ configure_service() {
     if command -v rc-service >/dev/null 2>&1; then
         _configure_openrc
     else
-        log_warn "未检测到 OpenRC，跳过服务配置，请手动配置开机自启"
+        echo_line "  ${ICON_WARN}  ${YELLOW}未检测到 OpenRC，跳过服务配置，请手动配置开机自启${NC}"
     fi
 }
 
@@ -1030,7 +940,7 @@ main() {
     detect_os
     gather_system_info
     print_header
-    install_git_adb
+    install_deps
     install_pixi
     clone_alas
     setup_pixi_env
