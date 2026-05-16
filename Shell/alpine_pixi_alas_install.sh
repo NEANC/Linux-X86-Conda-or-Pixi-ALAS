@@ -605,13 +605,11 @@ install_deps() {
 
     # Alpine glibc 兼容层（gcompat → 自动降级第三方 glibc）
     _ga_gcompat_missing=""
-    for _ga_pkg in gcompat; do
-        if apk info -e "${_ga_pkg}" >/dev/null 2>&1; then
-            _log_message "OK" "glibc 兼容层已存在: ${_ga_pkg}"
-        else
-            _ga_gcompat_missing="${_ga_pkg}"
-        fi
-    done
+    if apk info -e gcompat >/dev/null 2>&1; then
+        _log_message "OK" "glibc 兼容层已存在: gcompat"
+    else
+        _ga_gcompat_missing="gcompat"
+    fi
 
     if [ -n "${_ga_gcompat_missing}" ]; then
         _log_message "WARNING" "glibc 兼容层缺失: gcompat"
@@ -795,7 +793,7 @@ PIXI_EOF
         _log_message "OK" "✓ 国内镜像源已配置至 pixi.toml"
     fi
 
-    if [ -d ".pixi/envs/default" || -d ".pixi/envs/alas" || -f "pixi.lock"  ]; then
+    if [ -d ".pixi/envs/default" ] || [ -d ".pixi/envs/alas" ] || [ -f "pixi.lock" ]; then
         _log_message "WARNING" "检测到已有 Pixi 环境，正在清理..."
         _log_exec "清理 Pixi 缓存" pixi clean cache -y || true
         _log_exec "清理 Pixi 环境 (方法1: pixi clean --environment default)" pixi clean --environment default || \
@@ -966,7 +964,7 @@ do_uninstall() {
 
     start_step "正在清理 Pixi 虚拟环境..."
     cd "${INSTALL_DIR}"
-    if [ -d ".pixi" || -f "pixi.lock"  ]; then
+    if [ -d ".pixi" ] || [ -f "pixi.lock" ]; then
         _log_message "EXEC" "▶ 清理 Pixi 环境"
         _log_exec "清理 Pixi 环境 (方法1: pixi clean --environment default)" pixi clean --environment default || \
         _log_exec "清理 Pixi 环境 (方法2: pixi clean)" pixi clean || \
