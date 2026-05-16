@@ -1393,12 +1393,17 @@ do_uninstall() {
     echo_line "  ${ICON_WARN}  ${YELLOW}  - Pixi 虚拟环境${NC}"
     echo_line "  ${ICON_WARN}  ${YELLOW}  - ALAS 目录: ${INSTALL_DIR}${NC}"
     echo_line "  ${ICON_WARN}  ${YELLOW}  - 启动脚本: ${SCRIPT_OUT_DIR}/run_alas.sh${NC}"
-    echo_line "  ${ICON_INFO}  ${GREEN}  Git, ADB, Pixi 不会被删除${NC}"
+    echo_line "  ${ICON_INFO}  ${GREEN}  Git, ADB, Pixi及相关依赖不会被删除${NC}"
     echo_line ""
     _log_message "WARNING" "等待确认卸载"
     while true; do
         printf "  确认继续吗？ [yes/N] ："
-        read -r CONFIRM < /dev/tty
+        if [ -c /dev/tty ] && [ -r /dev/tty ]; then
+            read -r CONFIRM < /dev/tty
+        else
+            read -r CONFIRM
+        fi
+        CONFIRM=$(printf '%s' "${CONFIRM}" | tr -d '\r')
         case "${CONFIRM}" in
             yes|YES)
                 _log_message "INFO" "已确认卸载"

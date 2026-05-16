@@ -967,7 +967,12 @@ do_uninstall() {
     _log_message "WARNING" "等待确认卸载"
     while true; do
         printf "  确认继续吗？ [yes/N] ："
-        read -r CONFIRM < /dev/tty
+        if [ -c /dev/tty ] && [ -r /dev/tty ]; then
+            read -r CONFIRM < /dev/tty
+        else
+            read -r CONFIRM
+        fi
+        CONFIRM=$(printf '%s' "${CONFIRM}" | tr -d '\r')
         case "${CONFIRM}" in
             yes|YES)
                 _log_message "INFO" "已确认卸载"
