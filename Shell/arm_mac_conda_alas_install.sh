@@ -256,7 +256,7 @@ print_header() {
     echo_line ""
 }
 
-# ---------------------------- 第1步: 安装 Homebrew ----------------------------
+# ---------------------------- 安装 Homebrew ----------------------------
 install_homebrew() {
     start_step "正在检查 Homebrew..."
 
@@ -289,7 +289,7 @@ install_homebrew() {
     fi
 }
 
-# ---------------------------- 第2步: 安装 Miniforge、Git 和 ADB ----------------------------
+# ---------------------------- 检查依赖 ----------------------------
 install_packages() {
     start_step "正在检查依赖..."
 
@@ -315,11 +315,38 @@ install_packages() {
 
     start_step "正在安装缺失的依赖: ${missing_formulae[*]}..."
 
-    _log_message "EXEC" "▶ brew install ${missing_formulae[*]}"
-    if ! brew install "${missing_formulae[@]}" >> "$LOGFILE" 2>&1; then
-        _log_message "ERROR" "✗ brew install 失败"
-        end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
-        exit 1
+    if [[ "${USE_CN_MIRROR}" == true ]]; then
+        local -a brew_mirrors=(
+            "https://mirrors.ustc.edu.cn/homebrew-bottles"
+            "https://mirrors.aliyun.com/homebrew/homebrew-bottles"
+            "https://repo.huaweicloud.com/homebrew"
+        )
+        local mirror_url
+        for mirror_url in "${brew_mirrors[@]}"; do
+            _log_message "INFO" "尝试 Homebrew 镜像: ${mirror_url}"
+            if HOMEBREW_BREW_GIT_REMOTE="${mirror_url}/brew.git" \
+               HOMEBREW_CORE_GIT_REMOTE="${mirror_url}/homebrew-core.git" \
+               HOMEBREW_BOTTLE_DOMAIN="${mirror_url}" \
+               brew install "${missing_formulae[@]}" >> "$LOGFILE" 2>&1; then
+                _log_message "OK" "✓ Homebrew 镜像 ${mirror_url} 安装成功"
+                break
+            fi
+            _log_message "WARNING" "镜像 ${mirror_url} 不可用，尝试下一个"
+        done
+        if [[ ${#missing_formulae[@]} -gt 0 ]]; then
+            if ! brew list --formula "${missing_formulae[@]}" &>/dev/null; then
+                _log_message "ERROR" "✗ CN 镜像 brew install 失败"
+                end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+                exit 1
+            fi
+        fi
+    else
+        _log_message "EXEC" "▶ brew install ${missing_formulae[*]}"
+        if ! brew install "${missing_formulae[@]}" >> "$LOGFILE" 2>&1; then
+            _log_message "ERROR" "✗ brew install 失败"
+            end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
+            exit 1
+        fi
     fi
 
     if [[ -x /opt/homebrew/bin/brew ]]; then
@@ -332,7 +359,7 @@ install_packages() {
     _log_message "OK" "✓ 依赖安装完成"
 }
 
-# ---------------------------- 第3步: 克隆仓库 ----------------------------
+# ---------------------------- 克隆仓库 ----------------------------
 clone_alas() {
     start_step "正在克隆 ALAS 仓库..."
 
@@ -360,7 +387,7 @@ clone_alas() {
     end_step "${ICON_OK}" "ALAS 仓库已克隆"
 }
 
-# ---------------------------- 第4步: 配置虚拟环境 ----------------------------
+# ---------------------------- 配置虚拟环境 ----------------------------
 setup_conda_env() {
     start_step "正在配置 Conda 虚拟环境..."
 
@@ -638,7 +665,7 @@ YML_EOF
     end_step "${ICON_OK}" "虚拟环境已构建"
 }
 
-# ---------------------------- 第5步: 配置 deploy.yaml ----------------------------
+# ---------------------------- 配置 deploy.yaml ----------------------------
 configure_deploy() {
     start_step "复制 deploy.yaml..."
 
@@ -660,7 +687,7 @@ configure_deploy() {
     fi
 }
 
-# ---------------------------- 第6步: 创建启动脚本 ----------------------------
+# ---------------------------- 创建启动脚本 ----------------------------
 create_launcher() {
     start_step "正在创建启动脚本..."
 
@@ -679,7 +706,7 @@ EOF
     end_step "${ICON_OK}" "启动脚本已生成: ${SCRIPT_OUT_DIR}/run_alas.sh"
 }
 
-# ---------------------------- 第7步: launchctl 服务 ----------------------------
+# ---------------------------- 配置 launchctl 服务 ----------------------------
 configure_service() {
     start_step "正在配置 launchctl 服务..."
 
@@ -738,7 +765,7 @@ EOF
     fi
 }
 
-# ---------------------------- 第8步: 创建桌面快捷脚本 ----------------------------
+# ---------------------------- 创建桌面快捷脚本 ----------------------------
 create_desktop_commands() {
     start_step "正在创建桌面快捷脚本..."
 

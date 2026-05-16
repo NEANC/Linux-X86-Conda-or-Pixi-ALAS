@@ -1,0 +1,69 @@
+name: Static Analysis
+
+on:
+  push:
+    paths:
+      - "Shell/**"
+      - ".github/workflows/static-analysis.yml"
+  pull_request:
+    paths:
+      - "Shell/**"
+      - ".github/workflows/static-analysis.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shellcheck:
+    name: ShellCheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run ShellCheck
+        uses: ludeeus/action-shellcheck@master
+        env:
+          SHELLCHECK_OPTS: --severity=warning
+        with:
+          scandir: "./Shell"
+
+  bash-syntax:
+    name: Bash Syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check bash syntax
+        run: |
+          shopt -s nullglob
+          for f in Shell/*.sh; do
+            echo ">>> Checking: $f"
+            bash -n "$f" || { echo "ERROR: $f has syntax errors"; exit 1; }
+            echo "  OK"
+          done
+
+  psanalyzer:
+    name: PSScriptAnalyzer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache PSScriptAnalyzer
+        id: cache-psanalyzer
+        uses: actions/cache@v4
+        with:
+          path: ~\Documents\PowerShell\Modules\PSScriptAnalyzer
+          key: ${{ runner.os }}-psanalyzer-1
+      - name: Install PSScriptAnalyzer
+        if: steps.cache-psanalyzer.outputs.cache-hit != 'true'
+        run: Install-Module -Name PSScriptAnalyzer -Force -SkipPublisherCheck -Scope CurrentUser
+        shell: pwsh
+      - name: Run PSScriptAnalyzer
+        run: |
+          $results = Invoke-ScriptAnalyzer -Path Shell\ -Recurse -Settings .psanalyzer.psd1
+          if ($results) {
+            $results | Format-Table -AutoSize
+            Write-Host "::error::PSScriptAnalyzer found issues"
+            exit 1
+          }
+          Write-Host "No PSScriptAnalyzer issues found"
+        shell: pwsh
