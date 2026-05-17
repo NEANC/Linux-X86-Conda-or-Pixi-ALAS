@@ -1099,6 +1099,7 @@ YML_EOF
 
     _se_install_log="/tmp/conda_install_$$.log"
     _se_install_attempt=1
+    _se_cn_fallback_done=false
     while true; do
         _log_message "EXEC" "▶ conda env create -f environment.yml (第 ${_se_install_attempt} 次，这可能需要较长时间)"
         if conda env create -f environment.yml > "${_se_install_log}" 2>&1; then
@@ -1108,6 +1109,21 @@ YML_EOF
         fi
 
         cat "${_se_install_log}" >> "$LOGFILE" 2>/dev/null || true
+        if [ "${USE_CN_MIRROR}" = true ] && [ "${_se_cn_fallback_done}" != true ] && \
+           grep -Eqi '403|403 Forbidden|HTTP.*403' "${_se_install_log}" 2>/dev/null; then
+            _log_message "WARNING" "国内镜像源不可用（403 Forbidden），自动降级到官方源"
+            end_step "${ICON_WARN}" "国内镜像源不可用，自动降级到官方源并重试" "${YELLOW}"
+            rm -f "${_se_install_log}"
+            _se_cn_fallback_done=true
+            conda config --remove channels "https://mirrors.cernet.edu.cn/anaconda/cloud/conda-forge/" >> "$LOGFILE" 2>&1 || true
+            conda config --remove channels "https://mirrors.cernet.edu.cn/anaconda/pkgs/main/" >> "$LOGFILE" 2>&1 || true
+            unset PIP_INDEX_URL
+            conda env remove -n alas -y >> "$LOGFILE" 2>&1 || true
+            _se_install_attempt=$((_se_install_attempt + 1))
+            start_step "正在重新配置 Conda 虚拟环境..."
+            continue
+        fi
+
         if [ "${PACKAGE_MANAGER}" = "apk" ] && [ "${ALPINE_GLIBC_RETRY_DONE}" != true ] && \
            conda_install_needs_real_glibc "${_se_install_log}"; then
             _log_message "WARNING" "gcompat 无法启动 conda linux-64 Python，自动切换到第三方 glibc 并重试"
