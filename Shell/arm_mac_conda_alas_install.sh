@@ -907,15 +907,6 @@ do_uninstall() {
         end_step "${ICON_INFO}" "未检测到 Conda，跳过虚拟环境清理" "${GREEN}"
     fi
 
-    start_step "正在删除 ALAS 目录..."
-    if [[ -d "${INSTALL_DIR}" ]]; then
-        _log_message "EXEC" "▶ rm -rf ${INSTALL_DIR}"
-        rm -rf "${INSTALL_DIR}"
-        end_step "${ICON_OK}" "目录已删除"
-    else
-        end_step "${ICON_INFO}" "ALAS 目录已不存在，跳过" "${GREEN}"
-    fi
-
     start_step "正在删除启动脚本..."
     if [[ -f "${SCRIPT_OUT_DIR}/run_alas.sh" ]]; then
         _log_message "EXEC" "▶ rm -f ${SCRIPT_OUT_DIR}/run_alas.sh"
@@ -938,6 +929,15 @@ do_uninstall() {
         end_step "${ICON_OK}" "桌面快捷脚本已删除"
     else
         end_step "${ICON_INFO}" "桌面快捷脚本不存在，跳过" "${GREEN}"
+    fi
+
+    start_step "正在删除 ALAS 目录..."
+    if [[ -d "${INSTALL_DIR}" ]]; then
+        _log_message "EXEC" "▶ rm -rf ${INSTALL_DIR}"
+        rm -rf "${INSTALL_DIR}"
+        end_step "${ICON_OK}" "目录已删除"
+    else
+        end_step "${ICON_INFO}" "ALAS 目录已不存在，跳过" "${GREEN}"
     fi
 
     if [[ "${KEEP_LOG}" == false ]]; then
