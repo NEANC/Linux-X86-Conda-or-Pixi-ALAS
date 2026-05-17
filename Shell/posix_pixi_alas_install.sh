@@ -1468,6 +1468,9 @@ do_uninstall() {
     _log_message "WARNING" "等待确认卸载"
     if [ "${UNINSTALL_YES}" = true ]; then
         _log_message "INFO" "已通过 -Y 自动确认卸载"
+    elif [ "${OS_ID}" = "alpine" ]; then
+        echo_line "  ${ICON_ERROR}  ${RED}脚本无法读取终端输入，请使用静默方式运行卸载${NC}"
+        exit 1
     else
         while true; do
             printf "  确认继续吗？ [yes/N] ："
