@@ -1428,36 +1428,42 @@ do_uninstall() {
     detect_init_system
 
     start_step "正在停止 ALAS 服务..."
+    _svc_done=false
     if [ "${INIT_SYSTEM}" = "systemd" ]; then
         if systemctl is-active --quiet run_alas.service 2>/dev/null; then
             _log_message "EXEC" "▶ systemctl stop run_alas.service"
             systemctl stop run_alas.service >> "$LOGFILE" 2>&1
             _log_message "OK" "✓ 服务已停止"
+            _svc_done=true
         fi
         if systemctl is-enabled --quiet run_alas.service 2>/dev/null; then
             _log_message "EXEC" "▶ systemctl disable run_alas.service"
             systemctl disable run_alas.service >> "$LOGFILE" 2>&1
             _log_message "OK" "✓ 服务已禁用"
+            _svc_done=true
         fi
         if [ -f /etc/systemd/system/run_alas.service ]; then
             _log_message "EXEC" "▶ 删除服务单元文件"
             rm -f /etc/systemd/system/run_alas.service
             systemctl daemon-reload >> "$LOGFILE" 2>&1
+            _svc_done=true
         fi
     elif [ "${INIT_SYSTEM}" = "openrc" ]; then
         if command -v rc-service >/dev/null 2>&1; then
             rc-service run_alas stop >> "$LOGFILE" 2>&1 || true
             _log_message "OK" "✓ 服务已停止"
+            _svc_done=true
         fi
         rc-update del run_alas default >> "$LOGFILE" 2>&1 || true
-        _log_message "OK" "✓ 服务已从运行级移除"
         if [ -f /etc/init.d/run_alas ]; then
             _log_message "EXEC" "▶ 删除 OpenRC 服务脚本"
             rm -f /etc/init.d/run_alas
+            _svc_done=true
         fi
     elif [ "${INIT_SYSTEM}" = "sysvinit" ]; then
         service run_alas stop >> "$LOGFILE" 2>&1 || true
         _log_message "OK" "✓ 服务已停止"
+        _svc_done=true
         if command -v update-rc.d >/dev/null 2>&1; then
             _log_message "EXEC" "▶ update-rc.d -f run_alas remove"
             update-rc.d -f run_alas remove >> "$LOGFILE" 2>&1 || true
@@ -1470,30 +1476,45 @@ do_uninstall() {
             rm -f /etc/init.d/run_alas
         fi
     fi
-    end_step "${ICON_OK}" "服务已停止并移除"
+    if [ "$_svc_done" = true ]; then
+        end_step "${ICON_OK}" "服务已停止并移除"
+    else
+        end_step "${ICON_INFO}" "未检测到 ALAS 服务，跳过" "${GREEN}"
+    fi
 
     start_step "正在清理 Conda 虚拟环境..."
-    CONDA_BIN="${HOME}/miniforge3/bin/conda"
-    command -v conda >/dev/null 2>&1 && CONDA_BIN=$(command -v conda)
-    . "$(dirname "$(dirname "${CONDA_BIN}")")/etc/profile.d/conda.sh" >> "$LOGFILE" 2>&1
-    if conda env list 2>/dev/null | grep -q "^alas "; then
-        _log_message "EXEC" "▶ conda env remove -n alas"
-        _log_exec "移除 Conda 环境 (方法1: conda env remove)" conda env remove -n alas -y || \
-        _log_exec "移除 Conda 环境 (方法2: rm -rf)" rm -rf "$(conda info --base 2>/dev/null)/envs/alas"
+    if command -v conda >/dev/null 2>&1; then
+        CONDA_BIN=$(command -v conda)
+        . "$(dirname "$(dirname "${CONDA_BIN}")")/etc/profile.d/conda.sh" >> "$LOGFILE" 2>&1
+        if conda env list 2>/dev/null | grep -q "^alas "; then
+            _log_message "EXEC" "▶ conda env remove -n alas"
+            _log_exec "移除 Conda 环境 (方法1: conda env remove)" conda env remove -n alas -y || \
+            _log_exec "移除 Conda 环境 (方法2: rm -rf)" rm -rf "$(conda info --base 2>/dev/null)/envs/alas"
+        else
+            _log_message "INFO" "未检测到 alas 环境，跳过"
+        fi
+        end_step "${ICON_OK}" "虚拟环境已清理"
     else
-        _log_message "INFO" "未检测到 alas 环境，跳过"
+        end_step "${ICON_INFO}" "未检测到 Conda，跳过虚拟环境清理" "${GREEN}"
     fi
-    end_step "${ICON_OK}" "虚拟环境已清理"
 
     start_step "正在删除 ALAS 目录..."
-    _log_message "EXEC" "▶ rm -rf ${INSTALL_DIR}"
-    rm -rf "${INSTALL_DIR}"
-    end_step "${ICON_OK}" "目录已删除"
+    if [ -d "${INSTALL_DIR}" ]; then
+        _log_message "EXEC" "▶ rm -rf ${INSTALL_DIR}"
+        rm -rf "${INSTALL_DIR}"
+        end_step "${ICON_OK}" "目录已删除"
+    else
+        end_step "${ICON_INFO}" "ALAS 目录已不存在，跳过" "${GREEN}"
+    fi
 
     start_step "正在删除启动脚本..."
-    _log_message "EXEC" "▶ rm -f ${SCRIPT_OUT_DIR}/run_alas.sh"
-    rm -f "${SCRIPT_OUT_DIR}/run_alas.sh"
-    end_step "${ICON_OK}" "启动脚本已删除"
+    if [ -f "${SCRIPT_OUT_DIR}/run_alas.sh" ]; then
+        _log_message "EXEC" "▶ rm -f ${SCRIPT_OUT_DIR}/run_alas.sh"
+        rm -f "${SCRIPT_OUT_DIR}/run_alas.sh"
+        end_step "${ICON_OK}" "启动脚本已删除"
+    else
+        end_step "${ICON_INFO}" "启动脚本不存在，跳过" "${GREEN}"
+    fi
 
     if [ "${KEEP_LOG}" = false ]; then
         _log_message "INFO" "清理日志文件: ${LOGFILE}"

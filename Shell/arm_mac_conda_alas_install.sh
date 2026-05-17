@@ -874,43 +874,71 @@ do_uninstall() {
     echo_line ""
 
     start_step "正在停止 ALAS 服务..."
-    _log_message "EXEC" "▶ launchctl bootout gui/$(id -u)/com.alas.run"
-    launchctl bootout "gui/$(id -u)/com.alas.run" 2>/dev/null || true
-    _log_message "EXEC" "▶ rm -f plist 文件"
-    rm -f "${HOME}/Library/LaunchAgents/com.alas.run.plist"
-    end_step "${ICON_OK}" "服务已停止并移除"
+    _svc_done=false
+    if launchctl list "com.alas.run" &>/dev/null; then
+        _log_message "EXEC" "▶ launchctl bootout gui/$(id -u)/com.alas.run"
+        launchctl bootout "gui/$(id -u)/com.alas.run" 2>/dev/null || true
+        _svc_done=true
+    fi
+    if [[ -f "${HOME}/Library/LaunchAgents/com.alas.run.plist" ]]; then
+        _log_message "EXEC" "▶ rm -f plist 文件"
+        rm -f "${HOME}/Library/LaunchAgents/com.alas.run.plist"
+        _svc_done=true
+    fi
+    if [[ "$_svc_done" == true ]]; then
+        end_step "${ICON_OK}" "服务已停止并移除"
+    else
+        end_step "${ICON_INFO}" "未检测到 ALAS 服务，跳过" "${GREEN}"
+    fi
 
     start_step "正在清理 Conda 虚拟环境..."
-    CONDA_BIN="${HOME}/miniforge3/bin/conda"
-    command -v conda &>/dev/null && CONDA_BIN=$(command -v conda)
-    eval "$("${CONDA_BIN}" shell.bash hook)" >> "$LOGFILE" 2>&1
-    if conda env list 2>/dev/null | grep -q "^alas "; then
-        _log_message "EXEC" "▶ conda env remove -n alas"
-        _log_exec "移除 Conda 环境 (方法1: conda env remove)" conda env remove -n alas -y || \
-        _log_exec "移除 Conda 环境 (方法2: rm -rf)" rm -rf "$(conda info --base 2>/dev/null)/envs/alas"
+    if command -v conda &>/dev/null; then
+        CONDA_BIN=$(command -v conda)
+        eval "$("${CONDA_BIN}" shell.bash hook)" >> "$LOGFILE" 2>&1
+        if conda env list 2>/dev/null | grep -q "^alas "; then
+            _log_message "EXEC" "▶ conda env remove -n alas"
+            _log_exec "移除 Conda 环境 (方法1: conda env remove)" conda env remove -n alas -y || \
+            _log_exec "移除 Conda 环境 (方法2: rm -rf)" rm -rf "$(conda info --base 2>/dev/null)/envs/alas"
+        else
+            _log_message "INFO" "未检测到 alas 环境，跳过"
+        fi
+        end_step "${ICON_OK}" "虚拟环境已清理"
     else
-        _log_message "INFO" "未检测到 alas 环境，跳过"
+        end_step "${ICON_INFO}" "未检测到 Conda，跳过虚拟环境清理" "${GREEN}"
     fi
-    end_step "${ICON_OK}" "虚拟环境已清理"
 
     start_step "正在删除 ALAS 目录..."
-    _log_message "EXEC" "▶ rm -rf ${INSTALL_DIR}"
-    rm -rf "${INSTALL_DIR}"
-    end_step "${ICON_OK}" "目录已删除"
+    if [[ -d "${INSTALL_DIR}" ]]; then
+        _log_message "EXEC" "▶ rm -rf ${INSTALL_DIR}"
+        rm -rf "${INSTALL_DIR}"
+        end_step "${ICON_OK}" "目录已删除"
+    else
+        end_step "${ICON_INFO}" "ALAS 目录已不存在，跳过" "${GREEN}"
+    fi
 
     start_step "正在删除启动脚本..."
-    _log_message "EXEC" "▶ rm -f ${SCRIPT_OUT_DIR}/run_alas.sh"
-    rm -f "${SCRIPT_OUT_DIR}/run_alas.sh"
-    end_step "${ICON_OK}" "启动脚本已删除"
+    if [[ -f "${SCRIPT_OUT_DIR}/run_alas.sh" ]]; then
+        _log_message "EXEC" "▶ rm -f ${SCRIPT_OUT_DIR}/run_alas.sh"
+        rm -f "${SCRIPT_OUT_DIR}/run_alas.sh"
+        end_step "${ICON_OK}" "启动脚本已删除"
+    else
+        end_step "${ICON_INFO}" "启动脚本不存在，跳过" "${GREEN}"
+    fi
 
     start_step "正在删除桌面快捷脚本..."
-    _log_message "EXEC" "▶ rm -f ${HOME}/Desktop/运行ALAS.command"
-    rm -f "${HOME}/Desktop/运行ALAS.command"
-    _log_message "EXEC" "▶ rm -f ${HOME}/Desktop/停止ALAS.command"
-    rm -f "${HOME}/Desktop/停止ALAS.command"
-    _log_message "EXEC" "▶ rm -f ${HOME}/Desktop/重启ALAS.command"
-    rm -f "${HOME}/Desktop/重启ALAS.command"
-    end_step "${ICON_OK}" "桌面快捷脚本已删除"
+    _desktop_cleaned=false
+    for _df in "${HOME}/Desktop/运行ALAS.command" "${HOME}/Desktop/停止ALAS.command" "${HOME}/Desktop/重启ALAS.command"; do
+        if [[ -f "$_df" ]]; then
+            _log_message "EXEC" "▶ rm -f $_df"
+            rm -f "$_df"
+            _desktop_cleaned=true
+        fi
+    done
+    if [[ "$_desktop_cleaned" == true ]]; then
+        end_step "${ICON_OK}" "桌面快捷脚本已删除"
+    else
+        end_step "${ICON_INFO}" "桌面快捷脚本不存在，跳过" "${GREEN}"
+    fi
 
     if [[ "${KEEP_LOG}" == false ]]; then
         _log_message "INFO" "清理日志文件: ${LOGFILE}"

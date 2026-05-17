@@ -1000,41 +1000,57 @@ do_uninstall() {
     echo_line ""
 
     start_step "正在停止 ALAS 服务..."
+    _svc_done=false
     if command -v rc-service >/dev/null 2>&1; then
         rc-service run_alas stop >> "$LOGFILE" 2>&1 || true
         _log_message "OK" "✓ 服务已停止"
+        _svc_done=true
         rc-update del run_alas default >> "$LOGFILE" 2>&1 || true
-        _log_message "OK" "✓ 服务已从 runlevel 移除"
         if [ -f /etc/init.d/run_alas  ]; then
             _log_message "EXEC" "▶ 删除 OpenRC 服务脚本"
             rm -f /etc/init.d/run_alas
-            _log_message "OK" "✓ OpenRC 服务脚本已删除"
         fi
     fi
-    end_step "${ICON_OK}" "服务已停止并移除"
+    if [ "$_svc_done" = true ]; then
+        end_step "${ICON_OK}" "服务已停止并移除"
+    else
+        end_step "${ICON_INFO}" "未检测到 ALAS 服务，跳过" "${GREEN}"
+    fi
 
     start_step "正在清理 Pixi 虚拟环境..."
-    cd "${INSTALL_DIR}"
-    if [ -d ".pixi" ] || [ -f "pixi.lock" ]; then
-        _log_message "EXEC" "▶ 清理 Pixi 环境"
-        _log_exec "清理 Pixi 环境 (方法1: pixi clean --environment default)" pixi clean --environment default || \
-        _log_exec "清理 Pixi 环境 (方法2: pixi clean)" pixi clean || \
-        _log_exec "清理 Pixi 环境 (方法3: rm -rf .pixi pixi.lock)" rm -rf .pixi pixi.lock
+    if [ -d "${INSTALL_DIR}" ]; then
+        cd "${INSTALL_DIR}"
+        if [ -d ".pixi" ] || [ -f "pixi.lock" ]; then
+            _log_message "EXEC" "▶ 清理 Pixi 环境"
+            _log_exec "清理 Pixi 环境 (方法1: pixi clean --environment default)" pixi clean --environment default || \
+            _log_exec "清理 Pixi 环境 (方法2: pixi clean)" pixi clean || \
+            _log_exec "清理 Pixi 环境 (方法3: rm -rf .pixi pixi.lock)" rm -rf .pixi pixi.lock
+        else
+            _log_message "INFO" "未检测到 Pixi 环境，跳过清理"
+        fi
+        end_step "${ICON_OK}" "虚拟环境已清理"
     else
-        _log_message "INFO" "未检测到 Pixi 环境，跳过清理"
+        end_step "${ICON_INFO}" "ALAS 目录不存在，跳过虚拟环境清理" "${GREEN}"
     fi
-    end_step "${ICON_OK}" "虚拟环境已清理"
 
     start_step "正在删除 ALAS 目录..."
-    _log_message "EXEC" "▶ rm -rf ${INSTALL_DIR}"
-    rm -rf "${INSTALL_DIR}"
-    end_step "${ICON_OK}" "目录已删除"
+    if [ -d "${INSTALL_DIR}" ]; then
+        _log_message "EXEC" "▶ rm -rf ${INSTALL_DIR}"
+        rm -rf "${INSTALL_DIR}"
+        end_step "${ICON_OK}" "目录已删除"
+    else
+        end_step "${ICON_INFO}" "ALAS 目录已不存在，跳过" "${GREEN}"
+    fi
 
     start_step "正在删除启动脚本..."
     _run_script="${INSTALL_DIR}/run_alas.sh"
-    _log_message "EXEC" "▶ rm -f ${_run_script}"
-    rm -f "${_run_script}"
-    end_step "${ICON_OK}" "启动脚本已删除"
+    if [ -f "${_run_script}" ]; then
+        _log_message "EXEC" "▶ rm -f ${_run_script}"
+        rm -f "${_run_script}"
+        end_step "${ICON_OK}" "启动脚本已删除"
+    else
+        end_step "${ICON_INFO}" "启动脚本不存在，跳过" "${GREEN}"
+    fi
 
     if [ "${KEEP_LOG}" = false ]; then
         _log_message "INFO" "清理日志文件: ${LOGFILE}"
