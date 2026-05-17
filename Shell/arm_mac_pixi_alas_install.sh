@@ -837,10 +837,10 @@ print_completion() {
     echo_line ""
     echo_line "${ICON_ROCKET}  ALAS 已经完成安装，请通过 ${CYAN}http://${NET_IP}:22267${NC} 访问 WEBUI"
     echo_line "  ─────────────────────────────────────────────────"
-    echo_line "  ${ICON_INFO}  安装目录    : ${BLUE}${ALAS_DIR}${NC}"
+    echo_line "  ${ICON_INFO}  ALAS已安装到:  ${BLUE}${ALAS_DIR}${NC}"
 
     if [ "${SKIP_SERVICE}" = false ]; then
-        echo_line "  ${ICON_INFO}  开机自启    : ${GREEN}已启用${NC}"
+        echo_line "  ${ICON_INFO}  ${GREEN}开机自启服务已配置${NC}"
     fi
     echo_line ""
     echo_line "  ${ICON_INFO}  桌面快捷脚本 (双击即可)："
@@ -991,8 +991,9 @@ main() {
         _log_message "INFO" "安装完成，清理日志文件: ${LOGFILE}"
         rm -f "$LOGFILE"
     else
-        _log_message "INFO" "安装完成，日志已保存至: ${LOGFILE}"
+        echo_line ""
         echo_line "  ${ICON_INFO}  日志已保存至：${LOGFILE}"
+        echo_line ""
     fi
 }
 main

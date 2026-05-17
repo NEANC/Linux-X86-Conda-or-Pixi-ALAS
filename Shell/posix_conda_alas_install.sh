@@ -1391,13 +1391,13 @@ print_completion() {
     echo_line ""
     echo_line "${ICON_ROCKET}  ${GREEN}ALAS 已经完成安装，请通过 ${CYAN}http://${NET_IP}:22267${NC} ${GREEN}访问 WEBUI${NC}"
     echo_line "  ─────────────────────────────────────────────────"
-    echo_line "  ${ICON_INFO}  安装目录    : ${BLUE}${ALAS_DIR}${NC}"
+    echo_line "  ${ICON_INFO}  ALAS已安装到:  ${BLUE}${ALAS_DIR}${NC}"
 
     if [ "${SKIP_SERVICE}" = true ]; then
-        echo_line "  ${ICON_INFO}  手动启动    : ${CYAN}sh ${SCRIPT_OUT_DIR}/run_alas.sh${NC}"
+        echo_line "  ${ICON_INFO}  手动启动:  ${CYAN}sh ${SCRIPT_OUT_DIR}/run_alas.sh${NC}"
     else
         echo_line ""
-        echo_line "  ${ICON_INFO}  init 服务管理："
+        echo_line "  ${ICON_INFO}  服务管理命令: "
         case "${INIT_SYSTEM}" in
             systemd)
                 echo_line "      启动服务:  ${CYAN}systemctl start run_alas.service${NC}"
@@ -1590,7 +1590,9 @@ main() {
         _log_message "INFO" "安装完成，清理日志文件: ${LOGFILE}"
         rm -f "$LOGFILE"
     else
+        echo_line ""
         echo_line "  ${ICON_INFO}  日志已保存至：${LOGFILE}"
+        echo_line ""
     fi
 }
 main
