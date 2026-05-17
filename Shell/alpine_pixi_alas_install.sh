@@ -981,7 +981,10 @@ do_uninstall() {
             if [ -c /dev/tty ] && [ -r /dev/tty ]; then
                 read -r CONFIRM < /dev/tty
             else
-                read -r CONFIRM
+                read -r CONFIRM || {
+                    echo_line "  ${ICON_ERROR}  ${RED}脚本无法读取终端输入，请使用静默方式运行卸载${NC}"
+                    exit 1
+                }
             fi
             CONFIRM=$(printf '%s' "${CONFIRM}" | tr -d '\r')
             case "${CONFIRM}" in
