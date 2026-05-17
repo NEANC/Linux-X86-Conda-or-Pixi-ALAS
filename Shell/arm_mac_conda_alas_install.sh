@@ -202,7 +202,7 @@ while [[ $# -gt 0 ]]; do
             shift 2 ;;
         --uninstall)
             UNINSTALL=true
-            if [[ "$2" == -Y || "$2" == -y || "$2" == --yes ]]; then
+            if [[ "${2-}" == -Y || "${2-}" == -y || "${2-}" == --yes ]]; then
                 UNINSTALL_YES=true
                 shift
             fi
@@ -223,7 +223,9 @@ fi
 # ---------------------------- 系统信息收集 ----------------------------
 gather_system_info() {
     NET_IP=$(ifconfig 2>/dev/null | grep "inet " | grep -Fv 127.0.0.1 | awk '{print $2}' | head -1 || echo "未获取")
-    [[ -z "${NET_IP}" ]] && NET_IP="未获取"
+    if [[ -z "${NET_IP}" ]]; then
+        NET_IP="未获取"
+    fi
     MACOS_VER=$(sw_vers -productVersion 2>/dev/null || echo "未知")
     CPU_MODEL=$(sysctl -n machdep.cpu.brand_string 2>/dev/null || echo "未知")
     CPU_CORES=$(sysctl -n hw.ncpu 2>/dev/null || echo "未知")
@@ -235,7 +237,7 @@ gather_system_info() {
 
 # ---------------------------- 打印标题与系统面板 ----------------------------
 print_header() {
-    clear
+    clear 2>/dev/null || true
     echo_line "${WHITE}"
     echo_line "    ___    __    ___   _____"
     echo_line "   /   |  / /   /   | / ___/"

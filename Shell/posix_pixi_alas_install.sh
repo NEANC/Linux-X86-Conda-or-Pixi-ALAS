@@ -229,7 +229,7 @@ while [ $# -gt 0 ]; do
             esac ;;
         --uninstall)
             UNINSTALL=true
-            case "$2" in
+            case "${2-}" in
                 -Y|-y|--yes) UNINSTALL_YES=true; shift ;;
             esac
             shift ;;
@@ -271,7 +271,9 @@ gather_system_info() {
     # 优先用 ip 命令（Alpine/BusyBox hostname -I 不一定可用）
     NET_IP=$(ip route get 1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}')
     [ -z "${NET_IP}" ] && NET_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
-    [ -z "${NET_IP}" ] && NET_IP="未获取"
+    if [ -z "${NET_IP}" ]; then
+        NET_IP="未获取"
+    fi
     KERNEL=$(uname -r)
     # lscpu 在 Alpine 不一定可用，回退到 /proc/cpuinfo
     if command -v lscpu >/dev/null 2>&1; then
@@ -1429,7 +1431,10 @@ do_uninstall() {
             if [ -c /dev/tty ] && [ -r /dev/tty ]; then
                 read -r CONFIRM < /dev/tty
             else
-                read -r CONFIRM
+                read -r CONFIRM || {
+                    echo_line "  ${ICON_ERROR}  ${RED}脚本无法读取终端输入，请使用静默方式运行卸载${NC}"
+                    exit 1
+                }
             fi
             CONFIRM=$(printf '%s' "${CONFIRM}" | tr -d '\r')
             # 去除字符串末尾的所有空白字符，等效 CONFIRM=$(printf "%s" "$CONFIRM" | sed -e 's/[[:space:]]*$//')

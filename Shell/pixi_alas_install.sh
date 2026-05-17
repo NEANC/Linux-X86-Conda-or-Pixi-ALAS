@@ -210,7 +210,7 @@ while [[ $# -gt 0 ]]; do
             shift 2 ;;
         --uninstall)
             UNINSTALL=true
-            if [[ "$2" == -Y || "$2" == -y || "$2" == --yes ]]; then
+            if [[ "${2-}" == -Y || "${2-}" == -y || "${2-}" == --yes ]]; then
                 UNINSTALL_YES=true
                 shift
             fi
@@ -254,7 +254,9 @@ gather_system_info() {
     if [[ -z "${NET_IP}" ]]; then
         NET_IP=$(ip route get 1 2>/dev/null | sed -n 's/.*src \([0-9.]*\).*/\1/p' || true)
     fi
-    [[ -z "${NET_IP}" ]] && NET_IP="未获取"
+    if [[ -z "${NET_IP}" ]]; then
+        NET_IP="未获取"
+    fi
 
     KERNEL=$(uname -r)
 
@@ -262,13 +264,17 @@ gather_system_info() {
     if [[ -z "${CPU_MODEL}" ]]; then
         CPU_MODEL=$(grep -m1 "model name" /proc/cpuinfo 2>/dev/null | sed 's/.*: //' || true)
     fi
-    [[ -z "${CPU_MODEL}" ]] && CPU_MODEL="未知"
+    if [[ -z "${CPU_MODEL}" ]]; then
+        CPU_MODEL="未知"
+    fi
 
     CPU_CORES=$(nproc 2>/dev/null || true)
     if [[ -z "${CPU_CORES}" ]]; then
         CPU_CORES=$(grep -c "^processor" /proc/cpuinfo 2>/dev/null || true)
     fi
-    [[ -z "${CPU_CORES}" ]] && CPU_CORES="未知"
+    if [[ -z "${CPU_CORES}" ]]; then
+        CPU_CORES="未知"
+    fi
 
     DISK_AVAIL=$(df -h / 2>/dev/null | awk 'NR==2{print $4}' || true)
     DISK_USED=$(df -h / 2>/dev/null | awk 'NR==2{print $3}' || true)
@@ -278,12 +284,15 @@ gather_system_info() {
     if [[ -z "${RAM_SIZE_MIB}" ]]; then
         RAM_SIZE_MIB=$(awk '/MemTotal:/{printf "%.0f", $2/1024}' /proc/meminfo 2>/dev/null || true)
     fi
-    [[ -z "${RAM_SIZE_MIB}" ]] && RAM_SIZE_MIB="未知"
+    if [[ -z "${RAM_SIZE_MIB}" ]]; then
+        RAM_SIZE_MIB="未知"
+    fi
+    return 0
 }
 
 # ---------------------------- 打印标题与系统面板 ----------------------------
 print_header() {
-    clear
+    clear 2>/dev/null || true
     echo_line "${WHITE}"
     echo_line "    ___    __    ___   _____"
     echo_line "   /   |  / /   /   | / ___/"
