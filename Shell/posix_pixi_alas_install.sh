@@ -1134,6 +1134,7 @@ PIXI_MIRROR_EOF
 
     _se_install_log="/tmp/pixi_install_$$.log"
     _se_install_attempt=1
+    _se_cn_fallback_done=false
     while true; do
         _log_message "EXEC" "▶ pixi install --manifest-path pixi.toml (第 ${_se_install_attempt} 次)"
         if pixi install --manifest-path pixi.toml > "${_se_install_log}" 2>&1; then
@@ -1143,15 +1144,39 @@ PIXI_MIRROR_EOF
         fi
 
         cat "${_se_install_log}" >> "$LOGFILE" 2>/dev/null || true
+        if [ "${USE_CN_MIRROR}" = true ] && [ "${_se_cn_fallback_done}" != true ] && \
+           grep -Eqi '403|403 Forbidden|HTTP.*403' "${_se_install_log}" 2>/dev/null; then
+            _log_message "WARNING" "国内镜像源不可用（403 Forbidden），自动降级到官方源"
+            end_step "${ICON_WARN}" "国内镜像源不可用，自动降级到官方源并重试" "${YELLOW}"
+            rm -f "${_se_install_log}"
+            _se_cn_fallback_done=true
+            sed -i 's|channels = \["https://mirrors\.cernet\.edu\.cn/anaconda/cloud/conda-forge"\]|channels = ["conda-forge"]|' pixi.toml
+            sed -i '/\[pypi-options\]/,/^\[.*\]/ { /index-url = /d; /^$/d; }' pixi.toml 2>/dev/null || true
+            {
+                _log_message "WARNING" "检测到已有 Pixi 环境，正在清理..."
+                _log_exec "清理 Pixi 缓存" pixi clean cache -y || true
+                _log_exec "清理 Pixi 环境 (方法1: pixi clean --environment default)" pixi clean --environment default || \
+                _log_exec "清理 Pixi 环境 (方法2: pixi clean)" pixi clean || \
+                _log_exec "清理 Pixi 环境 (方法3: rm -rf .pixi pixi.lock)" rm -rf .pixi pixi.lock
+                _log_message "OK" "✓ 旧环境已清理"
+            } >> "$LOGFILE" 2>&1 || true
+            _se_install_attempt=$((_se_install_attempt + 1))
+            start_step "正在重新配置 Pixi 虚拟环境..."
+            continue
+        fi
+
         if [ "${PACKAGE_MANAGER}" = "apk" ] && [ "${ALPINE_GLIBC_RETRY_DONE}" != true ] && \
            pixi_install_needs_real_glibc "${_se_install_log}"; then
             _log_message "WARNING" "gcompat 无法启动 conda linux-64 Python，自动切换到第三方 glibc 并重试"
-            end_step "${ICON_WARN}" "gcompat 不足，正在安装第三方 glibc 后自动重试" "${YELLOW}"
+            end_step "${ICON_WARN}" "依赖缺失，正在安装第三方 glibc 后自动重试" "${YELLOW}"
             rm -f "${_se_install_log}"
             ALPINE_GLIBC_RETRY_DONE=true
             install_alpine_real_glibc
-            _log_exec "清理失败的 Pixi 环境" pixi clean --environment default || \
-            _log_exec "清理失败的 Pixi 环境 (rm -rf)" rm -rf .pixi pixi.lock
+            _log_exec "清理 Pixi 缓存" pixi clean cache -y || true
+            _log_exec "清理 Pixi 环境 (方法1: pixi clean --environment default)" pixi clean --environment default || \
+            _log_exec "清理 Pixi 环境 (方法2: pixi clean)" pixi clean || \
+            _log_exec "清理 Pixi 环境 (方法3: rm -rf .pixi pixi.lock)" rm -rf .pixi pixi.lock
+            _log_message "OK" "✓ 旧环境已清理"
             _se_install_attempt=$((_se_install_attempt + 1))
             start_step "正在重新配置 Pixi 虚拟环境..."
             continue

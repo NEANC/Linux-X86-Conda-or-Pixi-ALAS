@@ -835,12 +835,43 @@ PIXI_EOF
         _log_message "OK" "✓ 旧环境已清理"
     fi
 
-    _log_message "EXEC" "▶ pixi install --manifest-path pixi.toml"
-    if ! pixi install --manifest-path pixi.toml >> "$LOGFILE" 2>&1; then
-        _log_message "ERROR" "✗ pixi install 失败"
+    _se_install_log="/tmp/pixi_install_$$.log"
+    _se_install_attempt=1
+    _se_cn_fallback_done=false
+    while true; do
+        _log_message "EXEC" "▶ pixi install --manifest-path pixi.toml (第 ${_se_install_attempt} 次)"
+        if pixi install --manifest-path pixi.toml > "${_se_install_log}" 2>&1; then
+            cat "${_se_install_log}" >> "$LOGFILE" 2>/dev/null || true
+            rm -f "${_se_install_log}"
+            break
+        fi
+
+        cat "${_se_install_log}" >> "$LOGFILE" 2>/dev/null || true
+        if [[ "${USE_CN_MIRROR}" == true && "${_se_cn_fallback_done}" != true ]] && \
+           grep -Eqi '403|403 Forbidden|HTTP.*403' "${_se_install_log}" 2>/dev/null; then
+            _log_message "WARNING" "国内镜像源不可用（403 Forbidden），自动降级到官方源"
+            end_step "${ICON_WARN}" "国内镜像源超时/403，自动降级到官方源并重试" "${YELLOW}"
+            rm -f "${_se_install_log}"
+            _se_cn_fallback_done=true
+            sed -i 's|channels = \["https://mirrors\.cernet\.edu\.cn/anaconda/cloud/conda-forge"\]|channels = ["conda-forge"]|' pixi.toml
+            sed -i '/\[pypi-options\]/,/^\[.*\]/ { /index-url = /d; /^$/d; }' pixi.toml 2>/dev/null || true
+            {
+                _log_exec "清理 Pixi 缓存" pixi clean cache -y || true
+                _log_exec "清理 Pixi 环境 (方法1: pixi clean --environment default)" pixi clean --environment default || \
+                _log_exec "清理 Pixi 环境 (方法2: pixi clean)" pixi clean || \
+                _log_exec "清理 Pixi 环境 (方法3: rm -rf .pixi pixi.lock)" rm -rf .pixi pixi.lock
+                _log_message "OK" "✓ 旧环境已清理"
+            } >> "$LOGFILE" 2>&1 || true
+            _se_install_attempt=$((_se_install_attempt + 1))
+            start_step "正在重新配置 Pixi 虚拟环境..."
+            continue
+        fi
+
+        _log_message "ERROR" "✗ pixi install 失败 (尝试 #${_se_install_attempt})"
+        rm -f "${_se_install_log}"
         end_step "${ICON_ERROR}" "虚拟环境构建错误，详情请阅读日志：${LOGFILE}" "${RED}"
         exit 1
-    fi
+    done
     end_step "${ICON_OK}" "虚拟环境已构建"
 }
 
