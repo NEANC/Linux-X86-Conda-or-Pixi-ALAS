@@ -99,9 +99,6 @@ PACKAGE_MANAGER=""
 _SPINNER_PID=""
 RAM_SIZE_MIB=""
 ALPINE_GLIBC_LOADER="/lib64/ld-linux-x86-64.so.2"
-ALPINE_GLIBC_VERSION="${ALPINE_GLIBC_VERSION:-2.35-r1}"
-ALPINE_GLIBC_OVERRIDE="${CONDA_OVERRIDE_GLIBC:-2.28}"
-ALPINE_GLIBC_RETRY_DONE=false
 UNINSTALL_YES=false
 
 # ---------------------------- 帮助 ----------------------------
@@ -462,7 +459,8 @@ install_miniforge() {
     _log_message "ERROR" "未检测到 Conda"
     start_step "正在安装 Miniforge..."
     _log_message "EXEC" "▶ 下载 Miniforge3-Linux-x86_64.sh"
-    if ! wget -q -O /tmp/Miniforge3-Linux-x86_64.sh \
+    if ! curl -fL --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 600 \
+        -o /tmp/Miniforge3-Linux-x86_64.sh \
         "${GH_PROXY}https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh" >> "$LOGFILE" 2>&1; then
         end_step "${ICON_ERROR}" "Miniforge 下载错误，详情请阅读日志：${LOGFILE}" "${RED}"
         exit 1
@@ -470,8 +468,8 @@ install_miniforge() {
     _log_message "OK" "✓ Miniforge 下载完成"
 
     _log_message "EXEC" "▶ 安装 Miniforge"
-    _alpine_glibc_compat_setup
-    if ! sh /tmp/Miniforge3-Linux-x86_64.sh -b >> "$LOGFILE" 2>&1; then
+    prepare_alpine_conda_runtime
+    if ! bash /tmp/Miniforge3-Linux-x86_64.sh -b -p "${HOME}/miniforge3" >> "$LOGFILE" 2>&1; then
         end_step "${ICON_ERROR}" "Miniforge 安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
         rm -f /tmp/Miniforge3-Linux-x86_64.sh
         exit 1
@@ -634,87 +632,45 @@ EOF
     esac
 }
 
-# ---------------------------- Alpine 专用：启用 community 仓库 ----------------------------
-enable_alpine_community_repo() {
-    if grep -Eq '^[[:space:]]*[^#].*/community([[:space:]]*)?$' /etc/apk/repositories 2>/dev/null; then
-        _log_message "OK" "Alpine community 仓库已启用"
-        return 0
-    fi
-    _ec_main_repo=$(awk '/^[[:space:]]*[^#].*\/main([[:space:]]*)?$/ {print $1; exit}' /etc/apk/repositories 2>/dev/null || true)
-    if [ -n "${_ec_main_repo}" ]; then
-        _ec_community_repo="${_ec_main_repo%/main}/community"
-    else
-        _ec_alpine_ver=$(cut -d. -f1,2 /etc/alpine-release 2>/dev/null || echo "edge")
-        if [ "${_ec_alpine_ver}" = "edge" ]; then
-            _ec_community_repo="https://dl-cdn.alpinelinux.org/alpine/edge/community"
-        else
-            _ec_community_repo="https://dl-cdn.alpinelinux.org/alpine/v${_ec_alpine_ver}/community"
-        fi
-    fi
-    _log_message "INFO" "▶ 启用 Alpine community 仓库: ${_ec_community_repo}"
-    printf '%s\n' "${_ec_community_repo}" >> /etc/apk/repositories
-}
-
 # ---------------------------- Alpine 专用：确保 glibc loader ----------------------------
 ensure_alpine_glibc_loader() {
     if [ -e "${ALPINE_GLIBC_LOADER}" ]; then
         _log_message "OK" "glibc loader 已存在: ${ALPINE_GLIBC_LOADER}"
         return 0
     fi
-    for _eg_candidate in /lib/ld-linux-x86-64.so.2 /usr/glibc-compat/lib/ld-linux-x86-64.so.2; do
+
+    for _eg_candidate in /usr/glibc-compat/lib/ld-linux-x86-64.so.2 /lib/ld-linux-x86-64.so.2; do
         if [ -e "${_eg_candidate}" ]; then
-            mkdir -p /lib64
-            ln -sf "${_eg_candidate}" "${ALPINE_GLIBC_LOADER}"
-            _log_message "OK" "已创建 glibc loader 兼容链接: ${ALPINE_GLIBC_LOADER} -> ${_eg_candidate}"
-            return 0
+            mkdir -p /lib64 /lib
+
+            if [ "${_eg_candidate}" != "${ALPINE_GLIBC_LOADER}" ]; then
+                ln -sf "${_eg_candidate}" "${ALPINE_GLIBC_LOADER}"
+            fi
+
+            if [ "${_eg_candidate}" != "/lib/ld-linux-x86-64.so.2" ]; then
+                ln -sf "${_eg_candidate}" /lib/ld-linux-x86-64.so.2 2>/dev/null || true
+            fi
+
+            if [ -e "${ALPINE_GLIBC_LOADER}" ]; then
+                _log_message "OK" "已创建 glibc loader 兼容链接: ${ALPINE_GLIBC_LOADER} -> ${_eg_candidate}"
+                return 0
+            fi
         fi
     done
+
     _log_message "ERROR" "未找到 glibc loader，Conda 的 linux-64 Python 可能无法启动"
     return 1
 }
 
-# ---------------------------- Alpine 专用：安装第三方 glibc（sgerrand）----------------------------
+# ---------------------------- Alpine 专用：安装第三方 glibc（sgerrand v2.34）----------------------------
 install_alpine_real_glibc() {
+    _ir_glibc_ver="2.34-r0"
     _log_message "INFO" "正在安装 Alpine 第三方 glibc 兼容包..."
-    _log_message "WARNING" "将安装 sgerrand/alpine-pkg-glibc (${ALPINE_GLIBC_VERSION})，用于运行 conda linux-64 Python"
+    _log_message "WARNING" "将安装 sgerrand/alpine-pkg-glibc (${_ir_glibc_ver})，用于运行 conda linux-64 Python"
 
-    if apk info -e glibc >/dev/null 2>&1 && [ -e /usr/glibc-compat/lib/ld-linux-x86-64.so.2 ]; then
-        mkdir -p /lib64
-        ln -sf /usr/glibc-compat/lib/ld-linux-x86-64.so.2 "${ALPINE_GLIBC_LOADER}"
+    if apk info -e glibc >/dev/null 2>&1 && has_real_glibc; then
         _log_message "OK" "第三方 glibc 已存在"
         return
-    fi
-
-    _ig_tmp_dir="/tmp/alas_glibc_$$"
-    _ig_key_file="/etc/apk/keys/sgerrand.rsa.pub"
-    _ig_key_url="https://alpine-pkgs.sgerrand.com/sgerrand.rsa.pub"
-    _ig_key_fallback="https://raw.githubusercontent.com/sgerrand/alpine-pkg-glibc/master/sgerrand.rsa.pub"
-    _ig_release_url="https://github.com/sgerrand/alpine-pkg-glibc/releases/download/${ALPINE_GLIBC_VERSION}"
-    _ig_glibc_apk="${_ig_tmp_dir}/glibc-${ALPINE_GLIBC_VERSION}.apk"
-    _ig_glibc_bin_apk="${_ig_tmp_dir}/glibc-bin-${ALPINE_GLIBC_VERSION}.apk"
-
-    mkdir -p "${_ig_tmp_dir}" /etc/apk/keys /lib64
-
-    _log_message "EXEC" "▶ 下载 sgerrand APK 签名 key"
-    if ! curl -fSL --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 180 \
-            -o "${_ig_key_file}" "${_ig_key_url}" >> "$LOGFILE" 2>&1; then
-        _log_message "WARNING" "sgerrand 官方源不可用，尝试 GitHub raw fallback"
-        if ! curl -fSL --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 180 \
-                -o "${_ig_key_file}" "${_ig_key_fallback}" >> "$LOGFILE" 2>&1; then
-            rm -rf "${_ig_tmp_dir}"
-            end_step "${ICON_ERROR}" "第三方 glibc key 下载失败" "${RED}"
-            exit 1
-        fi
-    fi
-
-    _log_message "EXEC" "▶ 下载 glibc APK: ${ALPINE_GLIBC_VERSION}"
-    if ! curl -fSL --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 180 \
-            -o "${_ig_glibc_apk}" "${GH_PROXY}${_ig_release_url}/glibc-${ALPINE_GLIBC_VERSION}.apk" >> "$LOGFILE" 2>&1 || \
-       ! curl -fSL --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 180 \
-            -o "${_ig_glibc_bin_apk}" "${GH_PROXY}${_ig_release_url}/glibc-bin-${ALPINE_GLIBC_VERSION}.apk" >> "$LOGFILE" 2>&1; then
-        rm -rf "${_ig_tmp_dir}"
-        end_step "${ICON_ERROR}" "第三方 glibc APK 下载失败: ${_ig_release_url}" "${RED}"
-        exit 1
     fi
 
     if apk info -e gcompat >/dev/null 2>&1; then
@@ -722,24 +678,113 @@ install_alpine_real_glibc() {
         apk del gcompat >> "$LOGFILE" 2>&1 || true
     fi
 
+    _ir_tmp_dir="/tmp/alas_glibc_$$"
+    _ir_key_file="/etc/apk/keys/sgerrand.rsa.pub"
+    _ir_key_url="https://alpine-pkgs.sgerrand.com/sgerrand.rsa.pub"
+    _ir_key_fallback="https://raw.githubusercontent.com/sgerrand/alpine-pkg-glibc/master/sgerrand.rsa.pub"
+    _ir_release_url="https://github.com/sgerrand/alpine-pkg-glibc/releases/download/${_ir_glibc_ver}"
+    _ir_glibc_apk="${_ir_tmp_dir}/glibc-${_ir_glibc_ver}.apk"
+    _ir_glibc_bin_apk="${_ir_tmp_dir}/glibc-bin-${_ir_glibc_ver}.apk"
+
+    mkdir -p "${_ir_tmp_dir}" /etc/apk/keys /lib64 /lib
+
+    _log_message "EXEC" "▶ 下载 sgerrand APK 签名 key"
+    if ! curl -fSL --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 180 \
+            -o "${_ir_key_file}" "${_ir_key_url}" >> "$LOGFILE" 2>&1; then
+        _log_message "WARNING" "sgerrand 官方源不可用，尝试 GitHub raw fallback"
+        if ! curl -fSL --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 180 \
+                -o "${_ir_key_file}" "${_ir_key_fallback}" >> "$LOGFILE" 2>&1; then
+            rm -rf "${_ir_tmp_dir}"
+            end_step "${ICON_ERROR}" "第三方 glibc key 下载失败" "${RED}"
+            exit 1
+        fi
+    fi
+
+    _log_message "EXEC" "▶ 下载 glibc APK: ${_ir_glibc_ver}"
+    if ! curl -fSL --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 180 \
+            -o "${_ir_glibc_apk}" "${GH_PROXY}${_ir_release_url}/glibc-${_ir_glibc_ver}.apk" >> "$LOGFILE" 2>&1 || \
+       ! curl -fSL --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 180 \
+            -o "${_ir_glibc_bin_apk}" "${GH_PROXY}${_ir_release_url}/glibc-bin-${_ir_glibc_ver}.apk" >> "$LOGFILE" 2>&1; then
+        rm -rf "${_ir_tmp_dir}"
+        end_step "${ICON_ERROR}" "第三方 glibc APK 下载失败: ${_ir_release_url}" "${RED}"
+        exit 1
+    fi
+
     _log_message "EXEC" "▶ apk add --force-overwrite glibc"
-    if ! apk add --force-overwrite "${_ig_glibc_apk}" "${_ig_glibc_bin_apk}" >> "$LOGFILE" 2>&1; then
-        rm -rf "${_ig_tmp_dir}"
+    if ! apk add --force-overwrite "${_ir_glibc_apk}" "${_ir_glibc_bin_apk}" >> "$LOGFILE" 2>&1; then
+        rm -rf "${_ir_tmp_dir}"
         end_step "${ICON_ERROR}" "第三方 glibc 安装失败，详情请查看日志: ${LOGFILE}" "${RED}"
         exit 1
     fi
 
-    if [ -e /usr/glibc-compat/lib/ld-linux-x86-64.so.2 ]; then
-        ln -sf /usr/glibc-compat/lib/ld-linux-x86-64.so.2 "${ALPINE_GLIBC_LOADER}"
-    fi
-    rm -rf "${_ig_tmp_dir}"
+    rm -rf "${_ir_tmp_dir}"
 
-    if ensure_alpine_glibc_loader; then
-        _log_message "OK" "第三方 glibc 安装完成"
-    else
+    ensure_alpine_glibc_loader || {
         end_step "${ICON_ERROR}" "第三方 glibc 安装后仍缺少 loader" "${RED}"
         exit 1
+    }
+
+    has_real_glibc || {
+        end_step "${ICON_ERROR}" "第三方 glibc 安装完成，但真实 glibc 校验失败" "${RED}"
+        exit 1
+    }
+
+    _log_message "OK" "第三方 glibc 安装完成"
+}
+
+# ---------------------------- Alpine 专用：检测真实 glibc ----------------------------
+has_real_glibc() {
+    if [ -x /usr/glibc-compat/bin/getconf ]; then
+        /usr/glibc-compat/bin/getconf GNU_LIBC_VERSION >/dev/null 2>&1 && return 0
     fi
+
+    if command -v getconf >/dev/null 2>&1; then
+        getconf GNU_LIBC_VERSION >/dev/null 2>&1 && return 0
+    fi
+
+    if [ -x /usr/glibc-compat/lib/libc.so.6 ]; then
+        /usr/glibc-compat/lib/libc.so.6 2>&1 | grep -qi 'GNU C Library' && return 0
+    fi
+
+    return 1
+}
+
+# ---------------------------- Alpine 专用：准备 Conda 运行环境 ----------------------------
+prepare_alpine_conda_runtime() {
+    if [ "${PACKAGE_MANAGER}" != "apk" ]; then
+        return 0
+    fi
+    _log_message "INFO" "正在准备 Alpine Conda 运行环境..."
+
+    if apk info -e gcompat >/dev/null 2>&1; then
+        _log_message "EXEC" "▶ 移除 gcompat，避免与真实 glibc 冲突"
+        apk del gcompat >> "$LOGFILE" 2>&1 || {
+            end_step "${ICON_ERROR}" "gcompat 移除失败，请先手动执行: apk del gcompat" "${RED}"
+            exit 1
+        }
+    fi
+
+    if ! has_real_glibc; then
+        install_alpine_real_glibc || {
+            end_step "${ICON_ERROR}" "Alpine glibc 安装失败" "${RED}"
+            exit 1
+        }
+    fi
+
+    has_real_glibc || {
+        end_step "${ICON_ERROR}" "未检测到真实 glibc，不能继续安装 Miniforge" "${RED}"
+        exit 1
+    }
+
+    ensure_alpine_glibc_loader || {
+        end_step "${ICON_ERROR}" "未检测到 glibc loader: ${ALPINE_GLIBC_LOADER}" "${RED}"
+        exit 1
+    }
+
+    command -v bash >/dev/null 2>&1 || {
+        end_step "${ICON_ERROR}" "未检测到 bash，Miniforge 安装器不能使用 BusyBox sh 执行" "${RED}"
+        exit 1
+    }
 }
 
 # ---------------------------- 检查依赖 ----------------------------
@@ -779,7 +824,7 @@ install_deps() {
                 fi
             done ;;
         apk)
-            for _id_pkg in git android-tools curl ca-certificates tar xz bzip2 zstd bash libstdc++ libgcc gcompat; do
+            for _id_pkg in git android-tools curl ca-certificates tar gzip xz bzip2 zstd bash libstdc++ libgcc coreutils; do
                 if apk info -e "$_id_pkg" >/dev/null 2>&1; then
                     _log_message "OK" "依赖已存在: ${_id_pkg}"
                 else
@@ -793,7 +838,7 @@ install_deps() {
     esac
 
     if [ -z "${_id_missing}" ]; then
-        _alpine_glibc_compat_setup
+        prepare_alpine_conda_runtime
         _log_message "OK" "✓ curl $(curl --version 2>/dev/null | head -n1 | awk '{print $2}')"
         _log_message "OK" "✓ Git $(git --version 2>/dev/null | awk '{print $NF}')"
         _log_message "OK" "✓ ADB $(adb --version 2>/dev/null | head -n1 | awk '{print $NF}')"
@@ -803,9 +848,6 @@ install_deps() {
             _log_message "OK" "✓ ca-certificates $(apk info -v ca-certificates 2>/dev/null | sed 's/^ca-certificates-//' || echo '✓')"
             _log_message "OK" "✓ libstdc++ $(apk info -v libstdc++ 2>/dev/null | sed 's/^libstdc++-//' || echo '✓')"
             _log_message "OK" "✓ libgcc $(apk info -v libgcc 2>/dev/null | sed 's/^libgcc-//' || echo '✓')"
-            if apk info -e gcompat >/dev/null 2>&1; then
-                _log_message "OK" "✓ gcompat $(apk info -v gcompat 2>/dev/null | sed 's/^gcompat-//' || echo '✓')"
-            fi
         fi
         end_step "${ICON_OK}" "依赖检查完成"
         return
@@ -898,7 +940,7 @@ install_deps() {
         esac
     fi
 
-    _alpine_glibc_compat_setup
+    prepare_alpine_conda_runtime
 
     _log_message "OK" "✓ curl $(curl --version 2>/dev/null | head -n1 | awk '{print $2}')"
     _log_message "OK" "✓ Git $(git --version 2>/dev/null | awk '{print $NF}')"
@@ -909,49 +951,8 @@ install_deps() {
         _log_message "OK" "✓ ca-certificates $(apk info -v ca-certificates 2>/dev/null | sed 's/^ca-certificates-//' || echo '✓')"
         _log_message "OK" "✓ libstdc++ $(apk info -v libstdc++ 2>/dev/null | sed 's/^libstdc++-//' || echo '✓')"
         _log_message "OK" "✓ libgcc $(apk info -v libgcc 2>/dev/null | sed 's/^libgcc-//' || echo '✓')"
-        if apk info -e gcompat >/dev/null 2>&1; then
-            _log_message "OK" "✓ gcompat $(apk info -v gcompat 2>/dev/null | sed 's/^gcompat-//' || echo '✓')"
-        fi
     fi
     end_step "${ICON_OK}" "依赖检查完成"
-}
-
-# ---------------------------- Alpine 专用：glibc 兼容层辅助函数 ----------------------------
-_alpine_glibc_compat_setup() {
-    if [ "${PACKAGE_MANAGER}" != "apk" ]; then
-        return 0
-    fi
-    _log_message "INFO" "正在配置 Alpine glibc 兼容层..."
-    _ag_missing=""
-    if apk info -e gcompat >/dev/null 2>&1; then
-        _log_message "OK" "glibc 兼容层已存在: gcompat"
-    else
-        _ag_missing="gcompat"
-    fi
-
-    if [ -n "${_ag_missing}" ]; then
-        _log_message "WARNING" "glibc 兼容层缺失: gcompat"
-        enable_alpine_community_repo
-        _log_message "EXEC" "▶ apk add --no-cache gcompat"
-        if [ "${USE_CN_MIRROR}" = true ]; then
-            cn_package_mirrors gcompat
-            _ag_ok=$?
-        else
-            apk add --no-cache gcompat >> "$LOGFILE" 2>&1
-            _ag_ok=$?
-        fi
-        if [ "${_ag_ok}" = 0 ]; then
-            _log_message "OK" "✓ gcompat 安装成功"
-        else
-            _log_message "WARNING" "gcompat 在当前仓库不可用，自动降级到第三方 glibc"
-            install_alpine_real_glibc
-        fi
-    fi
-
-    if ! ensure_alpine_glibc_loader; then
-        _log_message "WARNING" "gcompat 未提供 glibc loader，自动降级到第三方 glibc"
-        install_alpine_real_glibc
-    fi
 }
 
 # ---------------------------- 克隆仓库 ----------------------------
@@ -992,13 +993,6 @@ clone_alas() {
 
     _log_message "OK" "ALAS 目录: ${ALAS_DIR}"
     end_step "${ICON_OK}" "ALAS 仓库已克隆"
-}
-
-# ---------------------------- Conda 安装 glibc 检测 ----------------------------
-conda_install_needs_real_glibc() {
-    _cr_install_log="$1"
-    [ -f "${_cr_install_log}" ] || return 1
-    grep -Eqi 'failed to query interpreter|build dispatch initialization failed|ld-linux|No such file or directory|not found' "${_cr_install_log}"
 }
 
 # ---------------------------- 配置虚拟环境 ----------------------------
@@ -1089,15 +1083,6 @@ YML_EOF
         _log_message "OK" "✓ 旧环境已移除"
     fi
 
-    if [ "${PACKAGE_MANAGER}" = "apk" ]; then
-        export CONDA_OVERRIDE_GLIBC="${CONDA_OVERRIDE_GLIBC:-${ALPINE_GLIBC_OVERRIDE}}"
-        _log_message "INFO" "Alpine 已设置 CONDA_OVERRIDE_GLIBC=${CONDA_OVERRIDE_GLIBC}"
-        ensure_alpine_glibc_loader || {
-            end_step "${ICON_ERROR}" "Alpine glibc 兼容层不足，经过 gcompat 和第三方 glibc 多轮尝试后仍缺少 loader，请检查日志：${LOGFILE}" "${RED}"
-            exit 1
-        }
-    fi
-
     _se_install_log="/tmp/conda_install_$$.log"
     _se_install_attempt=1
     _se_cn_fallback_done=false
@@ -1119,19 +1104,6 @@ YML_EOF
             conda config --remove channels "https://mirrors.cernet.edu.cn/anaconda/cloud/conda-forge/" >> "$LOGFILE" 2>&1 || true
             conda config --remove channels "https://mirrors.cernet.edu.cn/anaconda/pkgs/main/" >> "$LOGFILE" 2>&1 || true
             unset PIP_INDEX_URL
-            conda env remove -n alas -y >> "$LOGFILE" 2>&1 || true
-            _se_install_attempt=$((_se_install_attempt + 1))
-            start_step "正在重新配置 Conda 虚拟环境..."
-            continue
-        fi
-
-        if [ "${PACKAGE_MANAGER}" = "apk" ] && [ "${ALPINE_GLIBC_RETRY_DONE}" != true ] && \
-           conda_install_needs_real_glibc "${_se_install_log}"; then
-            _log_message "WARNING" "gcompat 无法启动 conda linux-64 Python，自动切换到第三方 glibc 并重试"
-            end_step "${ICON_WARN}" "gcompat 不足，正在安装第三方 glibc 后自动重试" "${YELLOW}"
-            rm -f "${_se_install_log}"
-            ALPINE_GLIBC_RETRY_DONE=true
-            install_alpine_real_glibc
             conda env remove -n alas -y >> "$LOGFILE" 2>&1 || true
             _se_install_attempt=$((_se_install_attempt + 1))
             start_step "正在重新配置 Conda 虚拟环境..."
