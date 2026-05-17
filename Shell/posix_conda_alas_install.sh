@@ -793,9 +793,20 @@ install_deps() {
 
     if [ -z "${_id_missing}" ]; then
         _alpine_glibc_compat_setup
-        end_step "${ICON_OK}" "curl 已安装: $(curl --version 2>/dev/null | head -n1 | awk '{print $2}')"
-        end_step "${ICON_OK}" "Git 已安装: $(git --version 2>/dev/null | awk '{print $NF}')"
-        end_step "${ICON_OK}" "ADB 已安装: $(adb --version 2>/dev/null | head -n1 | awk '{print $NF}')"
+        _log_message "OK" "✓ curl $(curl --version 2>/dev/null | head -n1 | awk '{print $2}')"
+        _log_message "OK" "✓ Git $(git --version 2>/dev/null | awk '{print $NF}')"
+        _log_message "OK" "✓ ADB $(adb --version 2>/dev/null | head -n1 | awk '{print $NF}')"
+        if [ "${PACKAGE_MANAGER}" = "apk" ]; then
+            _log_message "OK" "✓ tar $(tar --version 2>/dev/null | head -1 | awk '{print $NF}')"
+            _log_message "OK" "✓ xz $(xz --version 2>/dev/null | head -1 | awk '{print $NF}')"
+            _log_message "OK" "✓ ca-certificates $(apk info -v ca-certificates 2>/dev/null | sed 's/^ca-certificates-//' || echo '✓')"
+            _log_message "OK" "✓ libstdc++ $(apk info -v libstdc++ 2>/dev/null | sed 's/^libstdc++-//' || echo '✓')"
+            _log_message "OK" "✓ libgcc $(apk info -v libgcc 2>/dev/null | sed 's/^libgcc-//' || echo '✓')"
+            if apk info -e gcompat >/dev/null 2>&1; then
+                _log_message "OK" "✓ gcompat $(apk info -v gcompat 2>/dev/null | sed 's/^gcompat-//' || echo '✓')"
+            fi
+        fi
+        end_step "${ICON_OK}" "依赖检查完成"
         return
     fi
 
@@ -888,10 +899,20 @@ install_deps() {
 
     _alpine_glibc_compat_setup
 
-    end_step "${ICON_OK}" "curl 已安装: $(curl --version 2>/dev/null | head -n1 | awk '{print $2}')"
-    end_step "${ICON_OK}" "Git 已安装: $(git --version 2>/dev/null | awk '{print $NF}')"
-    end_step "${ICON_OK}" "ADB 已安装: $(adb --version 2>/dev/null | head -n1 | awk '{print $NF}')"
-    _log_message "OK" "✓ 依赖安装完成"
+    _log_message "OK" "✓ curl $(curl --version 2>/dev/null | head -n1 | awk '{print $2}')"
+    _log_message "OK" "✓ Git $(git --version 2>/dev/null | awk '{print $NF}')"
+    _log_message "OK" "✓ ADB $(adb --version 2>/dev/null | head -n1 | awk '{print $NF}')"
+    if [ "${PACKAGE_MANAGER}" = "apk" ]; then
+        _log_message "OK" "✓ tar $(tar --version 2>/dev/null | head -1 | awk '{print $NF}')"
+        _log_message "OK" "✓ xz $(xz --version 2>/dev/null | head -1 | awk '{print $NF}')"
+        _log_message "OK" "✓ ca-certificates $(apk info -v ca-certificates 2>/dev/null | sed 's/^ca-certificates-//' || echo '✓')"
+        _log_message "OK" "✓ libstdc++ $(apk info -v libstdc++ 2>/dev/null | sed 's/^libstdc++-//' || echo '✓')"
+        _log_message "OK" "✓ libgcc $(apk info -v libgcc 2>/dev/null | sed 's/^libgcc-//' || echo '✓')"
+        if apk info -e gcompat >/dev/null 2>&1; then
+            _log_message "OK" "✓ gcompat $(apk info -v gcompat 2>/dev/null | sed 's/^gcompat-//' || echo '✓')"
+        fi
+    fi
+    end_step "${ICON_OK}" "依赖检查完成"
 }
 
 # ---------------------------- Alpine 专用：glibc 兼容层辅助函数 ----------------------------
