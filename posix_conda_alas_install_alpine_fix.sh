@@ -469,9 +469,35 @@ install_miniforge() {
     fi
     _log_message "OK" "✓ Miniforge 下载完成"
 
-    _log_message "EXEC" "▶ 安装 Miniforge"
-    _alpine_glibc_compat_setup
-    if ! sh /tmp/Miniforge3-Linux-x86_64.sh -b >> "$LOGFILE" 2>&1; then
+    if [ "${PACKAGE_MANAGER:-}" = "apk" ]; then
+        _log_message "INFO" "Alpine: Miniforge 的 linux-64 二进制依赖 glibc；gcompat 可能在安装器阶段 Segmentation fault，先切换到第三方 glibc"
+        install_alpine_real_glibc
+        if ! command -v bash >/dev/null 2>&1; then
+            _log_message "EXEC" "▶ apk add --no-cache bash"
+            if ! apk add --no-cache bash >> "$LOGFILE" 2>&1; then
+                end_step "${ICON_ERROR}" "bash 安装失败，详情请阅读日志：${LOGFILE}" "${RED}"
+                rm -f /tmp/Miniforge3-Linux-x86_64.sh
+                exit 1
+            fi
+        fi
+        if [ -x /usr/glibc-compat/sbin/ldconfig ]; then
+            /usr/glibc-compat/sbin/ldconfig /usr/glibc-compat/lib >> "$LOGFILE" 2>&1 || true
+        fi
+    fi
+
+    _mf_shell="sh"
+    if command -v bash >/dev/null 2>&1; then
+        _mf_shell=$(command -v bash)
+    fi
+
+    unset CONDA_PREFIX CONDA_DEFAULT_ENV PYTHONPATH PYTHONHOME
+    if [ -d "${HOME}/miniforge3" ] && [ ! -x "${CONDA_BIN}" ]; then
+        _log_message "WARNING" "检测到上次失败留下的 Miniforge 目录，先删除: ${HOME}/miniforge3"
+        rm -rf "${HOME}/miniforge3"
+    fi
+
+    _log_message "EXEC" "▶ 安装 Miniforge: ${_mf_shell} /tmp/Miniforge3-Linux-x86_64.sh -b -p ${HOME}/miniforge3"
+    if ! "${_mf_shell}" /tmp/Miniforge3-Linux-x86_64.sh -b -p "${HOME}/miniforge3" >> "$LOGFILE" 2>&1; then
         end_step "${ICON_ERROR}" "Miniforge 安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
         rm -f /tmp/Miniforge3-Linux-x86_64.sh
         exit 1
@@ -679,8 +705,15 @@ install_alpine_real_glibc() {
     _log_message "WARNING" "将安装 sgerrand/alpine-pkg-glibc (${ALPINE_GLIBC_VERSION})，用于运行 conda linux-64 Python"
 
     if apk info -e glibc >/dev/null 2>&1 && [ -e /usr/glibc-compat/lib/ld-linux-x86-64.so.2 ]; then
+        if apk info -e gcompat >/dev/null 2>&1; then
+            _log_message "EXEC" "▶ 移除 gcompat 以避免与 glibc loader 冲突"
+            apk del gcompat >> "$LOGFILE" 2>&1 || true
+        fi
         mkdir -p /lib64
         ln -sf /usr/glibc-compat/lib/ld-linux-x86-64.so.2 "${ALPINE_GLIBC_LOADER}"
+        if [ -x /usr/glibc-compat/sbin/ldconfig ]; then
+            /usr/glibc-compat/sbin/ldconfig /usr/glibc-compat/lib >> "$LOGFILE" 2>&1 || true
+        fi
         _log_message "OK" "第三方 glibc 已存在"
         return
     fi
