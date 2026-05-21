@@ -254,8 +254,8 @@ _sudo_warning() {
         return 0
     fi
     echo_line ""
-    echo_line "  ${ICON_WARN}  ${YELLOW}警告！您正在使用 sudo/root 运行本脚本${NC}"
-    echo_line "  ${ICON_INFO}  ${GREEN}本脚本建议使用正常用户执行${NC}"
+    echo_line "  ${ICON_WARN}  ${YELLOW}警告！您正在使用 sudo/root 运行本脚本。${NC}"
+    echo_line "  ${ICON_INFO}  ${GREEN}为了避免权限问题，建议使用非 root 用户安装。${NC}"
     echo_line ""
     while true; do
         echo -n "  是否继续？ [yes/N] ："
@@ -267,7 +267,6 @@ _sudo_warning() {
                 echo_line ""
                 return 0 ;;
             no|NO|n|N)
-                _log_message "INFO" "用户取消执行"
                 echo_line "  ${ICON_INFO}  已取消执行"; exit 0 ;;
             *)
                 echo_line "  ${ICON_WARN}  ${YELLOW}无效输入，请输入 yes 或 N${NC}" ;;
