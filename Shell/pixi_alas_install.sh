@@ -113,7 +113,6 @@ RAM_SIZE_MIB=""
 ALPINE_GLIBC_OVERRIDE="${CONDA_OVERRIDE_GLIBC:-2.28}"
 ALPINE_GLIBC_LOADER="/lib64/ld-linux-x86-64.so.2"
 ALPINE_GLIBC_VERSION="${ALPINE_GLIBC_VERSION:-2.35-r1}"
-ALPINE_GLIBC_RETRY_DONE=false
 UNINSTALL_YES=false
 DEBUG=false
 _TAIL_PID=""
@@ -687,25 +686,37 @@ EOF
     esac
 }
 
-# ---------------------------- Alpine 专用：启用 community 仓库 ----------------------------
-enable_alpine_community_repo() {
-    if grep -Eq '^[[:space:]]*[^#].*/community([[:space:]]*)?$' /etc/apk/repositories 2>/dev/null; then
-        _log_message "OK" "Alpine community 仓库已启用"
+# ---------------------------- Alpine 专用：准备 Pixi 运行环境 ----------------------------
+prepare_alpine_pixi_runtime() {
+    if [ "${PACKAGE_MANAGER}" != "apk" ]; then
         return 0
     fi
-    _ec_main_repo=$(awk '/^[[:space:]]*[^#].*\/main([[:space:]]*)?$/ {print $1; exit}' /etc/apk/repositories 2>/dev/null || true)
-    if [ -n "${_ec_main_repo}" ]; then
-        _ec_community_repo="${_ec_main_repo%/main}/community"
-    else
-        _ec_alpine_ver=$(cut -d. -f1,2 /etc/alpine-release 2>/dev/null || echo "edge")
-        if [ "${_ec_alpine_ver}" = "edge" ]; then
-            _ec_community_repo="https://dl-cdn.alpinelinux.org/alpine/edge/community"
-        else
-            _ec_community_repo="https://dl-cdn.alpinelinux.org/alpine/v${_ec_alpine_ver}/community"
-        fi
+    _log_message "INFO" "正在准备 Alpine Pixi 运行环境..."
+
+    if apk info -e gcompat >/dev/null 2>&1; then
+        _log_message "EXEC" "▶ 移除 gcompat，避免与真实 glibc 冲突"
+        apk del gcompat >> "$LOGFILE" 2>&1 || {
+            end_step "${ICON_ERROR}" "gcompat 移除失败，请先手动执行: apk del gcompat" "${RED}"
+            exit 1
+        }
     fi
-    _log_message "INFO" "▶ 启用 Alpine community 仓库: ${_ec_community_repo}"
-    printf '%s\n' "${_ec_community_repo}" >> /etc/apk/repositories
+
+    if ! has_real_glibc; then
+        install_alpine_real_glibc || {
+            end_step "${ICON_ERROR}" "Alpine glibc 安装失败" "${RED}"
+            exit 1
+        }
+    fi
+
+    has_real_glibc || {
+        end_step "${ICON_ERROR}" "未检测到真实 glibc，不能继续安装 Pixi 环境" "${RED}"
+        exit 1
+    }
+
+    ensure_alpine_glibc_loader || {
+        end_step "${ICON_ERROR}" "未检测到 glibc loader: ${ALPINE_GLIBC_LOADER}" "${RED}"
+        exit 1
+    }
 }
 
 # ---------------------------- Alpine 专用：确保 glibc loader ----------------------------
@@ -716,10 +727,20 @@ ensure_alpine_glibc_loader() {
     fi
     for _eg_candidate in /lib/ld-linux-x86-64.so.2 /usr/glibc-compat/lib/ld-linux-x86-64.so.2; do
         if [ -e "${_eg_candidate}" ]; then
-            mkdir -p /lib64
-            ln -sf "${_eg_candidate}" "${ALPINE_GLIBC_LOADER}"
-            _log_message "OK" "已创建 glibc loader 兼容链接: ${ALPINE_GLIBC_LOADER} -> ${_eg_candidate}"
-            return 0
+            mkdir -p /lib64 /lib
+
+            if [ "${_eg_candidate}" != "${ALPINE_GLIBC_LOADER}" ]; then
+                ln -sf "${_eg_candidate}" "${ALPINE_GLIBC_LOADER}"
+            fi
+
+            if [ "${_eg_candidate}" != "/lib/ld-linux-x86-64.so.2" ]; then
+                ln -sf "${_eg_candidate}" /lib/ld-linux-x86-64.so.2 2>/dev/null || true
+            fi
+
+            if [ -e "${ALPINE_GLIBC_LOADER}" ]; then
+                _log_message "OK" "已创建 glibc loader 兼容链接: ${ALPINE_GLIBC_LOADER} -> ${_eg_candidate}"
+                return 0
+            fi
         fi
     done
     _log_message "ERROR" "未找到 glibc loader，Pixi 的 linux-64 Python 可能无法启动"
@@ -787,12 +808,30 @@ install_alpine_real_glibc() {
     fi
     rm -rf "${_ig_tmp_dir}"
 
-    if ensure_alpine_glibc_loader; then
-        _log_message "OK" "第三方 glibc 安装完成"
-    else
+    ensure_alpine_glibc_loader || {
         end_step "${ICON_ERROR}" "第三方 glibc 安装后仍缺少 loader" "${RED}"
         exit 1
+    }
+
+    has_real_glibc || {
+        end_step "${ICON_ERROR}" "第三方 glibc 安装完成，但真实 glibc 校验失败" "${RED}"
+        exit 1
+    }
+
+    _log_message "OK" "第三方 glibc 安装完成"
+}
+
+# ---------------------------- Alpine 专用：检测真实 glibc ----------------------------
+has_real_glibc() {
+    if [ -x /usr/glibc-compat/bin/getconf ]; then
+        /usr/glibc-compat/bin/getconf GNU_LIBC_VERSION >/dev/null 2>&1 && return 0
     fi
+
+    if [ -x /usr/glibc-compat/lib/libc.so.6 ]; then
+        /usr/glibc-compat/lib/libc.so.6 2>&1 | grep -qi 'GNU C Library' && return 0
+    fi
+
+    return 1
 }
 
 # ---------------------------- Alpine 专用：Pixi 安装诊断 ----------------------------
@@ -875,7 +914,7 @@ install_deps() {
                 fi
             done ;;
         apk)
-            for _id_pkg in git android-tools curl ca-certificates tar xz libstdc++ libgcc; do
+            for _id_pkg in git android-tools curl ca-certificates tar gzip xz bzip2 zstd bash libstdc++ libgcc coreutils; do
                 if apk info -e "$_id_pkg" >/dev/null 2>&1; then
                     _log_message "OK" "依赖已存在: ${_id_pkg}"
                 else
@@ -889,6 +928,7 @@ install_deps() {
     esac
 
     if [ -z "${_id_missing}" ]; then
+        prepare_alpine_pixi_runtime
         _log_message "OK" "✓ curl $(curl --version 2>/dev/null | head -n1 | awk '{print $2}')"
         _log_message "OK" "✓ Git $(git --version 2>/dev/null | awk '{print $NF}')"
         _log_message "OK" "✓ ADB $(adb --version 2>/dev/null | head -n1 | awk '{print $NF}')"
@@ -990,41 +1030,7 @@ install_deps() {
         esac
     fi
 
-    # Alpine glibc 兼容层（gcompat → 自动降级第三方 glibc）
-    if [ "${PACKAGE_MANAGER}" = "apk" ]; then
-        _log_message "INFO" "正在配置 Alpine glibc 兼容层..."
-        _ga_gcompat_missing=""
-        if apk info -e gcompat >/dev/null 2>&1; then
-            _log_message "OK" "glibc 兼容层已存在: gcompat"
-        else
-            _ga_gcompat_missing="gcompat"
-        fi
-
-        if [ -n "${_ga_gcompat_missing}" ]; then
-            _log_message "WARNING" "glibc 兼容层缺失: gcompat"
-            enable_alpine_community_repo
-            _log_message "EXEC" "▶ apk add --no-cache gcompat"
-            if [ "${USE_CN_MIRROR}" = true ]; then
-                cn_package_mirrors gcompat
-                _ga_gcompat_ok=$?
-            else
-                apk add --no-cache gcompat >> "$LOGFILE" 2>&1
-                _ga_gcompat_ok=$?
-            fi
-            if [ "${_ga_gcompat_ok}" = 0 ]; then
-                _log_message "OK" "✓ gcompat 安装成功"
-            else
-                _log_message "WARNING" "gcompat 在当前仓库不可用，自动降级到第三方 glibc"
-                install_alpine_real_glibc
-            fi
-        fi
-
-        # 确保 glibc loader 存在（gcompat 或第三方 glibc 都应提供）
-        if ! ensure_alpine_glibc_loader; then
-            _log_message "WARNING" "gcompat 未提供 glibc loader，自动降级到第三方 glibc"
-            install_alpine_real_glibc
-        fi
-    fi
+    prepare_alpine_pixi_runtime
 
     _log_message "OK" "✓ curl $(curl --version 2>/dev/null | head -n1 | awk '{print $2}')"
     _log_message "OK" "✓ Git $(git --version 2>/dev/null | awk '{print $NF}')"
@@ -1035,9 +1041,6 @@ install_deps() {
         _log_message "OK" "✓ ca-certificates $(apk info -v ca-certificates 2>/dev/null | sed 's/^ca-certificates-//' || echo '✓')"
         _log_message "OK" "✓ libstdc++ $(apk info -v libstdc++ 2>/dev/null | sed 's/^libstdc++-//' || echo '✓')"
         _log_message "OK" "✓ libgcc $(apk info -v libgcc 2>/dev/null | sed 's/^libgcc-//' || echo '✓')"
-        if apk info -e gcompat >/dev/null 2>&1; then
-            _log_message "OK" "✓ gcompat $(apk info -v gcompat 2>/dev/null | sed 's/^gcompat-//' || echo '✓')"
-        fi
     fi
     end_step "${ICON_OK}" "依赖检查完成"
 }
@@ -1189,10 +1192,6 @@ PIXI_MIRROR_EOF
     if [ "${PACKAGE_MANAGER}" = "apk" ]; then
         export CONDA_OVERRIDE_GLIBC="${CONDA_OVERRIDE_GLIBC:-${ALPINE_GLIBC_OVERRIDE}}"
         _log_message "INFO" "Alpine 已设置 CONDA_OVERRIDE_GLIBC=${CONDA_OVERRIDE_GLIBC}"
-        ensure_alpine_glibc_loader || {
-            end_step "${ICON_ERROR}" "Alpine glibc 兼容层不足，经过 gcompat 和第三方 glibc 多轮尝试后仍缺少 loader，请检查日志：${LOGFILE}" "${RED}"
-            exit 1
-        }
     fi
 
     _se_install_log="/tmp/pixi_install_$$.log"
@@ -1216,27 +1215,6 @@ PIXI_MIRROR_EOF
             sed -i '/\[pypi-options\]/,/^\[.*\]/ { /index-url = /d; /^$/d; }' pixi.toml 2>/dev/null || true
             {
                 _log_message "WARNING" "检测到已有 Pixi 环境，正在清理..."
-                _log_message "EXEC" "▶ pixi clean cache -y"
-                pixi clean cache -y || true
-                _log_message "EXEC" "▶ pixi clean --environment default"
-                pixi clean --environment default || \
-                _log_message "EXEC" "▶ pixi clean"
-                pixi clean || \
-                _log_message "EXEC" "▶ rm -rf .pixi pixi.lock"
-                rm -rf .pixi pixi.lock || true
-                _log_message "OK" "✓ 旧环境已清理"
-            } >> "$LOGFILE" 2>&1 || true
-            _se_install_attempt=$((_se_install_attempt + 1))
-            continue
-        fi
-
-        if [ "${PACKAGE_MANAGER}" = "apk" ] && [ "${ALPINE_GLIBC_RETRY_DONE}" != true ] && \
-           pixi_install_needs_real_glibc "${_se_install_log}"; then
-            _log_message "WARNING" "gcompat 无法启动 conda linux-64 Python，自动切换到第三方 glibc 并重试"
-            rm -f "${_se_install_log}"
-            ALPINE_GLIBC_RETRY_DONE=true
-            install_alpine_real_glibc
-            {
                 _log_message "EXEC" "▶ pixi clean cache -y"
                 pixi clean cache -y || true
                 _log_message "EXEC" "▶ pixi clean --environment default"
