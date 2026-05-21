@@ -20,7 +20,7 @@ jobs:
     name: ShellCheck
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Run ShellCheck
         uses: ludeeus/action-shellcheck@master
         env:
@@ -32,7 +32,7 @@ jobs:
     name: Bash Syntax
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Check bash syntax
         run: |
           shopt -s nullglob
@@ -46,10 +46,10 @@ jobs:
     name: PSScriptAnalyzer
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Cache PSScriptAnalyzer
         id: cache-psanalyzer
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~\Documents\PowerShell\Modules\PSScriptAnalyzer
           key: ${{ runner.os }}-psanalyzer-1
