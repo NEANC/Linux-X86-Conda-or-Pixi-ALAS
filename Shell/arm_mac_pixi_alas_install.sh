@@ -17,7 +17,7 @@ else
 fi
 
 # ---------------------------- 日志文件 ----------------------------
-LOGFILE="/tmp/alas_install.log"
+LOGFILE="$(mktemp /tmp/alas_install.XXXXXX.log)" || LOGFILE="/tmp/alas_install.$$.log"
 touch "$LOGFILE" || { echo "无法创建日志文件 $LOGFILE"; exit 1; }
 
 # ---------------------------- 日志格式化 ----------------------------
