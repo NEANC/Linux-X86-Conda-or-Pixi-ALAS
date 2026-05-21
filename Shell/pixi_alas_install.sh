@@ -265,7 +265,9 @@ done
 
 # ---------------------------- 检测 init 系统 ----------------------------
 detect_init_system() {
-    if command -v systemctl >/dev/null 2>&1; then
+    if command -v systemctl >/dev/null 2>&1 && \
+       [ -d /run/systemd/system ] && \
+       systemctl is-system-running >/dev/null 2>&1; then
         INIT_SYSTEM="systemd"
         _log_message "INFO" "检测到 init 系统: systemd"
     elif command -v rc-service >/dev/null 2>&1; then
