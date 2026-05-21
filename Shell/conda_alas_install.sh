@@ -442,7 +442,6 @@ install_miniforge() {
     CONDA_BIN="${HOME}/miniforge3/bin/conda"
     if command -v conda >/dev/null 2>&1; then
         CONDA_VER=$(conda --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')
-        CONDA_BIN=$(command -v conda)
         end_step "${ICON_OK}" "Conda 已就绪: ${CONDA_VER}"
         return
     fi
