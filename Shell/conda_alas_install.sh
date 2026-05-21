@@ -1289,11 +1289,20 @@ EOF
 
     _log_message "EXEC" "▶ systemctl start run_alas.service"
     systemctl start run_alas.service >> "$LOGFILE" 2>&1
-    _log_message "OK" "✓ 服务已启动"
+    _log_message "OK" "✓ systemctl start 已执行"
+    sleep 2
+
+    if systemctl is-active --quiet run_alas.service 2>/dev/null; then
+        _log_message "OK" "✓ 服务运行中"
+    else
+        _log_message "ERROR" "✗ 服务启动后立即崩溃"
+        end_step "${ICON_ERROR}" "systemd 服务启动失败，请查看日志: ${LOGFILE}" "${RED}"
+        return
+    fi
 
     if [ "${SKIP_SERVICE}" = "true" ]; then
         _log_message "INFO" "检测到 -S、--skip-service，跳过开机自启注册"
-        end_step "${ICON_INFO}" "由于设置了 -S、--skip-service参数，systemd 服务单元仅已创建" "${GREEN}"
+        end_step "${ICON_INFO}" "由于设置了 -S、--skip-service参数，systemd 服务已启动但未启用开机自启" "${GREEN}"
         return
     fi
 
@@ -1301,11 +1310,7 @@ EOF
     systemctl enable run_alas.service >> "$LOGFILE" 2>&1
     _log_message "OK" "✓ 服务已启用开机自启"
 
-    if systemctl is-active --quiet run_alas.service 2>/dev/null; then
-        end_step "${ICON_OK}" "systemd 服务已启动并设为开机自启"
-    else
-        end_step "${ICON_ERROR}" "systemd 服务启动失败，请查看日志: ${LOGFILE}" "${RED}"
-    fi
+    end_step "${ICON_OK}" "systemd 服务已启动并设为开机自启"
 }
 
 _configure_openrc() {
