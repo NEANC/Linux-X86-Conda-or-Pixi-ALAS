@@ -22,7 +22,7 @@ case "$0" in
 esac
 
 # ---------------------------- 日志文件 ----------------------------
-LOGFILE="/tmp/alas_install.log"
+LOGFILE="$(mktemp /tmp/alas_install.XXXXXX.log)" || LOGFILE="/tmp/alas_install.$$.log"
 touch "$LOGFILE" || { echo "无法创建日志文件 $LOGFILE"; exit 1; }
 
 # ---------------------------- 日志格式化 ----------------------------
@@ -73,19 +73,47 @@ KEEP_LOG=false
 USE_CN_MIRROR=false
 GH_PROXY=""
 DEPLOY_TEMPLATE="config/deploy.template-linux.yaml"
+
+# 优先使用 sudo 前的真实用户
+if [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER}" != "root" ]; then
+    USER_NAME="${SUDO_USER}"
+else
+    USER_NAME="$(logname 2>/dev/null || id -un 2>/dev/null || whoami)"
+fi
+
+USER_GROUP=$(id -gn "${USER_NAME}" 2>/dev/null || id -gn 2>/dev/null || echo "${USER_NAME}")
+
+# 获取真实用户的 home 目录
+USER_HOME=$(getent passwd "${USER_NAME}" 2>/dev/null | cut -d: -f6 || true)
+if [ -z "${USER_HOME}" ]; then
+    USER_HOME=$(awk -F: -v u="${USER_NAME}" '$1 == u {print $6; exit}' /etc/passwd 2>/dev/null || true)
+fi
+if [ -z "${USER_HOME}" ]; then
+    if [ "${USER_NAME}" = "root" ]; then
+        USER_HOME="${HOME:-/root}"
+    else
+        USER_HOME="/home/${USER_NAME}"
+    fi
+fi
+
+# 关键：把 HOME 改成真实用户的 home
+HOME="${USER_HOME}"
+export HOME
+
 INSTALL_DIR="${HOME}/AzurLaneAutoScript"
 SCRIPT_OUT_DIR="${HOME}/AzurLaneAutoScript"
 WORK_DIR=""
 ALAS_DIR=""
 CONDA_BIN=""
-USER_NAME="${SUDO_USER:-$(whoami)}"
-USER_GROUP=$(id -gn "${USER_NAME}" 2>/dev/null || id -gn 2>/dev/null || echo "${USER_NAME}")
+
 INIT_SYSTEM=""
 PACKAGE_MANAGER=""
 _SPINNER_PID=""
 RAM_SIZE_MIB=""
 ALPINE_GLIBC_LOADER="/lib64/ld-linux-x86-64.so.2"
 UNINSTALL_YES=false
+DEBUG=false
+_TAIL_PID=""
 
 # ---------------------------- 帮助 ----------------------------
 usage() {
@@ -100,6 +128,7 @@ usage() {
   --uninstall [-Y]       反向安装：停止并删除 ALAS、虚拟环境、开机自启
   -l, --log              保留安装日志，不自动删除
   -h, --help             显示帮助信息
+  --debug                调试模式，日志将实时输出至终端
 EOF
 }
 
@@ -155,6 +184,10 @@ start_step() {
     _cleanup_spinner
     _ss_msg="$1"
     _log_message "START" "${_ss_msg}"
+    if [ "${DEBUG}" = true ]; then
+        printf '%b\n' "  ${ICON_GEAR}  ${YELLOW}${_ss_msg}${NC}"
+        return 0
+    fi
     _SPINNER_IDX=0
     {
         while true; do
@@ -185,6 +218,9 @@ end_step() {
 # ---------------------------- 中断信号处理 ----------------------------
 _sigint_handler() {
     _cleanup_spinner
+    if [ -n "${_TAIL_PID}" ]; then
+        kill "${_TAIL_PID}" 2>/dev/null || true
+    fi
     printf '%b\n' "\n  ${ICON_WARN}  ${YELLOW}脚本已被用户中断${NC}"
     exit 130
 }
@@ -193,9 +229,14 @@ trap '_sigint_handler' INT
 # ---------------------------- 参数解析 ----------------------------
 while [ $# -gt 0 ]; do
     case "$1" in
-        -d|--dir) INSTALL_DIR="$2"; shift 2 ;;
-        -s|--script-dir) SCRIPT_OUT_DIR="$2"; shift 2 ;;
+        -d|--dir)
+            [ -z "${2-}" ] && { log_error "缺少参数值: $1"; usage; exit 1; }
+            INSTALL_DIR="$2"; shift 2 ;;
+        -s|--script-dir)
+            [ -z "${2-}" ] && { log_error "缺少参数值: $1"; usage; exit 1; }
+            SCRIPT_OUT_DIR="$2"; shift 2 ;;
         -t|--template)
+            [ -z "${2-}" ] && { log_error "缺少参数值: $1"; usage; exit 1; }
             case "$2" in
                 [Cc][Nn])
                 DEPLOY_TEMPLATE="config/deploy.template-linux-cn.yaml"
@@ -214,6 +255,7 @@ while [ $# -gt 0 ]; do
             shift ;;
         -l|--log) KEEP_LOG=true; shift ;;
         -S|--skip-service) SKIP_SERVICE=true; shift ;;
+        --debug) DEBUG=true; shift ;;
         -h|--help) usage; exit 0 ;;
         *) log_error "未知参数: $1"; usage; exit 1 ;;
     esac
@@ -221,7 +263,9 @@ done
 
 # ---------------------------- 检测 init 系统 ----------------------------
 detect_init_system() {
-    if command -v systemctl >/dev/null 2>&1; then
+    if command -v systemctl >/dev/null 2>&1 && \
+       [ -d /run/systemd/system ] && \
+       systemctl is-system-running >/dev/null 2>&1; then
         INIT_SYSTEM="systemd"
         _log_message "INFO" "检测到 init 系统: systemd"
     elif command -v rc-service >/dev/null 2>&1; then
@@ -375,7 +419,13 @@ detect_os() {
             _log_message "ERROR" "非 Linux 内核 (${_do_kernel_name})，Unix 系统请手动安装"
             echo_line "  ${ICON_ERROR}  ${RED}非 Linux 内核 (${_do_kernel_name})，Unix 系统请手动安装${NC}"
             exit 1 ;;
-        Linux) ;;
+        Linux)
+            _do_arch=$(uname -m 2>/dev/null || true)
+            if [ "${_do_arch}" != "x86_64" ]; then
+                echo_line "  ${ICON_ERROR}  ${RED}不支持的架构: ${_do_arch}，本脚本仅适用于 x86_64${NC}"
+                exit 1
+            fi
+            ;;
         *)
             _log_message "ERROR" "不支持的操作系统: ${_do_kernel_name}"
             echo_line "  ${ICON_ERROR}  ${RED}不支持的操作系统: ${_do_kernel_name}${NC}"
@@ -429,16 +479,17 @@ install_miniforge() {
     start_step "正在检查 Miniforge..."
 
     CONDA_BIN="${HOME}/miniforge3/bin/conda"
-    if command -v conda >/dev/null 2>&1; then
-        CONDA_VER=$(conda --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')
-        CONDA_BIN=$(command -v conda)
-        end_step "${ICON_OK}" "Conda 已就绪: ${CONDA_VER}"
-        return
-    fi
 
     if [ -x "${CONDA_BIN}" ]; then
         CONDA_VER=$("${CONDA_BIN}" --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')
         end_step "${ICON_OK}" "Conda 已安装: ${CONDA_VER}"
+        return
+    fi
+
+    if command -v conda >/dev/null 2>&1; then
+        CONDA_BIN="$(command -v conda)"
+        CONDA_VER=$(conda --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')
+        end_step "${ICON_OK}" "Conda 已就绪: ${CONDA_VER}"
         return
     fi
 
@@ -603,9 +654,27 @@ EOF
                 "https://mirrors.aliyun.com/opensuse/distribution/leap/${_cm_zypp_ver}/repo/oss/" \
                 "https://repo.huaweicloud.com/opensuse/distribution/leap/${_cm_zypp_ver}/repo/oss/"; do
                 _log_message "INFO" "尝试镜像: ${_cm_mirror}"
-                if zypper --non-interactive --no-gpg-checks --plus-repo "${_cm_mirror}" \
+                if zypper --non-interactive --plus-repo "${_cm_mirror}" \
                        install -y "$@" >> "$LOGFILE" 2>&1; then
                     return 0
+                fi
+                _log_message "WARNING" "镜像 ${_cm_mirror} 不可用，尝试下一个"
+            done
+            return 1
+            ;;
+        yum)
+            _cm_yum_base="centos/\$releasever/os/\$basearch/"
+            for _cm_mirror in \
+                "https://mirrors.ustc.edu.cn/${_cm_yum_base}" \
+                "https://mirrors.aliyun.com/${_cm_yum_base}" \
+                "https://repo.huaweicloud.com/${_cm_yum_base}"; do
+                _log_message "INFO" "尝试镜像: ${_cm_mirror}"
+                if yum --disablerepo='*' --repofrompath="cn-temp-$$,${_cm_mirror}" --enablerepo="cn-temp-$$" \
+                       -q makecache >> "$LOGFILE" 2>&1; then
+                    if yum --disablerepo='*' --repofrompath="cn-temp-$$,${_cm_mirror}" --enablerepo="cn-temp-$$" \
+                           -q install -y "$@" >> "$LOGFILE" 2>&1; then
+                        return 0
+                    fi
                 fi
                 _log_message "WARNING" "镜像 ${_cm_mirror} 不可用，尝试下一个"
             done
@@ -1050,8 +1119,29 @@ dependencies:
 YML_EOF
     _log_message "OK" "✓ environment.yml 已生成"
 
-    . "$(dirname "$(dirname "${CONDA_BIN}")")/etc/profile.d/conda.sh" >> "$LOGFILE" 2>&1
-    _log_message "OK" "✓ Conda shell 已加载 (POSIX)"
+    _conda_base=$("${CONDA_BIN}" info --base 2>/dev/null || true)
+    _conda_sh=""
+    if [ -n "${_conda_base}" ] && [ -f "${_conda_base}/etc/profile.d/conda.sh" ]; then
+        _conda_sh="${_conda_base}/etc/profile.d/conda.sh"
+    elif [ -f "$(dirname "$(dirname "${CONDA_BIN}")")/etc/profile.d/conda.sh" ]; then
+        _conda_sh="$(dirname "$(dirname "${CONDA_BIN}")")/etc/profile.d/conda.sh"
+    elif [ -f "${HOME}/miniforge3/etc/profile.d/conda.sh" ]; then
+        _conda_sh="${HOME}/miniforge3/etc/profile.d/conda.sh"
+    elif [ -f /etc/profile.d/conda.sh ]; then
+        _conda_sh="/etc/profile.d/conda.sh"
+    elif [ -f /opt/conda/etc/profile.d/conda.sh ]; then
+        _conda_sh="/opt/conda/etc/profile.d/conda.sh"
+    fi
+    if [ -n "${_conda_sh}" ]; then
+        _log_message "INFO" "加载 conda.sh: ${_conda_sh}"
+        # shellcheck source=/dev/null
+        . "${_conda_sh}" >> "$LOGFILE" 2>&1
+        _log_message "OK" "✓ Conda shell 已加载 (POSIX)"
+    else
+        _log_message "WARNING" "未找到 conda.sh，回退为直接调用 ${CONDA_BIN}"
+        conda() { "${CONDA_BIN}" "$@"; }
+        _log_message "OK" "✓ 已定义 conda 命令包装函数"
+    fi
 
     if [ "${USE_CN_MIRROR}" = true ]; then
         _se_cernet_conda="https://mirrors.cernet.edu.cn/anaconda"
@@ -1157,15 +1247,34 @@ create_launcher() {
     _log_message "INFO" "  Conda: ${CONDA_BIN}"
     _log_message "INFO" "  ALAS 目录: ${ALAS_DIR}"
 
-    cat > "${SCRIPT_OUT_DIR}/run_alas.sh" <<EOF
+    cat > "${SCRIPT_OUT_DIR}/run_alas.sh" <<'LAUNCHER_EOF'
 #!/bin/sh
-# ALAS 启动脚本 (由 posix_conda_alas_install.sh 自动生成)
-# 用法: sh ${SCRIPT_OUT_DIR}/run_alas.sh
-. "$(dirname "$(dirname "${CONDA_BIN}")")/etc/profile.d/conda.sh"
-conda activate alas
-cd ${ALAS_DIR}
-python gui.py
-EOF
+
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+CONDA_BIN=""
+
+if command -v conda >/dev/null 2>&1; then
+    CONDA_BIN=$(command -v conda)
+elif [ -x "${HOME}/miniforge3/bin/conda" ]; then
+    CONDA_BIN="${HOME}/miniforge3/bin/conda"
+elif [ -x /opt/conda/bin/conda ]; then
+    CONDA_BIN="/opt/conda/bin/conda"
+elif [ -x /usr/local/bin/conda ]; then
+    CONDA_BIN="/usr/local/bin/conda"
+elif [ -x /usr/bin/conda ]; then
+    CONDA_BIN="/usr/bin/conda"
+fi
+
+if [ -z "${CONDA_BIN}" ]; then
+    echo "ERROR: conda not found. Please install Miniforge/Conda first." >&2
+    exit 127
+fi
+
+exec "${CONDA_BIN}" run -n alas --cwd "${SCRIPT_DIR}" --no-capture-output python gui.py
+LAUNCHER_EOF
     chmod +x "${SCRIPT_OUT_DIR}/run_alas.sh"
     end_step "${ICON_OK}" "启动脚本已生成: ${SCRIPT_OUT_DIR}/run_alas.sh"
 }
@@ -1220,11 +1329,20 @@ EOF
 
     _log_message "EXEC" "▶ systemctl start run_alas.service"
     systemctl start run_alas.service >> "$LOGFILE" 2>&1
-    _log_message "OK" "✓ 服务已启动"
+    _log_message "OK" "✓ systemctl start 已执行"
+    sleep 2
+
+    if systemctl is-active --quiet run_alas.service 2>/dev/null; then
+        _log_message "OK" "✓ 服务运行中"
+    else
+        _log_message "ERROR" "✗ 服务启动后立即崩溃"
+        end_step "${ICON_ERROR}" "systemd 服务启动失败，请查看日志: ${LOGFILE}" "${RED}"
+        return
+    fi
 
     if [ "${SKIP_SERVICE}" = "true" ]; then
         _log_message "INFO" "检测到 -S、--skip-service，跳过开机自启注册"
-        end_step "${ICON_INFO}" "由于设置了 -S、--skip-service参数，systemd 服务单元仅已创建" "${GREEN}"
+        end_step "${ICON_INFO}" "由于设置了 -S、--skip-service参数，systemd 服务已启动但未启用开机自启" "${GREEN}"
         return
     fi
 
@@ -1232,11 +1350,7 @@ EOF
     systemctl enable run_alas.service >> "$LOGFILE" 2>&1
     _log_message "OK" "✓ 服务已启用开机自启"
 
-    if systemctl is-active --quiet run_alas.service 2>/dev/null; then
-        end_step "${ICON_OK}" "systemd 服务已启动并设为开机自启"
-    else
-        end_step "${ICON_ERROR}" "systemd 服务启动失败，请查看日志: ${LOGFILE}" "${RED}"
-    fi
+    end_step "${ICON_OK}" "systemd 服务已启动并设为开机自启"
 }
 
 _configure_openrc() {
@@ -1389,6 +1503,13 @@ SYSV_EOF
     fi
 }
 
+# ---------------------------- 修正文件归属 ----------------------------
+fix_user_permissions() {
+    chown -R "${USER_NAME}:${USER_GROUP}" "${INSTALL_DIR}" 2>/dev/null || true
+    chown -R "${USER_NAME}:${USER_GROUP}" "${SCRIPT_OUT_DIR}" 2>/dev/null || true
+    [ -d "${HOME}/miniforge3" ] && chown -R "${USER_NAME}:${USER_GROUP}" "${HOME}/miniforge3" 2>/dev/null || true
+}
+
 # ---------------------------- 完成摘要 ----------------------------
 print_completion() {
     echo_line ""
@@ -1538,10 +1659,15 @@ do_uninstall() {
     if [ -n "${_conda_bin}" ]; then
         _log_message "INFO" "使用 conda: ${_conda_bin}"
         _conda_sh=""
-        if [ -f "${HOME}/miniforge3/etc/profile.d/conda.sh" ]; then
+        _conda_base=$("${_conda_bin}" info --base 2>/dev/null || true)
+        if [ -n "${_conda_base}" ] && [ -f "${_conda_base}/etc/profile.d/conda.sh" ]; then
+            _conda_sh="${_conda_base}/etc/profile.d/conda.sh"
+        elif [ -f "${HOME}/miniforge3/etc/profile.d/conda.sh" ]; then
             _conda_sh="${HOME}/miniforge3/etc/profile.d/conda.sh"
         elif [ -f /etc/profile.d/conda.sh ]; then
             _conda_sh="/etc/profile.d/conda.sh"
+        elif [ -f /opt/conda/etc/profile.d/conda.sh ]; then
+            _conda_sh="/opt/conda/etc/profile.d/conda.sh"
         else
             _conda_sh=$(find "${HOME}" -maxdepth 4 -name "conda.sh" -type f 2>/dev/null | head -1 || true)
         fi
@@ -1613,13 +1739,30 @@ do_uninstall() {
 # ---------------------------- 主流程 ----------------------------
 main() {
     if [ "${UNINSTALL}" = true ]; then
+        if [ "${DEBUG}" = true ] && command -v tail >/dev/null 2>&1; then
+            tail -n +0 -f "$LOGFILE" 2>/dev/null &
+            _TAIL_PID=$!
+            printf '%b\n' "  ${ICON_GEAR}  ${CYAN}检测到 --debug, 进入调试模式${NC}"
+            printf '%b\n' "  ${ICON_GEAR}  ${CYAN}日志将实时输出至终端${NC}"
+            echo_line ""
+        fi
         detect_os
         gather_system_info
         print_header
         check_root
         do_uninstall
+        if [ -n "${_TAIL_PID}" ]; then kill "${_TAIL_PID}" 2>/dev/null || true; fi
         exit 0
     fi
+
+    if [ "${DEBUG}" = true ] && command -v tail >/dev/null 2>&1; then
+        tail -n +0 -f "$LOGFILE" 2>/dev/null &
+        _TAIL_PID=$!
+        printf '%b\n' "  ${ICON_GEAR}  ${CYAN}检测到 --debug, 进入调试模式${NC}"
+        printf '%b\n' "  ${ICON_GEAR}  ${CYAN}日志将实时输出至终端${NC}"
+        echo_line ""
+    fi
+
     detect_os
     gather_system_info
     print_header
@@ -1632,7 +1775,11 @@ main() {
     configure_deploy
     create_launcher
     configure_service
+    fix_user_permissions
     print_completion
+
+    if [ -n "${_TAIL_PID}" ]; then kill "${_TAIL_PID}" 2>/dev/null || true; fi
+
     if [ "${KEEP_LOG}" = false ]; then
         _log_message "INFO" "安装完成，清理日志文件: ${LOGFILE}"
         rm -f "$LOGFILE"

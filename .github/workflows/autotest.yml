@@ -1,0 +1,127 @@
+name: 自动测试
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ master ]
+    paths:
+      - "Shell/**"
+  pull_request:
+    paths:
+      - "Shell/**"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Linux 部署测试
+  deploy-linux:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CONDA_PLUGINS_AUTO_ACCEPT_TOS: yes
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: "Conda Ubuntu", script: conda_alas_install.sh, flags: "--debug", verify: environment.yml, start: 'cd "$ALAS_DIR" && bash ./run_alas.sh' }
+          - { name: "Pixi Ubuntu", script: pixi_alas_install.sh, flags: "--debug", verify: pixi.toml, start: 'cd "$ALAS_DIR" && "$HOME/.pixi/bin/pixi" run python gui.py' }
+
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run deployment
+        run: sudo -E bash Shell/${{ matrix.script }} ${{ matrix.flags }} 2>&1
+      - name: Stop systemd & start ALAS manually (head 150)
+        if: always()
+        run: |
+          echo "=== Stopping systemd service ==="
+          sudo systemctl stop run_alas.service 2>&1 || true
+          echo ""
+
+          export PATH="$HOME/.pixi/bin:$HOME/miniforge3/bin:$PATH"
+
+          echo "=== Starting ALAS manually ==="
+          ALAS_DIR="$HOME/AzurLaneAutoScript"
+
+          if [ -d "$ALAS_DIR" ] && [ -f "$ALAS_DIR/${{ matrix.verify }}" ]; then
+            ${{ matrix.start }} > /tmp/alas_run.log 2>&1 &
+            ALAS_PID=$!
+            echo "ALAS PID: $ALAS_PID (${ALAS_DIR})"
+
+          sleep 40
+
+          if kill -0 "$ALAS_PID" 2>/dev/null; then
+            echo "ALAS is still running after 40s; stopping test process."
+            kill "$ALAS_PID" 2>/dev/null || true
+            wait "$ALAS_PID" 2>/dev/null || true
+            ALAS_EXIT=0
+          else
+            wait "$ALAS_PID" 2>/dev/null
+            ALAS_EXIT=$?
+          fi
+
+          echo "=== ALAS output (first 150 lines) ==="
+          head -150 /tmp/alas_run.log 2>&1 || true
+
+          if grep -Eiq "can't open file|No such file or directory|command not found|Traceback|ModuleNotFoundError|ImportError" /tmp/alas_run.log; then
+            echo "ERROR: ALAS startup log contains fatal error"
+            exit 1
+          fi
+
+          if [ "$ALAS_EXIT" -ne 0 ]; then
+            echo "ERROR: ALAS exited early with status $ALAS_EXIT"
+            exit "$ALAS_EXIT"
+          fi
+
+          rm -f /tmp/alas_run.log
+          else
+            echo "ERROR: ALAS directory not found at ${ALAS_DIR} (deploy may have failed)"
+            exit 1
+          fi
+
+      - name: Uninstall
+        if: always()
+        run: sudo bash Shell/${{ matrix.script }} --debug --uninstall -y 2>&1
+
+  # macOS 部署测试
+  deploy-macos:
+    name: ${{ matrix.name }}
+    runs-on: macos-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: "Conda macOS",  script: arm_mac_conda_alas_install.sh,  flags: "--debug",  verify: environment.yml }
+          - { name: "Pixi macOS",   script: arm_mac_pixi_alas_install.sh,   flags: "--debug",  verify: pixi.toml }
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run deployment
+        run: bash Shell/${{ matrix.script }} ${{ matrix.flags }} 2>&1
+      - name: Stop launchctl & start ALAS manually (head 150)
+        if: always()
+        run: |
+          echo "=== Stopping launchctl service ==="
+          launchctl stop com.alas.run 2>&1 || true
+          echo ""
+          echo "=== Starting ALAS manually ==="
+          ALAS_DIR="$HOME/AzurLaneAutoScript"
+          if [ -d "$ALAS_DIR" ] && [ -f "$ALAS_DIR/run_alas.sh" ]; then
+            bash "$ALAS_DIR/run_alas.sh" > /tmp/alas_run.log 2>&1 &
+            ALAS_PID=$!
+            echo "ALAS PID: $ALAS_PID (${ALAS_DIR})"
+            sleep 40
+            kill $ALAS_PID 2>/dev/null || true
+            wait $ALAS_PID 2>/dev/null || true
+            echo "=== ALAS output (first 150 lines) ==="
+            head -150 /tmp/alas_run.log 2>&1 || true
+            rm -f /tmp/alas_run.log
+          else
+            echo "ERROR: ALAS directory not found at ${ALAS_DIR} (deploy may have failed)"
+            exit 1
+          fi
+      - name: Uninstall
+        if: always()
+        run: bash Shell/${{ matrix.script }} --debug --uninstall -y 2>&1

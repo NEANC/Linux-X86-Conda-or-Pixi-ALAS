@@ -22,7 +22,7 @@ case "$0" in
 esac
 
 # ---------------------------- 日志文件 ----------------------------
-LOGFILE="/tmp/alas_install.log"
+LOGFILE="$(mktemp /tmp/alas_install.XXXXXX.log)" || LOGFILE="/tmp/alas_install.$$.log"
 touch "$LOGFILE" || { echo "无法创建日志文件 $LOGFILE"; exit 1; }
 
 # ---------------------------- 日志格式化 ----------------------------
@@ -73,13 +73,39 @@ KEEP_LOG=false
 USE_CN_MIRROR=false
 GH_PROXY=""
 DEPLOY_TEMPLATE="config/deploy.template-linux.yaml"
+
+# 优先使用 sudo 前的真实用户
+if [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER}" != "root" ]; then
+    USER_NAME="${SUDO_USER}"
+else
+    USER_NAME="$(logname 2>/dev/null || id -un 2>/dev/null || whoami)"
+fi
+
+USER_GROUP=$(id -gn "${USER_NAME}" 2>/dev/null || id -gn 2>/dev/null || echo "${USER_NAME}")
+
+# 获取真实用户的 home 目录
+USER_HOME=$(getent passwd "${USER_NAME}" 2>/dev/null | cut -d: -f6 || true)
+if [ -z "${USER_HOME}" ]; then
+    USER_HOME=$(awk -F: -v u="${USER_NAME}" '$1 == u {print $6; exit}' /etc/passwd 2>/dev/null || true)
+fi
+if [ -z "${USER_HOME}" ]; then
+    if [ "${USER_NAME}" = "root" ]; then
+        USER_HOME="${HOME:-/root}"
+    else
+        USER_HOME="/home/${USER_NAME}"
+    fi
+fi
+
+# 关键：把 HOME 改成真实用户的 home
+HOME="${USER_HOME}"
+export HOME
+
 INSTALL_DIR="${HOME}/AzurLaneAutoScript"
 SCRIPT_OUT_DIR="${HOME}/AzurLaneAutoScript"
 WORK_DIR=""
 ALAS_DIR=""
 PIXI_BIN_PATH=""
-USER_NAME="${SUDO_USER:-$(whoami)}"
-USER_GROUP=$(id -gn "${USER_NAME}" 2>/dev/null || id -gn 2>/dev/null || echo "${USER_NAME}")
+
 INIT_SYSTEM=""
 PACKAGE_MANAGER=""
 _SPINNER_PID=""
@@ -87,8 +113,9 @@ RAM_SIZE_MIB=""
 ALPINE_GLIBC_OVERRIDE="${CONDA_OVERRIDE_GLIBC:-2.28}"
 ALPINE_GLIBC_LOADER="/lib64/ld-linux-x86-64.so.2"
 ALPINE_GLIBC_VERSION="${ALPINE_GLIBC_VERSION:-2.35-r1}"
-ALPINE_GLIBC_RETRY_DONE=false
 UNINSTALL_YES=false
+DEBUG=false
+_TAIL_PID=""
 
 if [ -x "${HOME}/.pixi/bin/pixi"  ]; then
     export PATH="${HOME}/.pixi/bin:${PATH}"
@@ -107,6 +134,7 @@ usage() {
   --uninstall [-Y]       反向安装：停止并删除 ALAS、虚拟环境、开机自启
   -l, --log              保留安装日志，不自动删除
   -h, --help             显示帮助信息
+  --debug                调试模式，日志将实时输出至终端
 EOF
 }
 
@@ -162,6 +190,10 @@ start_step() {
     _cleanup_spinner
     _ss_msg="$1"
     _log_message "START" "${_ss_msg}"
+    if [ "${DEBUG}" = true ]; then
+        printf '%b\n' "  ${ICON_GEAR}  ${YELLOW}${_ss_msg}${NC}"
+        return 0
+    fi
     _SPINNER_IDX=0
     {
         while true; do
@@ -192,6 +224,9 @@ end_step() {
 # ---------------------------- 中断信号处理 ----------------------------
 _sigint_handler() {
     _cleanup_spinner
+    if [ -n "${_TAIL_PID}" ]; then
+        kill "${_TAIL_PID}" 2>/dev/null || true
+    fi
     printf '%b\n' "\n  ${ICON_WARN}  ${YELLOW}脚本已被用户中断${NC}"
     exit 130
 }
@@ -200,9 +235,14 @@ trap '_sigint_handler' INT
 # ---------------------------- 参数解析 ----------------------------
 while [ $# -gt 0 ]; do
     case "$1" in
-        -d|--dir) INSTALL_DIR="$2"; shift 2 ;;
-        -s|--script-dir) SCRIPT_OUT_DIR="$2"; shift 2 ;;
+        -d|--dir)
+            [ -z "${2-}" ] && { log_error "缺少参数值: $1"; usage; exit 1; }
+            INSTALL_DIR="$2"; shift 2 ;;
+        -s|--script-dir)
+            [ -z "${2-}" ] && { log_error "缺少参数值: $1"; usage; exit 1; }
+            SCRIPT_OUT_DIR="$2"; shift 2 ;;
         -t|--template)
+            [ -z "${2-}" ] && { log_error "缺少参数值: $1"; usage; exit 1; }
             case "$2" in
                 [Cc][Nn])
                 DEPLOY_TEMPLATE="config/deploy.template-linux-cn.yaml"
@@ -221,6 +261,7 @@ while [ $# -gt 0 ]; do
             shift ;;
         -l|--log) KEEP_LOG=true; shift ;;
         -S|--skip-service) SKIP_SERVICE=true; shift ;;
+        --debug) DEBUG=true; shift ;;
         -h|--help) usage; exit 0 ;;
         *) log_error "未知参数: $1"; usage; exit 1 ;;
     esac
@@ -228,7 +269,9 @@ done
 
 # ---------------------------- 检测 init 系统 ----------------------------
 detect_init_system() {
-    if command -v systemctl >/dev/null 2>&1; then
+    if command -v systemctl >/dev/null 2>&1 && \
+       [ -d /run/systemd/system ] && \
+       systemctl is-system-running >/dev/null 2>&1; then
         INIT_SYSTEM="systemd"
         _log_message "INFO" "检测到 init 系统: systemd"
     elif command -v rc-service >/dev/null 2>&1; then
@@ -382,7 +425,13 @@ detect_os() {
             _log_message "ERROR" "非 Linux 内核 (${_do_kernel_name})，Unix 系统请手动安装"
             echo_line "  ${ICON_ERROR}  ${RED}非 Linux 内核 (${_do_kernel_name})，Unix 系统请手动安装${NC}"
             exit 1 ;;
-        Linux) ;;
+        Linux)
+            _do_arch=$(uname -m 2>/dev/null || true)
+            if [ "${_do_arch}" != "x86_64" ]; then
+                echo_line "  ${ICON_ERROR}  ${RED}不支持的架构: ${_do_arch}，本脚本仅适用于 x86_64${NC}"
+                exit 1
+            fi
+            ;;
         *)
             _log_message "ERROR" "不支持的操作系统: ${_do_kernel_name}"
             echo_line "  ${ICON_ERROR}  ${RED}不支持的操作系统: ${_do_kernel_name}${NC}"
@@ -435,16 +484,18 @@ detect_os() {
 install_pixi() {
     start_step "正在检查 Pixi..."
 
-    if command -v pixi >/dev/null 2>&1; then
-        PIXI_VER=$(pixi --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')
-        end_step "${ICON_OK}" "Pixi 已安装: ${PIXI_VER}"
+    if [ -x "${HOME}/.pixi/bin/pixi" ]; then
+        export PATH="${HOME}/.pixi/bin:${PATH}"
+        PIXI_BIN_PATH="${HOME}/.pixi/bin/pixi"
+        PIXI_VER=$("${PIXI_BIN_PATH}" --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')
+        end_step "${ICON_OK}" "Pixi 已激活: ${PIXI_VER}"
         return
     fi
 
-    if [ -x "${HOME}/.pixi/bin/pixi" ]; then
-        export PATH="${HOME}/.pixi/bin:${PATH}"
+    if command -v pixi >/dev/null 2>&1; then
+        PIXI_BIN_PATH="$(command -v pixi)"
         PIXI_VER=$(pixi --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')
-        end_step "${ICON_OK}" "Pixi 已激活: ${PIXI_VER}"
+        end_step "${ICON_OK}" "Pixi 已安装: ${PIXI_VER}"
         return
     fi
 
@@ -607,9 +658,27 @@ EOF
                 "https://mirrors.aliyun.com/opensuse/distribution/leap/${_cm_zypp_ver}/repo/oss/" \
                 "https://repo.huaweicloud.com/opensuse/distribution/leap/${_cm_zypp_ver}/repo/oss/"; do
                 _log_message "INFO" "尝试镜像: ${_cm_mirror}"
-                if zypper --non-interactive --no-gpg-checks --plus-repo "${_cm_mirror}" \
+                if zypper --non-interactive --plus-repo "${_cm_mirror}" \
                        install -y "$@" >> "$LOGFILE" 2>&1; then
                     return 0
+                fi
+                _log_message "WARNING" "镜像 ${_cm_mirror} 不可用，尝试下一个"
+            done
+            return 1
+            ;;
+        yum)
+            _cm_yum_base="centos/\$releasever/os/\$basearch/"
+            for _cm_mirror in \
+                "https://mirrors.ustc.edu.cn/${_cm_yum_base}" \
+                "https://mirrors.aliyun.com/${_cm_yum_base}" \
+                "https://repo.huaweicloud.com/${_cm_yum_base}"; do
+                _log_message "INFO" "尝试镜像: ${_cm_mirror}"
+                if yum --disablerepo='*' --repofrompath="cn-temp-$$,${_cm_mirror}" --enablerepo="cn-temp-$$" \
+                       -q makecache >> "$LOGFILE" 2>&1; then
+                    if yum --disablerepo='*' --repofrompath="cn-temp-$$,${_cm_mirror}" --enablerepo="cn-temp-$$" \
+                           -q install -y "$@" >> "$LOGFILE" 2>&1; then
+                        return 0
+                    fi
                 fi
                 _log_message "WARNING" "镜像 ${_cm_mirror} 不可用，尝试下一个"
             done
@@ -622,25 +691,37 @@ EOF
     esac
 }
 
-# ---------------------------- Alpine 专用：启用 community 仓库 ----------------------------
-enable_alpine_community_repo() {
-    if grep -Eq '^[[:space:]]*[^#].*/community([[:space:]]*)?$' /etc/apk/repositories 2>/dev/null; then
-        _log_message "OK" "Alpine community 仓库已启用"
+# ---------------------------- Alpine 专用：准备 Pixi 运行环境 ----------------------------
+prepare_alpine_pixi_runtime() {
+    if [ "${PACKAGE_MANAGER}" != "apk" ]; then
         return 0
     fi
-    _ec_main_repo=$(awk '/^[[:space:]]*[^#].*\/main([[:space:]]*)?$/ {print $1; exit}' /etc/apk/repositories 2>/dev/null || true)
-    if [ -n "${_ec_main_repo}" ]; then
-        _ec_community_repo="${_ec_main_repo%/main}/community"
-    else
-        _ec_alpine_ver=$(cut -d. -f1,2 /etc/alpine-release 2>/dev/null || echo "edge")
-        if [ "${_ec_alpine_ver}" = "edge" ]; then
-            _ec_community_repo="https://dl-cdn.alpinelinux.org/alpine/edge/community"
-        else
-            _ec_community_repo="https://dl-cdn.alpinelinux.org/alpine/v${_ec_alpine_ver}/community"
-        fi
+    _log_message "INFO" "正在准备 Alpine Pixi 运行环境..."
+
+    if apk info -e gcompat >/dev/null 2>&1; then
+        _log_message "EXEC" "▶ 移除 gcompat，避免与真实 glibc 冲突"
+        apk del gcompat >> "$LOGFILE" 2>&1 || {
+            end_step "${ICON_ERROR}" "gcompat 移除失败，请先手动执行: apk del gcompat" "${RED}"
+            exit 1
+        }
     fi
-    _log_message "INFO" "▶ 启用 Alpine community 仓库: ${_ec_community_repo}"
-    printf '%s\n' "${_ec_community_repo}" >> /etc/apk/repositories
+
+    if ! has_real_glibc; then
+        install_alpine_real_glibc || {
+            end_step "${ICON_ERROR}" "Alpine glibc 安装失败" "${RED}"
+            exit 1
+        }
+    fi
+
+    has_real_glibc || {
+        end_step "${ICON_ERROR}" "未检测到真实 glibc，不能继续安装 Pixi 环境" "${RED}"
+        exit 1
+    }
+
+    ensure_alpine_glibc_loader || {
+        end_step "${ICON_ERROR}" "未检测到 glibc loader: ${ALPINE_GLIBC_LOADER}" "${RED}"
+        exit 1
+    }
 }
 
 # ---------------------------- Alpine 专用：确保 glibc loader ----------------------------
@@ -651,10 +732,20 @@ ensure_alpine_glibc_loader() {
     fi
     for _eg_candidate in /lib/ld-linux-x86-64.so.2 /usr/glibc-compat/lib/ld-linux-x86-64.so.2; do
         if [ -e "${_eg_candidate}" ]; then
-            mkdir -p /lib64
-            ln -sf "${_eg_candidate}" "${ALPINE_GLIBC_LOADER}"
-            _log_message "OK" "已创建 glibc loader 兼容链接: ${ALPINE_GLIBC_LOADER} -> ${_eg_candidate}"
-            return 0
+            mkdir -p /lib64 /lib
+
+            if [ "${_eg_candidate}" != "${ALPINE_GLIBC_LOADER}" ]; then
+                ln -sf "${_eg_candidate}" "${ALPINE_GLIBC_LOADER}"
+            fi
+
+            if [ "${_eg_candidate}" != "/lib/ld-linux-x86-64.so.2" ]; then
+                ln -sf "${_eg_candidate}" /lib/ld-linux-x86-64.so.2 2>/dev/null || true
+            fi
+
+            if [ -e "${ALPINE_GLIBC_LOADER}" ]; then
+                _log_message "OK" "已创建 glibc loader 兼容链接: ${ALPINE_GLIBC_LOADER} -> ${_eg_candidate}"
+                return 0
+            fi
         fi
     done
     _log_message "ERROR" "未找到 glibc loader，Pixi 的 linux-64 Python 可能无法启动"
@@ -722,12 +813,30 @@ install_alpine_real_glibc() {
     fi
     rm -rf "${_ig_tmp_dir}"
 
-    if ensure_alpine_glibc_loader; then
-        _log_message "OK" "第三方 glibc 安装完成"
-    else
+    ensure_alpine_glibc_loader || {
         end_step "${ICON_ERROR}" "第三方 glibc 安装后仍缺少 loader" "${RED}"
         exit 1
+    }
+
+    has_real_glibc || {
+        end_step "${ICON_ERROR}" "第三方 glibc 安装完成，但真实 glibc 校验失败" "${RED}"
+        exit 1
+    }
+
+    _log_message "OK" "第三方 glibc 安装完成"
+}
+
+# ---------------------------- Alpine 专用：检测真实 glibc ----------------------------
+has_real_glibc() {
+    if [ -x /usr/glibc-compat/bin/getconf ]; then
+        /usr/glibc-compat/bin/getconf GNU_LIBC_VERSION >/dev/null 2>&1 && return 0
     fi
+
+    if [ -x /usr/glibc-compat/lib/libc.so.6 ]; then
+        /usr/glibc-compat/lib/libc.so.6 2>&1 | grep -qi 'GNU C Library' && return 0
+    fi
+
+    return 1
 }
 
 # ---------------------------- Alpine 专用：Pixi 安装诊断 ----------------------------
@@ -810,7 +919,7 @@ install_deps() {
                 fi
             done ;;
         apk)
-            for _id_pkg in git android-tools curl ca-certificates tar xz libstdc++ libgcc; do
+            for _id_pkg in git android-tools curl ca-certificates tar gzip xz bzip2 zstd bash libstdc++ libgcc coreutils; do
                 if apk info -e "$_id_pkg" >/dev/null 2>&1; then
                     _log_message "OK" "依赖已存在: ${_id_pkg}"
                 else
@@ -824,6 +933,7 @@ install_deps() {
     esac
 
     if [ -z "${_id_missing}" ]; then
+        prepare_alpine_pixi_runtime
         _log_message "OK" "✓ curl $(curl --version 2>/dev/null | head -n1 | awk '{print $2}')"
         _log_message "OK" "✓ Git $(git --version 2>/dev/null | awk '{print $NF}')"
         _log_message "OK" "✓ ADB $(adb --version 2>/dev/null | head -n1 | awk '{print $NF}')"
@@ -925,41 +1035,7 @@ install_deps() {
         esac
     fi
 
-    # Alpine glibc 兼容层（gcompat → 自动降级第三方 glibc）
-    if [ "${PACKAGE_MANAGER}" = "apk" ]; then
-        _log_message "INFO" "正在配置 Alpine glibc 兼容层..."
-        _ga_gcompat_missing=""
-        if apk info -e gcompat >/dev/null 2>&1; then
-            _log_message "OK" "glibc 兼容层已存在: gcompat"
-        else
-            _ga_gcompat_missing="gcompat"
-        fi
-
-        if [ -n "${_ga_gcompat_missing}" ]; then
-            _log_message "WARNING" "glibc 兼容层缺失: gcompat"
-            enable_alpine_community_repo
-            _log_message "EXEC" "▶ apk add --no-cache gcompat"
-            if [ "${USE_CN_MIRROR}" = true ]; then
-                cn_package_mirrors gcompat
-                _ga_gcompat_ok=$?
-            else
-                apk add --no-cache gcompat >> "$LOGFILE" 2>&1
-                _ga_gcompat_ok=$?
-            fi
-            if [ "${_ga_gcompat_ok}" = 0 ]; then
-                _log_message "OK" "✓ gcompat 安装成功"
-            else
-                _log_message "WARNING" "gcompat 在当前仓库不可用，自动降级到第三方 glibc"
-                install_alpine_real_glibc
-            fi
-        fi
-
-        # 确保 glibc loader 存在（gcompat 或第三方 glibc 都应提供）
-        if ! ensure_alpine_glibc_loader; then
-            _log_message "WARNING" "gcompat 未提供 glibc loader，自动降级到第三方 glibc"
-            install_alpine_real_glibc
-        fi
-    fi
+    prepare_alpine_pixi_runtime
 
     _log_message "OK" "✓ curl $(curl --version 2>/dev/null | head -n1 | awk '{print $2}')"
     _log_message "OK" "✓ Git $(git --version 2>/dev/null | awk '{print $NF}')"
@@ -970,9 +1046,6 @@ install_deps() {
         _log_message "OK" "✓ ca-certificates $(apk info -v ca-certificates 2>/dev/null | sed 's/^ca-certificates-//' || echo '✓')"
         _log_message "OK" "✓ libstdc++ $(apk info -v libstdc++ 2>/dev/null | sed 's/^libstdc++-//' || echo '✓')"
         _log_message "OK" "✓ libgcc $(apk info -v libgcc 2>/dev/null | sed 's/^libgcc-//' || echo '✓')"
-        if apk info -e gcompat >/dev/null 2>&1; then
-            _log_message "OK" "✓ gcompat $(apk info -v gcompat 2>/dev/null | sed 's/^gcompat-//' || echo '✓')"
-        fi
     fi
     end_step "${ICON_OK}" "依赖检查完成"
 }
@@ -1124,10 +1197,6 @@ PIXI_MIRROR_EOF
     if [ "${PACKAGE_MANAGER}" = "apk" ]; then
         export CONDA_OVERRIDE_GLIBC="${CONDA_OVERRIDE_GLIBC:-${ALPINE_GLIBC_OVERRIDE}}"
         _log_message "INFO" "Alpine 已设置 CONDA_OVERRIDE_GLIBC=${CONDA_OVERRIDE_GLIBC}"
-        ensure_alpine_glibc_loader || {
-            end_step "${ICON_ERROR}" "Alpine glibc 兼容层不足，经过 gcompat 和第三方 glibc 多轮尝试后仍缺少 loader，请检查日志：${LOGFILE}" "${RED}"
-            exit 1
-        }
     fi
 
     _se_install_log="/tmp/pixi_install_$$.log"
@@ -1151,27 +1220,6 @@ PIXI_MIRROR_EOF
             sed -i '/\[pypi-options\]/,/^\[.*\]/ { /index-url = /d; /^$/d; }' pixi.toml 2>/dev/null || true
             {
                 _log_message "WARNING" "检测到已有 Pixi 环境，正在清理..."
-                _log_message "EXEC" "▶ pixi clean cache -y"
-                pixi clean cache -y || true
-                _log_message "EXEC" "▶ pixi clean --environment default"
-                pixi clean --environment default || \
-                _log_message "EXEC" "▶ pixi clean"
-                pixi clean || \
-                _log_message "EXEC" "▶ rm -rf .pixi pixi.lock"
-                rm -rf .pixi pixi.lock || true
-                _log_message "OK" "✓ 旧环境已清理"
-            } >> "$LOGFILE" 2>&1 || true
-            _se_install_attempt=$((_se_install_attempt + 1))
-            continue
-        fi
-
-        if [ "${PACKAGE_MANAGER}" = "apk" ] && [ "${ALPINE_GLIBC_RETRY_DONE}" != true ] && \
-           pixi_install_needs_real_glibc "${_se_install_log}"; then
-            _log_message "WARNING" "gcompat 无法启动 conda linux-64 Python，自动切换到第三方 glibc 并重试"
-            rm -f "${_se_install_log}"
-            ALPINE_GLIBC_RETRY_DONE=true
-            install_alpine_real_glibc
-            {
                 _log_message "EXEC" "▶ pixi clean cache -y"
                 pixi clean cache -y || true
                 _log_message "EXEC" "▶ pixi clean --environment default"
@@ -1271,11 +1319,20 @@ EOF
 
     _log_message "EXEC" "▶ systemctl start run_alas.service"
     systemctl start run_alas.service >> "$LOGFILE" 2>&1
-    _log_message "OK" "✓ 服务已启动"
+    _log_message "OK" "✓ systemctl start 已执行"
+    sleep 2
+
+    if systemctl is-active --quiet run_alas.service 2>/dev/null; then
+        _log_message "OK" "✓ 服务运行中"
+    else
+        _log_message "ERROR" "✗ 服务启动后立即崩溃"
+        end_step "${ICON_ERROR}" "systemd 服务启动失败，请查看日志: ${LOGFILE}" "${RED}"
+        return
+    fi
 
     if [ "${SKIP_SERVICE}" = "true" ]; then
         _log_message "INFO" "检测到 -S、--skip-service，跳过开机自启注册"
-        end_step "${ICON_INFO}" "由于设置了 -S、--skip-service参数，systemd 服务单元仅已创建" "${GREEN}"
+        end_step "${ICON_INFO}" "由于设置了 -S、--skip-service参数，systemd 服务已启动但未启用开机自启" "${GREEN}"
         return
     fi
 
@@ -1283,11 +1340,7 @@ EOF
     systemctl enable run_alas.service >> "$LOGFILE" 2>&1
     _log_message "OK" "✓ 服务已启用开机自启"
 
-    if systemctl is-active --quiet run_alas.service 2>/dev/null; then
-        end_step "${ICON_OK}" "systemd 服务已启动并设为开机自启"
-    else
-        end_step "${ICON_ERROR}" "systemd 服务启动失败，请查看日志: ${LOGFILE}" "${RED}"
-    fi
+    end_step "${ICON_OK}" "systemd 服务已启动并设为开机自启"
 }
 
 _configure_openrc() {
@@ -1440,6 +1493,13 @@ SYSV_EOF
         _log_message "WARN" "⚠ 未找到可用的自启注册工具，开机自启配置失败"
         end_step "${ICON_WARN}" "SysVinit 服务已启动，但开机自启配置失败" "${YELLOW}"
     fi
+}
+
+# ---------------------------- 修正文件归属 ----------------------------
+fix_user_permissions() {
+    chown -R "${USER_NAME}:${USER_GROUP}" "${INSTALL_DIR}" 2>/dev/null || true
+    chown -R "${USER_NAME}:${USER_GROUP}" "${SCRIPT_OUT_DIR}" 2>/dev/null || true
+    [ -d "${HOME}/.pixi" ] && chown -R "${USER_NAME}:${USER_GROUP}" "${HOME}/.pixi" 2>/dev/null || true
 }
 
 # ---------------------------- 完成摘要 ----------------------------
@@ -1636,13 +1696,30 @@ do_uninstall() {
 # ---------------------------- 主流程 ----------------------------
 main() {
     if [ "${UNINSTALL}" = true ]; then
+        if [ "${DEBUG}" = true ] && command -v tail >/dev/null 2>&1; then
+            tail -n +0 -f "$LOGFILE" 2>/dev/null &
+            _TAIL_PID=$!
+            printf '%b\n' "  ${ICON_GEAR}  ${CYAN}检测到 --debug, 进入调试模式${NC}"
+            printf '%b\n' "  ${ICON_GEAR}  ${CYAN}日志将实时输出至终端${NC}"
+            echo_line ""
+        fi
         detect_os
         gather_system_info
         print_header
         check_root
         do_uninstall
+        if [ -n "${_TAIL_PID}" ]; then kill "${_TAIL_PID}" 2>/dev/null || true; fi
         exit 0
     fi
+
+    if [ "${DEBUG}" = true ] && command -v tail >/dev/null 2>&1; then
+        tail -n +0 -f "$LOGFILE" 2>/dev/null &
+        _TAIL_PID=$!
+        printf '%b\n' "  ${ICON_GEAR}  ${CYAN}检测到 --debug, 进入调试模式${NC}"
+        printf '%b\n' "  ${ICON_GEAR}  ${CYAN}日志将实时输出至终端${NC}"
+        echo_line ""
+    fi
+
     detect_os
     gather_system_info
     print_header
@@ -1654,7 +1731,11 @@ main() {
     setup_pixi_env
     configure_deploy
     configure_service
+    fix_user_permissions
     print_completion
+
+    if [ -n "${_TAIL_PID}" ]; then kill "${_TAIL_PID}" 2>/dev/null || true; fi
+
     if [ "${KEEP_LOG}" = false ]; then
         _log_message "INFO" "安装完成，清理日志文件: ${LOGFILE}"
         rm -f "$LOGFILE"
