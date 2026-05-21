@@ -1494,16 +1494,29 @@ do_uninstall() {
     fi
 
     start_step "正在清理 Conda 虚拟环境..."
-    if command -v conda >/dev/null 2>&1; then
-        CONDA_BIN=$(which conda 2>/dev/null || command -v conda)
-        if echo "${CONDA_BIN}" | grep -qv '/'; then
-            CONDA_BIN=$(type -p conda 2>/dev/null || echo "${HOME}/miniforge3/bin/conda")
+    _conda_bin=""
+    if [ -x "${HOME}/miniforge3/bin/conda" ]; then
+        _conda_bin="${HOME}/miniforge3/bin/conda"
+        export PATH="${HOME}/miniforge3/bin:${PATH}"
+    fi
+    if [ -n "${_conda_bin}" ]; then
+        _log_message "INFO" "使用 conda: ${_conda_bin}"
+        _conda_sh=""
+        if [ -f "${HOME}/miniforge3/etc/profile.d/conda.sh" ]; then
+            _conda_sh="${HOME}/miniforge3/etc/profile.d/conda.sh"
+        elif [ -f /etc/profile.d/conda.sh ]; then
+            _conda_sh="/etc/profile.d/conda.sh"
+        else
+            _conda_sh=$(find "${HOME}" -maxdepth 4 -name "conda.sh" -type f 2>/dev/null | head -1 || true)
         fi
-        _log_message "INFO" "使用 conda: ${CONDA_BIN}"
-        _conda_prefix=$(dirname "$(dirname "${CONDA_BIN}")")
-        if [ -f "${_conda_prefix}/etc/profile.d/conda.sh" ]; then
-            . "${_conda_prefix}/etc/profile.d/conda.sh" >> "$LOGFILE" 2>&1 || true
+        if [ -n "${_conda_sh}" ]; then
+            _log_message "INFO" "加载 conda.sh: ${_conda_sh}"
+            . "${_conda_sh}" >> "$LOGFILE" 2>&1 || true
+        else
+            _log_message "WARNING" "未找到 conda.sh，尝试直接使用 conda 命令"
         fi
+        _conda_version=$(conda --version 2>/dev/null || echo "conda 命令不可用")
+        _log_message "INFO" "验证: ${_conda_version}"
         if conda env list 2>/dev/null | grep -q "^alas "; then
             _log_message "EXEC" "▶ conda env remove -n alas"
             conda env remove -n alas -y >> "$LOGFILE" 2>&1 || true
@@ -1518,6 +1531,15 @@ do_uninstall() {
         end_step "${ICON_OK}" "虚拟环境已清理"
     else
         end_step "${ICON_INFO}" "未检测到 Conda，跳过虚拟环境清理" "${GREEN}"
+    fi
+
+    start_step "正在删除启动脚本..."
+    if [ -f "${SCRIPT_OUT_DIR}/run_alas.sh" ]; then
+        _log_message "EXEC" "▶ rm -f ${SCRIPT_OUT_DIR}/run_alas.sh"
+        rm -f "${SCRIPT_OUT_DIR}/run_alas.sh"
+        end_step "${ICON_OK}" "启动脚本已删除"
+    else
+        end_step "${ICON_INFO}" "启动脚本不存在，跳过" "${GREEN}"
     fi
 
     start_step "正在删除 ALAS 目录..."
@@ -1540,15 +1562,6 @@ do_uninstall() {
         end_step "${ICON_OK}" "目录已删除"
     else
         end_step "${ICON_INFO}" "ALAS 目录已不存在，跳过" "${GREEN}"
-    fi
-
-    start_step "正在删除启动脚本..."
-    if [ -f "${SCRIPT_OUT_DIR}/run_alas.sh" ]; then
-        _log_message "EXEC" "▶ rm -f ${SCRIPT_OUT_DIR}/run_alas.sh"
-        rm -f "${SCRIPT_OUT_DIR}/run_alas.sh"
-        end_step "${ICON_OK}" "启动脚本已删除"
-    else
-        end_step "${ICON_INFO}" "启动脚本不存在，跳过" "${GREEN}"
     fi
 
     if [ "${KEEP_LOG}" = false ]; then
