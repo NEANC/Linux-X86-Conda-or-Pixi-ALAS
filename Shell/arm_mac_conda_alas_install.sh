@@ -760,9 +760,9 @@ create_launcher() {
 
     cat > "${SCRIPT_OUT_DIR}/run_alas.sh" <<EOF
 #!/bin/bash
-eval "\$(${CONDA_BIN} shell.bash hook)"
+eval "\$("${CONDA_BIN}" shell.bash hook)"
 conda activate alas
-cd ${ALAS_DIR}
+cd "${ALAS_DIR}"
 python gui.py
 EOF
     chmod +x "${SCRIPT_OUT_DIR}/run_alas.sh"
@@ -839,8 +839,8 @@ create_desktop_commands() {
     cat > "${desktop_dir}/运行ALAS.command" << 'CMD_EOF'
 #!/bin/bash
 WINDOW_ID=$(osascript -e 'tell application "Terminal" to id of front window')
-(sleep 3 && open http://127.0.0.1:22267) &
-launchctl stop com.alas.run && launchctl start com.alas.run
+(sleep 3 && open "http://127.0.0.1:22267") &
+launchctl kickstart -k "gui/$(id -u)/com.alas.run" 2>/dev/null || launchctl start com.alas.run
 osascript -e "tell application \"Terminal\" to close window id $WINDOW_ID"
 CMD_EOF
     chmod +x "${desktop_dir}/运行ALAS.command"
@@ -860,8 +860,8 @@ CMD_EOF
     cat > "${desktop_dir}/重启ALAS.command" << 'CMD_EOF'
 #!/bin/bash
 WINDOW_ID=$(osascript -e 'tell application "Terminal" to id of front window')
-(sleep 3 && open http://127.0.0.1:22267) &
-launchctl stop com.alas.run && launchctl start com.alas.run
+(sleep 3 && open "http://127.0.0.1:22267") &
+launchctl kickstart -k "gui/$(id -u)/com.alas.run" 2>/dev/null || launchctl start com.alas.run
 osascript -e "tell application \"Terminal\" to close window id $WINDOW_ID"
 CMD_EOF
     chmod +x "${desktop_dir}/重启ALAS.command"

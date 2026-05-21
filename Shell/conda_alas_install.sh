@@ -1206,10 +1206,10 @@ create_launcher() {
     cat > "${SCRIPT_OUT_DIR}/run_alas.sh" <<EOF
 #!/bin/sh
 # ALAS 启动脚本 (由 posix_conda_alas_install.sh 自动生成)
-# 用法: sh ${SCRIPT_OUT_DIR}/run_alas.sh
+# 用法: sh "${SCRIPT_OUT_DIR}/run_alas.sh"
 . "$(dirname "$(dirname "${CONDA_BIN}")")/etc/profile.d/conda.sh"
 conda activate alas
-cd ${ALAS_DIR}
+cd "${ALAS_DIR}"
 python gui.py
 EOF
     chmod +x "${SCRIPT_OUT_DIR}/run_alas.sh"
