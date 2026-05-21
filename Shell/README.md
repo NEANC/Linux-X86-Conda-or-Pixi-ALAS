@@ -8,7 +8,6 @@
 
 | 脚本                            | 适用平台              | 管理器                         |
 | ------------------------------- | --------------------- | ------------------------------ |
-| `alpine_pixi_alas_install.sh`   | Alpine Linux x86-64   | Pixi                           |
 | `pixi_alas_install.sh`          | Linux x86-64          | Pixi                           |
 | `conda_alas_install.sh`         | Linux x86-64          | Conda (Miniforge)              |
 | `arm_mac_conda_alas_install.sh` | macOS (Apple Silicon) | Conda (Miniforge via Homebrew) |
@@ -30,7 +29,10 @@
 
 ---
 
-## Linux
+## Linux x86-64
+
+> [!IMPORTANT]
+> 脚本测试环境为 PVE 下的 LXC Debian 13 X86_64 与 Alpine Linux x86-64，其他版本的 Linux 若遇到问题请提交 Issues
 
 ### Pixi 版部署脚本
 
@@ -62,7 +64,10 @@ curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/
 
 ## ARM macOS
 
-### Conda 版部署脚本
+> [!IMPORTANT]
+> 未测试 Pixi 版脚本测试，若遇到问题请提交 Issues
+
+### Conda 版部署脚本 via Homebrew
 
 ```bash
 # 标准安装
@@ -81,7 +86,7 @@ curl -fsSL https://ghfast.top/https://raw.githubusercontent.com/NEANC/Linux-X86-
 curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/arm_mac_conda_alas_install.sh | bash -s -- --uninstall
 ```
 
-### Pixi 版部署脚本
+### Pixi 版部署脚本 via Homebrew
 
 ```bash
 # 标准安装
