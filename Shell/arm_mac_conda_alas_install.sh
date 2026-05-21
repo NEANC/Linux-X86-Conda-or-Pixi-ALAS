@@ -86,6 +86,8 @@ SKIP_SERVICE=true
 UNINSTALL=false
 UNINSTALL_YES=false
 KEEP_LOG=false
+DEBUG=false
+_TAIL_PID=""
 
 # ---------------------------- 帮助 ----------------------------
 usage() {
@@ -100,6 +102,7 @@ usage() {
   --uninstall [-Y]       反向安装：停止并删除 ALAS、虚拟环境、开机自启
   -l, --log              保留安装日志，不自动删除
   -h, --help             显示帮助信息
+  --debug                调试模式，日志将实时输出至终端
 EOF
 }
 
@@ -140,6 +143,10 @@ start_step() {
     _cleanup_spinner
     local msg="$1"
     _log_message "START" "${msg}"
+    if [[ "${DEBUG}" == true ]]; then
+        printf '%b\n' "  ${ICON_GEAR}  ${YELLOW}${msg}${NC}"
+        return 0
+    fi
     local spin_chars=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
     local idx=0
     {
@@ -170,6 +177,9 @@ end_step() {
 # ---------------------------- 中断信号处理 ----------------------------
 _sigint_handler() {
     _cleanup_spinner
+    if [[ -n "${_TAIL_PID}" ]]; then
+        kill "${_TAIL_PID}" 2>/dev/null || true
+    fi
     echo -e "\n  ${ICON_WARN}  ${YELLOW}脚本已被用户中断${NC}"
     exit 130
 }
@@ -209,6 +219,7 @@ while [[ $# -gt 0 ]]; do
             shift ;;
         -l|--log) KEEP_LOG=true; shift ;;
         -S|--setup-service) SKIP_SERVICE=false; shift ;;
+        --debug) DEBUG=true; shift ;;
         -h|--help) usage; exit 0 ;;
         *) log_error "未知参数: $1"; usage; exit 1 ;;
     esac
@@ -953,12 +964,29 @@ do_uninstall() {
 # ---------------------------- 主流程 ----------------------------
 main() {
     if [[ "${UNINSTALL}" == true ]]; then
-        detect_os
+        if [[ "${DEBUG}" == true ]] && command -v tail >/dev/null 2>&1; then
+            tail -n +0 -f "$LOGFILE" 2>/dev/null &
+            _TAIL_PID=$!
+            printf '%b\n' "  ${ICON_GEAR}  ${CYAN}检测到 --debug, 进入调试模式${NC}"
+            printf '%b\n' "  ${ICON_GEAR}  ${CYAN}日志将实时输出至终端${NC}"
+            echo_line ""
+        fi
+        _sudo_warning
         gather_system_info
         print_header
         do_uninstall
+        if [[ -n "${_TAIL_PID}" ]]; then kill "${_TAIL_PID}" 2>/dev/null || true; fi
         exit 0
     fi
+
+    if [[ "${DEBUG}" == true ]] && command -v tail >/dev/null 2>&1; then
+        tail -n +0 -f "$LOGFILE" 2>/dev/null &
+        _TAIL_PID=$!
+        printf '%b\n' "  ${ICON_GEAR}  ${CYAN}检测到 --debug, 进入调试模式${NC}"
+        printf '%b\n' "  ${ICON_GEAR}  ${CYAN}日志将实时输出至终端${NC}"
+        echo_line ""
+    fi
+
     gather_system_info
     print_header
     install_homebrew
@@ -970,6 +998,9 @@ main() {
     create_desktop_commands
     configure_service
     print_completion
+
+    if [[ -n "${_TAIL_PID}" ]]; then kill "${_TAIL_PID}" 2>/dev/null || true; fi
+
     if [[ "${KEEP_LOG}" == false ]]; then
         _log_message "INFO" "安装完成，清理日志文件: ${LOGFILE}"
         rm -f "$LOGFILE"
