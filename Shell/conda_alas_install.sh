@@ -657,6 +657,24 @@ EOF
             done
             return 1
             ;;
+        yum)
+            _cm_yum_base="centos/\$releasever/os/\$basearch/"
+            for _cm_mirror in \
+                "https://mirrors.ustc.edu.cn/${_cm_yum_base}" \
+                "https://mirrors.aliyun.com/${_cm_yum_base}" \
+                "https://repo.huaweicloud.com/${_cm_yum_base}"; do
+                _log_message "INFO" "尝试镜像: ${_cm_mirror}"
+                if yum --disablerepo='*' --repofrompath="cn-temp-$$,${_cm_mirror}" --enablerepo="cn-temp-$$" \
+                       -q makecache >> "$LOGFILE" 2>&1; then
+                    if yum --disablerepo='*' --repofrompath="cn-temp-$$,${_cm_mirror}" --enablerepo="cn-temp-$$" \
+                           -q install -y "$@" >> "$LOGFILE" 2>&1; then
+                        return 0
+                    fi
+                fi
+                _log_message "WARNING" "镜像 ${_cm_mirror} 不可用，尝试下一个"
+            done
+            return 1
+            ;;
         *)
             _log_message "ERROR" "CN 镜像不支持包管理器: ${PACKAGE_MANAGER}"
             return 1
