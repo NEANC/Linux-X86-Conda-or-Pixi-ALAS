@@ -30,50 +30,32 @@
 
 ---
 
-> [!IMPORTANT]  
-> Alpine 版脚本仅支持 Alpine Linux x86-64 平台，不支持其他 Linux 发行版，其他版本也不支持 Alpine
-
 ## Linux
 
 ### Pixi 版部署脚本
 
 ```bash
 # 标准安装
-curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/pixi_alas_install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/pixi_alas_install.sh | sudo sh
 
 # 使用国内镜像
-curl -fsSL https://ghfast.top/https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/pixi_alas_install.sh | sudo bash -s -- -t CN
+curl -fsSL https://ghfast.top/https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/pixi_alas_install.sh | sudo sh -s -- -t CN
 
 # 卸载
-curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/pixi_alas_install.sh | sudo bash -s -- --uninstall
+curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/pixi_alas_install.sh | sudo sh -s -- --uninstall
 ```
 
 ### Conda 版部署脚本
 
 ```bash
 # 标准安装
-curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/conda_alas_install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/conda_alas_install.sh | sudo sh
 
 # 使用国内镜像
-curl -fsSL https://ghfast.top/https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/conda_alas_install.sh | sudo bash -s -- -t CN
+curl -fsSL https://ghfast.top/https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/conda_alas_install.sh | sudo sh -s -- -t CN
 
 # 卸载
-curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/conda_alas_install.sh | sudo bash -s -- --uninstall
-```
-
-> [!WARNING]
-
-### Alpine Linux 版
-
-```bash
-# 标准安装
-curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/alpine_pixi_alas_install.sh | sudo sh
-
-# 使用国内镜像
-curl -fsSL https://ghfast.top/https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/alpine_pixi_alas_install.sh | sudo sh -s -- -t CN
-
-# 卸载
-curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/alpine_pixi_alas_install.sh | sudo sh -s -- --uninstall
+curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/conda_alas_install.sh | sudo sh -s -- --uninstall
 ```
 
 ---
