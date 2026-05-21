@@ -679,11 +679,19 @@ PIXI_EOF
     _log_message "OK" "✓ pixi init 完成"
 
     _log_message "EXEC" "▶ 添加 start 任务至 pixi.toml"
-    cat >> pixi.toml << 'PIXI_EOF'
+    if grep -q '^start = ' pixi.toml 2>/dev/null; then
+        _log_message "INFO" "start 任务已存在，跳过"
+    elif grep -q '^\[tasks\]' pixi.toml 2>/dev/null; then
+        sed -i '' '/^\[tasks\]/a\
+start = "python gui.py"' pixi.toml
+        _log_message "OK" "✓ start 任务已添加至已有 [tasks] 节"
+    else
+        cat >> pixi.toml << 'PIXI_EOF'
 [tasks]
 start = "python gui.py"
 PIXI_EOF
-    _log_message "OK" "✓ start 任务已配置"
+        _log_message "OK" "✓ start 任务已配置"
+    fi
 
     if [[ -d ".pixi/envs/alas" || -f "pixi.lock" ]]; then
         _log_message "WARNING" "检测到已有 Pixi 环境，正在清理..."
