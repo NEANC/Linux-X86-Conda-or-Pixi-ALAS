@@ -243,8 +243,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ---------------------------- 平台检查 ----------------------------
-if [[ "$(uname)" != "Darwin" ]]; then
-    echo -e "${RED}本脚本仅适用于 arm 架构的 macOS 系统${NC}"
+if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
+    echo -e "${RED}本脚本仅适用于 Apple Silicon macOS${NC}"
     exit 1
 fi
 

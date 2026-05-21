@@ -421,7 +421,13 @@ detect_os() {
             _log_message "ERROR" "非 Linux 内核 (${_do_kernel_name})，Unix 系统请手动安装"
             echo_line "  ${ICON_ERROR}  ${RED}非 Linux 内核 (${_do_kernel_name})，Unix 系统请手动安装${NC}"
             exit 1 ;;
-        Linux) ;;
+        Linux)
+            _do_arch=$(uname -m 2>/dev/null || true)
+            if [ "${_do_arch}" != "x86_64" ]; then
+                echo_line "  ${ICON_ERROR}  ${RED}不支持的架构: ${_do_arch}，本脚本仅适用于 x86_64${NC}"
+                exit 1
+            fi
+            ;;
         *)
             _log_message "ERROR" "不支持的操作系统: ${_do_kernel_name}"
             echo_line "  ${ICON_ERROR}  ${RED}不支持的操作系统: ${_do_kernel_name}${NC}"
