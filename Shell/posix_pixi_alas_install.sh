@@ -858,7 +858,7 @@ install_deps() {
         _log_message "EXEC" "▶ ${PACKAGE_MANAGER} (CN mirrors)${_id_missing}"
         # shellcheck disable=SC2086
         if cn_package_mirrors ${_id_missing}; then
-            _log_message "OK" "✓ CN 镜像安装完成"
+            _log_message "OK" "✓ 使用 CN 镜像安装依赖完成"
         else
             _log_message "WARNING" "CN 镜像全部不可用，自动回退官方源"
             _cn_fallback=true
