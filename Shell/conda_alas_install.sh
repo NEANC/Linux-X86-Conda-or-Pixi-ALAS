@@ -73,13 +73,39 @@ KEEP_LOG=false
 USE_CN_MIRROR=false
 GH_PROXY=""
 DEPLOY_TEMPLATE="config/deploy.template-linux.yaml"
+
+# 优先使用 sudo 前的真实用户
+if [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER}" != "root" ]; then
+    USER_NAME="${SUDO_USER}"
+else
+    USER_NAME="$(logname 2>/dev/null || id -un 2>/dev/null || whoami)"
+fi
+
+USER_GROUP=$(id -gn "${USER_NAME}" 2>/dev/null || id -gn 2>/dev/null || echo "${USER_NAME}")
+
+# 获取真实用户的 home 目录
+USER_HOME=$(getent passwd "${USER_NAME}" 2>/dev/null | cut -d: -f6 || true)
+if [ -z "${USER_HOME}" ]; then
+    USER_HOME=$(awk -F: -v u="${USER_NAME}" '$1 == u {print $6; exit}' /etc/passwd 2>/dev/null || true)
+fi
+if [ -z "${USER_HOME}" ]; then
+    if [ "${USER_NAME}" = "root" ]; then
+        USER_HOME="${HOME:-/root}"
+    else
+        USER_HOME="/home/${USER_NAME}"
+    fi
+fi
+
+# 关键：把 HOME 改成真实用户的 home
+HOME="${USER_HOME}"
+export HOME
+
 INSTALL_DIR="${HOME}/AzurLaneAutoScript"
 SCRIPT_OUT_DIR="${HOME}/AzurLaneAutoScript"
 WORK_DIR=""
 ALAS_DIR=""
 CONDA_BIN=""
-USER_NAME="${SUDO_USER:-$(whoami)}"
-USER_GROUP=$(id -gn "${USER_NAME}" 2>/dev/null || id -gn 2>/dev/null || echo "${USER_NAME}")
+
 INIT_SYSTEM=""
 PACKAGE_MANAGER=""
 _SPINNER_PID=""
@@ -1399,6 +1425,13 @@ SYSV_EOF
     fi
 }
 
+# ---------------------------- 修正文件归属 ----------------------------
+fix_user_permissions() {
+    chown -R "${USER_NAME}:${USER_GROUP}" "${INSTALL_DIR}" 2>/dev/null || true
+    chown -R "${USER_NAME}:${USER_GROUP}" "${SCRIPT_OUT_DIR}" 2>/dev/null || true
+    [ -d "${HOME}/miniforge3" ] && chown -R "${USER_NAME}:${USER_GROUP}" "${HOME}/miniforge3" 2>/dev/null || true
+}
+
 # ---------------------------- 完成摘要 ----------------------------
 print_completion() {
     echo_line ""
@@ -1659,6 +1692,7 @@ main() {
     configure_deploy
     create_launcher
     configure_service
+    fix_user_permissions
     print_completion
 
     if [ -n "${_TAIL_PID}" ]; then kill "${_TAIL_PID}" 2>/dev/null || true; fi
