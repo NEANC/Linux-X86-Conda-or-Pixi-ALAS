@@ -72,22 +72,39 @@ WHITE='\033[37m'
 NC='\033[0m'
 
 # ---------------------------- 全局变量 ----------------------------
-INSTALL_DIR="${HOME}/AzurLaneAutoScript"
-SCRIPT_OUT_DIR="${HOME}/AzurLaneAutoScript"
 DEPLOY_TEMPLATE="config/deploy.template-linux.yaml"
 USE_CN_MIRROR=false
 GH_PROXY=""
 WORK_DIR=""
 ALAS_DIR=""
 PIXI_BIN_PATH=""
-USER_NAME="$(whoami)"
-_SPINNER_PID=""
+
 SKIP_SERVICE=true
 UNINSTALL=false
 UNINSTALL_YES=false
 KEEP_LOG=false
 DEBUG=false
 _TAIL_PID=""
+
+# 优先取 sudo 前的用户；否则取当前用户
+if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
+    USER_NAME="${SUDO_USER}"
+else
+    USER_NAME="$(stat -f '%Su' /dev/console 2>/dev/null || whoami)"
+fi
+
+USER_HOME="$(dscl . -read "/Users/${USER_NAME}" NFSHomeDirectory 2>/dev/null | awk '{print $2}')"
+if [[ -z "${USER_HOME}" ]]; then
+    USER_HOME="/Users/${USER_NAME}"
+fi
+
+HOME="${USER_HOME}"
+export HOME
+
+INSTALL_DIR="${HOME}/AzurLaneAutoScript"
+SCRIPT_OUT_DIR="${HOME}/AzurLaneAutoScript"
+
+_SPINNER_PID=""
 
 # ---------------------------- 帮助 ----------------------------
 usage() {
@@ -230,6 +247,33 @@ if [[ "$(uname)" != "Darwin" ]]; then
     echo -e "${RED}本脚本仅适用于 arm 架构的 macOS 系统${NC}"
     exit 1
 fi
+
+# ---------------------------- sudo 警告 ----------------------------
+_sudo_warning() {
+    if [[ "$(id -u)" -ne 0 ]]; then
+        return 0
+    fi
+    echo_line ""
+    echo_line "  ${ICON_WARN}  ${YELLOW}警告！您正在使用 sudo/root 运行本脚本${NC}"
+    echo_line "  ${ICON_INFO}  ${GREEN}本脚本建议使用正常用户执行${NC}"
+    echo_line ""
+    while true; do
+        echo -n "  是否继续？ [yes/N] ："
+        read -r CONFIRM < /dev/tty
+        CONFIRM=$(printf '%s' "${CONFIRM}" | tr -d '\r')
+        case "${CONFIRM}" in
+            yes|Yes|YES)
+                _log_message "INFO" "已确认在 root 下继续执行"
+                echo_line ""
+                return 0 ;;
+            no|NO|n|N)
+                _log_message "INFO" "用户取消执行"
+                echo_line "  ${ICON_INFO}  已取消执行"; exit 0 ;;
+            *)
+                echo_line "  ${ICON_WARN}  ${YELLOW}无效输入，请输入 yes 或 N${NC}" ;;
+        esac
+    done
+}
 
 # ---------------------------- 系统信息收集 ----------------------------
 gather_system_info() {
@@ -1012,6 +1056,7 @@ main() {
         echo_line ""
     fi
 
+    _sudo_warning
     gather_system_info
     print_header
     install_homebrew
