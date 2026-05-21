@@ -658,7 +658,7 @@ EOF
                 "https://mirrors.aliyun.com/opensuse/distribution/leap/${_cm_zypp_ver}/repo/oss/" \
                 "https://repo.huaweicloud.com/opensuse/distribution/leap/${_cm_zypp_ver}/repo/oss/"; do
                 _log_message "INFO" "尝试镜像: ${_cm_mirror}"
-                if zypper --non-interactive --no-gpg-checks --plus-repo "${_cm_mirror}" \
+                if zypper --non-interactive --plus-repo "${_cm_mirror}" \
                        install -y "$@" >> "$LOGFILE" 2>&1; then
                     return 0
                 fi
