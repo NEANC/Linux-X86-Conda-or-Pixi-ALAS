@@ -41,20 +41,6 @@ _log_message() {
     echo "${_lm_level} | ${_lm_timestamp} | ${_lm_msg}" >> "$LOGFILE"
 }
 
-_log_exec() {
-    _le_step_name="$1"
-    shift
-    _log_message "EXEC" "▶ ${_le_step_name}: $*"
-    "$@" >> "$LOGFILE" 2>&1
-    _le_ret=$?
-    if [ $_le_ret -ne 0 ]; then
-        _log_message "ERROR" "✗ ${_le_step_name}: 命令失败 (exit ${_le_ret})"
-    else
-        _log_message "OK"    "✓ ${_le_step_name}: 命令完成"
-    fi
-    return $_le_ret
-}
-
 # ---------------------------- 加载图标 ----------------------------
 
 ICON_INFO="💡"
@@ -1120,12 +1106,18 @@ PIXI_MIRROR_EOF
     fi
 
     if [ -d ".pixi/envs/default" ] || [ -d ".pixi/envs/alas" ] || [ -f "pixi.lock" ]; then
-        _log_message "WARNING" "检测到已有 Pixi 环境，正在清理..."
-        _log_exec "清理 Pixi 缓存" pixi clean cache -y || true
-        _log_exec "清理 Pixi 环境 (方法1: pixi clean --environment default)" pixi clean --environment default || \
-        _log_exec "清理 Pixi 环境 (方法2: pixi clean)" pixi clean || \
-        _log_exec "清理 Pixi 环境 (方法3: rm -rf .pixi pixi.lock)" rm -rf .pixi pixi.lock
-        _log_message "OK" "✓ 旧环境已清理"
+        {
+            _log_message "WARNING" "检测到已有 Pixi 环境，正在清理..."
+            _log_message "EXEC" "▶ pixi clean cache -y"
+            pixi clean cache -y || true
+            _log_message "EXEC" "▶ pixi clean --environment default"
+            pixi clean --environment default || \
+            _log_message "EXEC" "▶ pixi clean"
+            pixi clean || \
+            _log_message "EXEC" "▶ rm -rf .pixi pixi.lock"
+            rm -rf .pixi pixi.lock || true
+            _log_message "OK" "✓ 旧环境已清理"
+        } >> "$LOGFILE" 2>&1 || true
     fi
 
     if [ "${PACKAGE_MANAGER}" = "apk" ]; then
@@ -1158,10 +1150,14 @@ PIXI_MIRROR_EOF
             sed -i '/\[pypi-options\]/,/^\[.*\]/ { /index-url = /d; /^$/d; }' pixi.toml 2>/dev/null || true
             {
                 _log_message "WARNING" "检测到已有 Pixi 环境，正在清理..."
-                _log_exec "清理 Pixi 缓存" pixi clean cache -y || true
-                _log_exec "清理 Pixi 环境 (方法1: pixi clean --environment default)" pixi clean --environment default || \
-                _log_exec "清理 Pixi 环境 (方法2: pixi clean)" pixi clean || \
-                _log_exec "清理 Pixi 环境 (方法3: rm -rf .pixi pixi.lock)" rm -rf .pixi pixi.lock
+                _log_message "EXEC" "▶ pixi clean cache -y"
+                pixi clean cache -y || true
+                _log_message "EXEC" "▶ pixi clean --environment default"
+                pixi clean --environment default || \
+                _log_message "EXEC" "▶ pixi clean"
+                pixi clean || \
+                _log_message "EXEC" "▶ rm -rf .pixi pixi.lock"
+                rm -rf .pixi pixi.lock || true
                 _log_message "OK" "✓ 旧环境已清理"
             } >> "$LOGFILE" 2>&1 || true
             _se_install_attempt=$((_se_install_attempt + 1))
@@ -1174,11 +1170,17 @@ PIXI_MIRROR_EOF
             rm -f "${_se_install_log}"
             ALPINE_GLIBC_RETRY_DONE=true
             install_alpine_real_glibc
-            _log_exec "清理 Pixi 缓存" pixi clean cache -y || true
-            _log_exec "清理 Pixi 环境 (方法1: pixi clean --environment default)" pixi clean --environment default || \
-            _log_exec "清理 Pixi 环境 (方法2: pixi clean)" pixi clean || \
-            _log_exec "清理 Pixi 环境 (方法3: rm -rf .pixi pixi.lock)" rm -rf .pixi pixi.lock
-            _log_message "OK" "✓ 旧环境已清理"
+            {
+                _log_message "EXEC" "▶ pixi clean cache -y"
+                pixi clean cache -y || true
+                _log_message "EXEC" "▶ pixi clean --environment default"
+                pixi clean --environment default || \
+                _log_message "EXEC" "▶ pixi clean"
+                pixi clean || \
+                _log_message "EXEC" "▶ rm -rf .pixi pixi.lock"
+                rm -rf .pixi pixi.lock || true
+                _log_message "OK" "✓ 旧环境已清理"
+            } >> "$LOGFILE" 2>&1 || true
             _se_install_attempt=$((_se_install_attempt + 1))
             continue
         fi
@@ -1562,10 +1564,15 @@ do_uninstall() {
     if [ -d "${INSTALL_DIR}" ]; then
         cd "${INSTALL_DIR}"
         if [ -d ".pixi" ] || [ -f "pixi.lock" ]; then
-            _log_message "EXEC" "▶ 清理 Pixi 环境"
-            _log_exec "清理 Pixi 环境 (方法1: pixi clean --environment default)" pixi clean --environment default || \
-            _log_exec "清理 Pixi 环境 (方法2: pixi clean)" pixi clean || \
-            _log_exec "清理 Pixi 环境 (方法3: rm -rf .pixi pixi.lock)" rm -rf .pixi pixi.lock
+            {
+                _log_message "EXEC" "▶ 清理 Pixi 环境"
+                _log_message "EXEC" "▶ pixi clean --environment default"
+                pixi clean --environment default || \
+                _log_message "EXEC" "▶ pixi clean"
+                pixi clean || \
+                _log_message "EXEC" "▶ rm -rf .pixi pixi.lock"
+                rm -rf .pixi pixi.lock || true
+            } >> "$LOGFILE" 2>&1 || true
         else
             _log_message "INFO" "未检测到 Pixi 环境，跳过清理"
         fi

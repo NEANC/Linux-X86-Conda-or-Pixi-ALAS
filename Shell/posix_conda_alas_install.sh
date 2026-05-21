@@ -41,20 +41,6 @@ _log_message() {
     echo "${_lm_level} | ${_lm_timestamp} | ${_lm_msg}" >> "$LOGFILE"
 }
 
-_log_exec() {
-    _le_step_name="$1"
-    shift
-    _log_message "EXEC" "▶ ${_le_step_name}: $*"
-    "$@" >> "$LOGFILE" 2>&1
-    _le_ret=$?
-    if [ $_le_ret -ne 0 ]; then
-        _log_message "ERROR" "✗ ${_le_step_name}: 命令失败 (exit ${_le_ret})"
-    else
-        _log_message "OK"    "✓ ${_le_step_name}: 命令完成"
-    fi
-    return $_le_ret
-}
-
 # ---------------------------- 加载图标 ----------------------------
 
 ICON_INFO="💡"
@@ -860,7 +846,7 @@ install_deps() {
         _log_message "EXEC" "▶ ${PACKAGE_MANAGER} (CN mirrors)${_id_missing}"
         # shellcheck disable=SC2086
         if cn_package_mirrors ${_id_missing}; then
-            _log_message "OK" "✓ CN 镜像安装完成"
+            _log_message "OK" "✓ 使用 CN 镜像安装依赖完成"
         else
             _log_message "WARNING" "CN 镜像全部不可用，自动回退官方源"
             _cn_fallback=true
@@ -1083,8 +1069,17 @@ YML_EOF
 
     if conda env list 2>/dev/null | grep -q "^alas "; then
         _log_message "WARNING" "检测到已有 alas 环境，正在移除..."
-        _log_exec "移除旧环境 (方法1: conda env remove)" conda env remove -n alas -y || \
-        _log_exec "移除旧环境 (方法2: rm -rf)" rm -rf "$(conda info --base 2>/dev/null)/envs/alas"
+        _log_message "EXEC" "▶ conda clean -a -y"
+        conda clean -a -y >> "$LOGFILE" 2>&1 || true
+        _log_message "EXEC" "▶ conda env remove -n alas -y"
+        conda env remove -n alas -y >> "$LOGFILE" 2>&1 || \
+        {
+            _conda_base=$(conda info --base 2>/dev/null || true)
+            if [ -n "${_conda_base}" ] && [ -d "${_conda_base}/envs/alas" ]; then
+                _log_message "EXEC" "▶ rm -rf ${_conda_base}/envs/alas"
+                rm -rf "${_conda_base}/envs/alas" >> "$LOGFILE" 2>&1 || true
+            fi
+        }
         _log_message "OK" "✓ 旧环境已移除"
     fi
 
@@ -1500,12 +1495,23 @@ do_uninstall() {
 
     start_step "正在清理 Conda 虚拟环境..."
     if command -v conda >/dev/null 2>&1; then
-        CONDA_BIN=$(command -v conda)
-        . "$(dirname "$(dirname "${CONDA_BIN}")")/etc/profile.d/conda.sh" >> "$LOGFILE" 2>&1
+        CONDA_BIN=$(which conda 2>/dev/null || command -v conda)
+        if echo "${CONDA_BIN}" | grep -qv '/'; then
+            CONDA_BIN=$(type -p conda 2>/dev/null || echo "${HOME}/miniforge3/bin/conda")
+        fi
+        _log_message "INFO" "使用 conda: ${CONDA_BIN}"
+        _conda_prefix=$(dirname "$(dirname "${CONDA_BIN}")")
+        if [ -f "${_conda_prefix}/etc/profile.d/conda.sh" ]; then
+            . "${_conda_prefix}/etc/profile.d/conda.sh" >> "$LOGFILE" 2>&1 || true
+        fi
         if conda env list 2>/dev/null | grep -q "^alas "; then
             _log_message "EXEC" "▶ conda env remove -n alas"
-            _log_exec "移除 Conda 环境 (方法1: conda env remove)" conda env remove -n alas -y || \
-            _log_exec "移除 Conda 环境 (方法2: rm -rf)" rm -rf "$(conda info --base 2>/dev/null)/envs/alas"
+            conda env remove -n alas -y >> "$LOGFILE" 2>&1 || true
+            _conda_base=$(conda info --base 2>/dev/null || true)
+            if [ -n "${_conda_base}" ] && [ -d "${_conda_base}/envs/alas" ]; then
+                _log_message "EXEC" "▶ rm -rf ${_conda_base}/envs/alas"
+                rm -rf "${_conda_base}/envs/alas" >> "$LOGFILE" 2>&1 || true
+            fi
         else
             _log_message "INFO" "未检测到 alas 环境，跳过"
         fi
