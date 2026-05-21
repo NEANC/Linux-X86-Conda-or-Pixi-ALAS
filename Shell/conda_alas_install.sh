@@ -229,9 +229,14 @@ trap '_sigint_handler' INT
 # ---------------------------- 参数解析 ----------------------------
 while [ $# -gt 0 ]; do
     case "$1" in
-        -d|--dir) INSTALL_DIR="$2"; shift 2 ;;
-        -s|--script-dir) SCRIPT_OUT_DIR="$2"; shift 2 ;;
+        -d|--dir)
+            [ -z "${2-}" ] && { log_error "缺少参数值: $1"; usage; exit 1; }
+            INSTALL_DIR="$2"; shift 2 ;;
+        -s|--script-dir)
+            [ -z "${2-}" ] && { log_error "缺少参数值: $1"; usage; exit 1; }
+            SCRIPT_OUT_DIR="$2"; shift 2 ;;
         -t|--template)
+            [ -z "${2-}" ] && { log_error "缺少参数值: $1"; usage; exit 1; }
             case "$2" in
                 [Cc][Nn])
                 DEPLOY_TEMPLATE="config/deploy.template-linux-cn.yaml"
