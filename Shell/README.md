@@ -33,7 +33,8 @@
 ## Linux x86-64
 
 > [!IMPORTANT]
-> 脚本测试环境为 PVE 下的 LXC Debian 13 X86_64 与 Alpine Linux x86-64，其他版本的 Linux 若遇到问题请提交 Issues
+> 脚本测试环境为 PVE 下的 LXC Debian 13 X86_64 与 Alpine Linux x86-64，GitHub Actions 的 Ubuntu-latest  
+> 其他版本的 Linux 若遇到问题请提交 Issues
 
 ### Pixi 版部署脚本
 
@@ -66,7 +67,8 @@ curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/
 ## ARM macOS
 
 > [!IMPORTANT]
-> 未测试 Pixi 版脚本测试，若遇到问题请提交 Issues
+> 已通过 GitHub Actions 的 macOSos-latest 环境测试  
+> 其他版本的 macOS 若遇到问题请提交 Issues
 
 ### Conda 版部署脚本 via Homebrew
 

@@ -53,7 +53,7 @@ jobs:
           sleep 40
 
           if kill -0 "$ALAS_PID" 2>/dev/null; then
-            echo "ALAS is still running after 20s; stopping test process."
+            echo "ALAS is still running after 40s; stopping test process."
             kill "$ALAS_PID" 2>/dev/null || true
             wait "$ALAS_PID" 2>/dev/null || true
             ALAS_EXIT=0
