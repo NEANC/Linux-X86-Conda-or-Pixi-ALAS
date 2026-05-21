@@ -1248,25 +1248,31 @@ create_launcher() {
 
     cat > "${SCRIPT_OUT_DIR}/run_alas.sh" <<'LAUNCHER_EOF'
 #!/bin/sh
-# ALAS 启动脚本 (由 posix_conda_alas_install.sh 自动生成)
-# 用法: sh "${SCRIPT_OUT_DIR}/run_alas.sh"
-_CONDA_SH=""
-_conda_base=$(conda info --base 2>/dev/null || true)
-if [ -n "${_conda_base}" ] && [ -f "${_conda_base}/etc/profile.d/conda.sh" ]; then
-    _CONDA_SH="${_conda_base}/etc/profile.d/conda.sh"
-elif [ -f "${HOME}/miniforge3/etc/profile.d/conda.sh" ]; then
-    _CONDA_SH="${HOME}/miniforge3/etc/profile.d/conda.sh"
-elif [ -f /etc/profile.d/conda.sh ]; then
-    _CONDA_SH="/etc/profile.d/conda.sh"
-elif [ -f /opt/conda/etc/profile.d/conda.sh ]; then
-    _CONDA_SH="/opt/conda/etc/profile.d/conda.sh"
+
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+CONDA_BIN=""
+
+if command -v conda >/dev/null 2>&1; then
+    CONDA_BIN=$(command -v conda)
+elif [ -x "${HOME}/miniforge3/bin/conda" ]; then
+    CONDA_BIN="${HOME}/miniforge3/bin/conda"
+elif [ -x /opt/conda/bin/conda ]; then
+    CONDA_BIN="/opt/conda/bin/conda"
+elif [ -x /usr/local/bin/conda ]; then
+    CONDA_BIN="/usr/local/bin/conda"
+elif [ -x /usr/bin/conda ]; then
+    CONDA_BIN="/usr/bin/conda"
 fi
-if [ -n "${_CONDA_SH}" ]; then
-    . "${_CONDA_SH}"
+
+if [ -z "${CONDA_BIN}" ]; then
+    echo "ERROR: conda not found. Please install Miniforge/Conda first." >&2
+    exit 127
 fi
-conda activate alas
-cd "${ALAS_DIR}"
-python gui.py
+
+exec "${CONDA_BIN}" run -n alas --cwd "${SCRIPT_DIR}" --no-capture-output python gui.py
 LAUNCHER_EOF
     chmod +x "${SCRIPT_OUT_DIR}/run_alas.sh"
     end_step "${ICON_OK}" "启动脚本已生成: ${SCRIPT_OUT_DIR}/run_alas.sh"
