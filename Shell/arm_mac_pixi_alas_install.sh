@@ -425,12 +425,30 @@ clone_alas() {
     start_step "正在克隆 ALAS 仓库..."
 
     WORK_DIR="${INSTALL_DIR}"
-    if [[ -d "${WORK_DIR}" ]]; then
-        _log_message "WARNING" "ALAS 目录已存在，跳过克隆: ${WORK_DIR}"
-        end_step "${ICON_WARN}" "ALAS 目录已存在，跳过克隆" "${YELLOW}"
-        cd "${WORK_DIR}"
-        ALAS_DIR="${WORK_DIR}"
-        return
+    if [ -d "${WORK_DIR}" ]; then
+        _ca_origin_url=""
+        if [ -d "${WORK_DIR}/.git" ]; then
+            _ca_origin_url=$(git -C "${WORK_DIR}" remote get-url origin 2>/dev/null || true)
+        fi
+
+        case "${_ca_origin_url}" in
+            *AzurLaneAutoScript*)
+                _log_message "OK" "git 远程 URL 验证通过: ${_ca_origin_url}"
+                _log_message "WARNING" "ALAS 仓库已存在，跳过克隆: ${WORK_DIR}"
+                end_step "${ICON_WARN}" "ALAS 仓库已存在，跳过克隆" "${YELLOW}"
+                cd "${WORK_DIR}"
+                ALAS_DIR="${WORK_DIR}"
+                return
+                ;;
+            "")
+                _log_message "WARNING" "目录 ${WORK_DIR} 中无 .git 信息，可能是非完整 ALAS 安装，将覆盖安装"
+                _log_message "EXEC" "▶ 删除旧目录: rm -rf ${WORK_DIR}"
+                rm -rf "${WORK_DIR}" ;;
+            *)
+                _log_message "ERROR" "安装目录已存在，但不是 AzurLaneAutoScript 仓库: ${WORK_DIR} (remote: ${_ca_origin_url})"
+                end_step "${ICON_ERROR}" "安装目录已存在且是其他 git 仓库 (${_ca_origin_url})，请使用 --dir 参数指定目录或手动处理" "${RED}"
+                exit 1 ;;
+        esac
     fi
 
     REPO_URL="https://github.com/LmeSzinc/AzurLaneAutoScript.git"
