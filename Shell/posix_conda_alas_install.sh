@@ -1,6 +1,6 @@
 #!/bin/sh
 #==============================================================================
-# AzurLaneAutoScript Conda 一键部署脚本 (POSIX 版)
+# AzurLaneAutoScript Conda 一键部署脚本
 # 特性：
 #   - 纯 POSIX sh 兼容 (ash, busybox sh, dash)
 #   - 支持多发行版 (Debian/Ubuntu, Arch, Fedora, RHEL, openSUSE, Alpine)
@@ -1172,11 +1172,6 @@ EOF
 
 # ---------------------------- 配置 init 服务 ----------------------------
 configure_service() {
-    if [ "${SKIP_SERVICE}" = true ]; then
-        end_step "${ICON_INFO}" "检测到 -S、--skip-service 已跳过服务配置"
-        return
-    fi
-
     if [ "${INIT_SYSTEM}" = "unknown" ]; then
         end_step "${ICON_WARN}" "未检测到 init 系统，跳过服务配置" "${YELLOW}"
         return
@@ -1192,7 +1187,7 @@ configure_service() {
 }
 
 _configure_systemd() {
-    start_step "正在配置 systemd 开机自启..."
+    start_step "正在配置 systemd 服务..."
 
     _log_message "EXEC" "▶ 生成 /etc/systemd/system/run_alas.service"
     _log_message "INFO" "  用户: ${USER_NAME}, 组: ${USER_GROUP}"
@@ -1223,13 +1218,19 @@ EOF
     systemctl daemon-reload >> "$LOGFILE" 2>&1
     _log_message "OK" "✓ daemon-reload 完成"
 
-    _log_message "EXEC" "▶ systemctl enable run_alas.service"
-    systemctl enable run_alas.service >> "$LOGFILE" 2>&1
-    _log_message "OK" "✓ 服务已启用开机自启"
-
     _log_message "EXEC" "▶ systemctl start run_alas.service"
     systemctl start run_alas.service >> "$LOGFILE" 2>&1
     _log_message "OK" "✓ 服务已启动"
+
+    if [ "${SKIP_SERVICE}" = "true" ]; then
+        _log_message "INFO" "检测到 -S、--skip-service，跳过开机自启注册"
+        end_step "${ICON_INFO}" "由于设置了 -S、--skip-service参数，systemd 服务单元仅已创建" "${GREEN}"
+        return
+    fi
+
+    _log_message "EXEC" "▶ systemctl enable run_alas.service"
+    systemctl enable run_alas.service >> "$LOGFILE" 2>&1
+    _log_message "OK" "✓ 服务已启用开机自启"
 
     if systemctl is-active --quiet run_alas.service 2>/dev/null; then
         end_step "${ICON_OK}" "systemd 服务已启动并设为开机自启"
@@ -1239,7 +1240,7 @@ EOF
 }
 
 _configure_openrc() {
-    start_step "正在配置 OpenRC 开机自启..."
+    start_step "正在配置 OpenRC 服务..."
 
     _log_message "EXEC" "▶ 生成 /etc/init.d/run_alas"
     _log_message "INFO" "  用户: ${USER_NAME}, 组: ${USER_GROUP}"
@@ -1265,23 +1266,29 @@ EOF
     chmod 755 /etc/init.d/run_alas
     _log_message "OK" "✓ OpenRC 服务脚本已创建"
 
-    _log_message "EXEC" "▶ rc-update add run_alas default"
-    rc-update add run_alas default >> "$LOGFILE" 2>&1
-    _log_message "OK" "✓ 服务已添加至 default 运行级"
-
     _log_message "EXEC" "▶ rc-service run_alas start"
     rc-service run_alas start >> "$LOGFILE" 2>&1
     _log_message "OK" "✓ 服务已启动"
 
+    if [ "${SKIP_SERVICE}" = "true" ]; then
+        _log_message "INFO" "检测到 -S、--skip-service，跳过开机自启注册"
+        end_step "${ICON_INFO}" "由于设置了 -S、--skip-service参数，OpenRC 服务脚本仅已创建" "${GREEN}"
+        return
+    fi
+
+        _log_message "EXEC" "▶ rc-update add run_alas default"
+        rc-update add run_alas default >> "$LOGFILE" 2>&1
+        _log_message "OK" "✓ 服务已添加至 default 运行级"
+
     if rc-service run_alas status >/dev/null 2>&1; then
         end_step "${ICON_OK}" "OpenRC 服务已启动并设为开机自启"
     else
-        end_step "${ICON_WARN}" "OpenRC 已注册开机自启，但容器内首次启动失败（容器重启后将自动运行）" "${YELLOW}"
+        end_step "${ICON_ERROR}" "OpenRC 服务启动失败，请查看日志: ${LOGFILE}" "${RED}"
     fi
 }
 
 _configure_sysvinit() {
-    start_step "正在配置 SysVinit 开机自启..."
+    start_step "正在配置 SysVinit 服务..."
 
     _log_message "EXEC" "▶ 生成 /etc/init.d/run_alas"
     _log_message "INFO" "  用户: ${USER_NAME}, 组: ${USER_GROUP}"
@@ -1339,20 +1346,46 @@ SYSV_EOF
     chmod 755 /etc/init.d/run_alas
     _log_message "OK" "✓ SysVinit 服务脚本已创建"
 
-    if command -v update-rc.d >/dev/null 2>&1; then
-        _log_message "EXEC" "▶ update-rc.d run_alas defaults"
-        update-rc.d run_alas defaults >> "$LOGFILE" 2>&1
-    elif command -v chkconfig >/dev/null 2>&1; then
-        _log_message "EXEC" "▶ chkconfig --add run_alas"
-        chkconfig --add run_alas >> "$LOGFILE" 2>&1
-    fi
-    _log_message "OK" "✓ 服务已注册"
-
     _log_message "EXEC" "▶ service run_alas start"
     if service run_alas start >> "$LOGFILE" 2>&1; then
+        if service run_alas status >/dev/null 2>&1; then
+            _log_message "OK" "✓ 服务已启动"
+        else
+            _log_message "ERROR" "✗ 服务启动命令返回成功，但进程未运行"
+            end_step "${ICON_ERROR}" "SysVinit 服务启动失败，请查看日志: ${LOGFILE}" "${RED}"
+            return
+        fi
+    else
+        _log_message "ERROR" "✗ 服务启动命令执行失败"
+        end_step "${ICON_ERROR}" "SysVinit 服务启动失败，请查看日志: ${LOGFILE}" "${RED}"
+        return
+    fi
+
+    if [ "${SKIP_SERVICE}" = "true" ]; then
+        _log_message "INFO" "检测到 -S、--skip-service，跳过开机自启注册"
+        end_step "${ICON_INFO}" "由于设置了 -S、--skip-service参数，SysVinit 服务脚本仅已创建" "${GREEN}"
+        return
+    fi
+
+    REGISTERED=false
+    if command -v update-rc.d >/dev/null 2>&1; then
+        _log_message "EXEC" "▶ update-rc.d run_alas defaults"
+        if update-rc.d run_alas defaults >> "$LOGFILE" 2>&1; then
+            REGISTERED=true
+        fi
+    elif command -v chkconfig >/dev/null 2>&1; then
+        _log_message "EXEC" "▶ chkconfig --add run_alas"
+        if chkconfig --add run_alas >> "$LOGFILE" 2>&1; then
+            REGISTERED=true
+        fi
+    fi
+
+    if [ "${REGISTERED}" = "true" ]; then
+        _log_message "OK" "✓ 服务已注册开机自启"
         end_step "${ICON_OK}" "SysVinit 服务已启动并设为开机自启"
     else
-        end_step "${ICON_ERROR}" "SysVinit 服务启动失败，请查看日志: ${LOGFILE}" "${RED}"
+        _log_message "WARN" "⚠ 未找到可用的自启注册工具，开机自启配置失败"
+        end_step "${ICON_WARN}" "SysVinit 服务已启动，但开机自启配置失败" "${YELLOW}"
     fi
 }
 
@@ -1363,9 +1396,12 @@ print_completion() {
     echo_line "  ─────────────────────────────────────────────────"
     echo_line "  ${ICON_INFO}  ALAS已安装到:  ${BLUE}${ALAS_DIR}${NC}"
 
-    if [ "${SKIP_SERVICE}" = true ]; then
+    if [ "${INIT_SYSTEM}" = "unknown" ]; then
         echo_line "  ${ICON_INFO}  手动启动:  ${CYAN}sh ${SCRIPT_OUT_DIR}/run_alas.sh${NC}"
     else
+        if [ "${SKIP_SERVICE}" = true ]; then
+            echo_line "  ${ICON_WARN}  ${YELLOW}服务已启动，由于设置了 -S、--skip-service参数，未设置开机自启${NC}"
+        fi
         echo_line ""
         echo_line "  ${ICON_INFO}  服务管理命令: "
         case "${INIT_SYSTEM}" in
@@ -1396,10 +1432,10 @@ do_uninstall() {
     echo_line ""
     echo_line "  ${ICON_WARN}  ${YELLOW}即将执行 ALAS 卸载，将删除以下内容：${NC}"
     echo_line "  ${ICON_WARN}  ${YELLOW}  - 开机自启服务${NC}"
-    echo_line "  ${ICON_WARN}  ${YELLOW}  - Conda 虚拟环境 (alas)${NC}"
+    echo_line "  ${ICON_WARN}  ${YELLOW}  - Conda 虚拟环境${NC}"
     echo_line "  ${ICON_WARN}  ${YELLOW}  - ALAS 目录: ${INSTALL_DIR}${NC}"
     echo_line "  ${ICON_WARN}  ${YELLOW}  - 启动脚本: ${SCRIPT_OUT_DIR}/run_alas.sh${NC}"
-    echo_line "  ${ICON_INFO}  ${GREEN}  Git, ADB, Miniforge 不会被删除${NC}"
+    echo_line "  ${ICON_INFO}  ${GREEN}  Git, ADB, Miniforge 及相关依赖不会被删除${NC}"
     echo_line ""
     _log_message "WARNING" "等待确认卸载"
     if [ "${UNINSTALL_YES}" = true ]; then
@@ -1436,9 +1472,8 @@ do_uninstall() {
 
     echo_line ""
 
-    detect_init_system
-
     start_step "正在停止 ALAS 服务..."
+    detect_init_system
     _svc_done=false
     if [ "${INIT_SYSTEM}" = "systemd" ]; then
         if systemctl is-active --quiet run_alas.service 2>/dev/null; then
@@ -1457,6 +1492,7 @@ do_uninstall() {
             _log_message "EXEC" "▶ 删除服务单元文件"
             rm -f /etc/systemd/system/run_alas.service
             systemctl daemon-reload >> "$LOGFILE" 2>&1
+            _log_message "OK" "✓ 服务单元文件已删除"
             _svc_done=true
         fi
     elif [ "${INIT_SYSTEM}" = "openrc" ]; then
@@ -1511,6 +1547,7 @@ do_uninstall() {
         fi
         if [ -n "${_conda_sh}" ]; then
             _log_message "INFO" "加载 conda.sh: ${_conda_sh}"
+            # shellcheck disable=SC1090
             . "${_conda_sh}" >> "$LOGFILE" 2>&1 || true
         else
             _log_message "WARNING" "未找到 conda.sh，尝试直接使用 conda 命令"
@@ -1526,7 +1563,7 @@ do_uninstall() {
                 rm -rf "${_conda_base}/envs/alas" >> "$LOGFILE" 2>&1 || true
             fi
         else
-            _log_message "INFO" "未检测到 alas 环境，跳过"
+            _log_message "INFO" "未检测到 Conda 环境，跳过"
         fi
         end_step "${ICON_OK}" "虚拟环境已清理"
     else

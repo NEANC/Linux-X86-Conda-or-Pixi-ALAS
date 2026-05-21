@@ -1,11 +1,11 @@
 #!/bin/sh
 #==============================================================================
-# AzurLaneAutoScript Pixi 一键部署脚本 (POSIX 版)
+# AzurLaneAutoScript Pixi 一键部署脚本
 # 特性：
 #   - 纯 POSIX sh 兼容 (ash, busybox sh, dash)
 #   - 支持多发行版 (Debian/Ubuntu, Arch, Fedora, RHEL, openSUSE, Alpine)
 #   - 支持多 init 系统 (systemd, OpenRC, SysVinit)
-#   - 静默执行，网络自适应，系统信息面板，步骤反馈
+#   - 静默执行，系统信息面板，步骤反馈
 #   - 国内镜像加速 (-t cn)，开机自启
 #==============================================================================
 # 用法: sh posix_pixi_alas_install.sh [-t cn] [-S] [-d DIR] [-l] [--uninstall [-Y]]
@@ -335,6 +335,7 @@ gather_system_info() {
                        awk '/MemTotal/{printf "%d", $2/1024}' /proc/meminfo 2>/dev/null || echo "0")
     fi
 }
+
 # ---------------------------- 打印标题与系统面板 ----------------------------
 print_header() {
     clear 2>/dev/null || printf '\033[2J\033[H' 2>/dev/null || true
@@ -452,7 +453,7 @@ install_pixi() {
     if [ "${USE_CN_MIRROR}" = true ]; then
         _ip_pixi_dl="${GH_PROXY}https://github.com/prefix-dev/pixi/releases/latest/download/pixi-x86_64-unknown-linux-musl.tar.gz"
         _log_message "EXEC" "▶ 安装 Pixi (国内源): PIXI_DOWNLOAD_URL=${_ip_pixi_dl}"
-        if ! PIXI_DOWNLOAD_URL="${_ip_pixi_dl}" curl -fsSL https://pixi.sh/install.sh | sh >> "$LOGFILE" 2>&1; then
+        if ! curl -fsSL https://pixi.sh/install.sh | PIXI_DOWNLOAD_URL="${_ip_pixi_dl}" sh >> "$LOGFILE" 2>&1; then
             end_step "${ICON_ERROR}" "Pixi 安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
             exit 1
         fi
@@ -1218,28 +1219,8 @@ configure_deploy() {
     fi
 }
 
-# ---------------------------- 创建启动脚本 ----------------------------
-create_startup_script() {
-    _cs_script_path="${ALAS_DIR}/run_alas.sh"
-    _log_message "EXEC" "▶ 创建启动脚本: ${_cs_script_path}"
-    cat > "${_cs_script_path}" <<EOF
-#!/bin/sh
-# ALAS 启动脚本 (由 posix_pixi_alas_install.sh 自动生成)
-# 用法: sh ${_cs_script_path}
-cd "${ALAS_DIR}" || exit 1
-exec "${PIXI_BIN_PATH}" run start
-EOF
-    chmod +x "${_cs_script_path}"
-    _log_message "OK" "✓ 启动脚本已创建: ${_cs_script_path}"
-}
-
 # ---------------------------- 配置 init 服务 ----------------------------
 configure_service() {
-    if [ "${SKIP_SERVICE}" = true ]; then
-        end_step "${ICON_INFO}" "检测到 -S、--skip-service 已跳过服务配置"
-        return
-    fi
-
     if [ "${INIT_SYSTEM}" = "unknown" ]; then
         end_step "${ICON_WARN}" "未检测到 init 系统，跳过服务配置" "${YELLOW}"
         return
@@ -1257,7 +1238,7 @@ configure_service() {
 }
 
 _configure_systemd() {
-    start_step "正在配置 systemd 开机自启..."
+    start_step "正在配置 systemd 服务..."
 
     _log_message "EXEC" "▶ 生成 /etc/systemd/system/run_alas.service"
     _log_message "INFO" "  用户: ${USER_NAME}, 组: ${USER_GROUP}"
@@ -1288,13 +1269,19 @@ EOF
     systemctl daemon-reload >> "$LOGFILE" 2>&1
     _log_message "OK" "✓ daemon-reload 完成"
 
-    _log_message "EXEC" "▶ systemctl enable run_alas.service"
-    systemctl enable run_alas.service >> "$LOGFILE" 2>&1
-    _log_message "OK" "✓ 服务已启用开机自启"
-
     _log_message "EXEC" "▶ systemctl start run_alas.service"
     systemctl start run_alas.service >> "$LOGFILE" 2>&1
     _log_message "OK" "✓ 服务已启动"
+
+    if [ "${SKIP_SERVICE}" = "true" ]; then
+        _log_message "INFO" "检测到 -S、--skip-service，跳过开机自启注册"
+        end_step "${ICON_INFO}" "由于设置了 -S、--skip-service参数，systemd 服务单元仅已创建" "${GREEN}"
+        return
+    fi
+
+    _log_message "EXEC" "▶ systemctl enable run_alas.service"
+    systemctl enable run_alas.service >> "$LOGFILE" 2>&1
+    _log_message "OK" "✓ 服务已启用开机自启"
 
     if systemctl is-active --quiet run_alas.service 2>/dev/null; then
         end_step "${ICON_OK}" "systemd 服务已启动并设为开机自启"
@@ -1304,7 +1291,7 @@ EOF
 }
 
 _configure_openrc() {
-    start_step "正在配置 OpenRC 开机自启..."
+    start_step "正在配置 OpenRC 服务..."
 
     _log_message "EXEC" "▶ 生成 /etc/init.d/run_alas"
     _log_message "INFO" "  用户: ${USER_NAME}, 组: ${USER_GROUP}"
@@ -1331,23 +1318,29 @@ EOF
     chmod 755 /etc/init.d/run_alas
     _log_message "OK" "✓ OpenRC 服务脚本已创建"
 
-    _log_message "EXEC" "▶ rc-update add run_alas default"
-    rc-update add run_alas default >> "$LOGFILE" 2>&1
-    _log_message "OK" "✓ 服务已添加至 default 运行级"
-
     _log_message "EXEC" "▶ rc-service run_alas start"
     rc-service run_alas start >> "$LOGFILE" 2>&1
     _log_message "OK" "✓ 服务已启动"
 
+    if [ "${SKIP_SERVICE}" = "true" ]; then
+        _log_message "INFO" "检测到 -S、--skip-service，跳过开机自启注册"
+        end_step "${ICON_INFO}" "由于设置了 -S、--skip-service参数，OpenRC 服务脚本仅已创建" "${GREEN}"
+        return
+    fi
+
+    _log_message "EXEC" "▶ rc-update add run_alas default"
+    rc-update add run_alas default >> "$LOGFILE" 2>&1
+    _log_message "OK" "✓ 服务已添加至 default 运行级"
+
     if rc-service run_alas status >/dev/null 2>&1; then
         end_step "${ICON_OK}" "OpenRC 服务已启动并设为开机自启"
     else
-        end_step "${ICON_WARN}" "OpenRC 已注册开机自启，但容器内首次启动失败（容器重启后将自动运行）" "${YELLOW}"
+        end_step "${ICON_ERROR}" "OpenRC 服务启动失败，请查看日志: ${LOGFILE}" "${RED}"
     fi
 }
 
 _configure_sysvinit() {
-    start_step "正在配置 SysVinit 开机自启..."
+    start_step "正在配置 SysVinit 服务..."
 
     _log_message "EXEC" "▶ 生成 /etc/init.d/run_alas"
     _log_message "INFO" "  用户: ${USER_NAME}, 组: ${USER_GROUP}"
@@ -1406,20 +1399,46 @@ SYSV_EOF
     chmod 755 /etc/init.d/run_alas
     _log_message "OK" "✓ SysVinit 服务脚本已创建"
 
-    if command -v update-rc.d >/dev/null 2>&1; then
-        _log_message "EXEC" "▶ update-rc.d run_alas defaults"
-        update-rc.d run_alas defaults >> "$LOGFILE" 2>&1
-    elif command -v chkconfig >/dev/null 2>&1; then
-        _log_message "EXEC" "▶ chkconfig --add run_alas"
-        chkconfig --add run_alas >> "$LOGFILE" 2>&1
-    fi
-    _log_message "OK" "✓ 服务已注册"
-
     _log_message "EXEC" "▶ service run_alas start"
     if service run_alas start >> "$LOGFILE" 2>&1; then
+        if service run_alas status >/dev/null 2>&1; then
+            _log_message "OK" "✓ 服务已启动"
+        else
+            _log_message "ERROR" "✗ 服务启动命令返回成功，但进程未运行"
+            end_step "${ICON_ERROR}" "SysVinit 服务启动失败，请查看日志: ${LOGFILE}" "${RED}"
+            return
+        fi
+    else
+        _log_message "ERROR" "✗ 服务启动命令执行失败"
+        end_step "${ICON_ERROR}" "SysVinit 服务启动失败，请查看日志: ${LOGFILE}" "${RED}"
+        return
+    fi
+
+    if [ "${SKIP_SERVICE}" = "true" ]; then
+        _log_message "INFO" "检测到 -S、--skip-service，跳过开机自启注册"
+        end_step "${ICON_INFO}" "由于设置了 -S、--skip-service参数，SysVinit 服务脚本仅已创建" "${GREEN}"
+        return
+    fi
+
+    REGISTERED=false
+    if command -v update-rc.d >/dev/null 2>&1; then
+        _log_message "EXEC" "▶ update-rc.d run_alas defaults"
+        if update-rc.d run_alas defaults >> "$LOGFILE" 2>&1; then
+            REGISTERED=true
+        fi
+    elif command -v chkconfig >/dev/null 2>&1; then
+        _log_message "EXEC" "▶ chkconfig --add run_alas"
+        if chkconfig --add run_alas >> "$LOGFILE" 2>&1; then
+            REGISTERED=true
+        fi
+    fi
+
+    if [ "${REGISTERED}" = "true" ]; then
+        _log_message "OK" "✓ 服务已注册开机自启"
         end_step "${ICON_OK}" "SysVinit 服务已启动并设为开机自启"
     else
-        end_step "${ICON_ERROR}" "SysVinit 服务启动失败，请查看日志: ${LOGFILE}" "${RED}"
+        _log_message "WARN" "⚠ 未找到可用的自启注册工具，开机自启配置失败"
+        end_step "${ICON_WARN}" "SysVinit 服务已启动，但开机自启配置失败" "${YELLOW}"
     fi
 }
 
@@ -1430,9 +1449,12 @@ print_completion() {
     echo_line "  ─────────────────────────────────────────────────"
     echo_line "  ${ICON_INFO}  ALAS已安装到:  ${BLUE}${ALAS_DIR}${NC}"
 
-    if [ "${SKIP_SERVICE}" = true ]; then
-        echo_line "  ${ICON_INFO}  手动启动:  ${CYAN}sh ${SCRIPT_OUT_DIR}/run_alas.sh${NC}"
+    if [ "${INIT_SYSTEM}" = "unknown" ]; then
+        echo_line "  ${ICON_INFO}  手动启动:  ${CYAN}cd ${ALAS_DIR} && pixi run start${NC}"
     else
+        if [ "${SKIP_SERVICE}" = true ]; then
+            echo_line "  ${ICON_WARN}  ${YELLOW}服务已启动，由于设置了 -S、--skip-service参数，未设置开机自启${NC}"
+        fi
         echo_line ""
         echo_line "  ${ICON_INFO}  服务管理命令: "
         case "${INIT_SYSTEM}" in
@@ -1465,8 +1487,7 @@ do_uninstall() {
     echo_line "  ${ICON_WARN}  ${YELLOW}  - 开机自启服务${NC}"
     echo_line "  ${ICON_WARN}  ${YELLOW}  - Pixi 虚拟环境${NC}"
     echo_line "  ${ICON_WARN}  ${YELLOW}  - ALAS 目录: ${INSTALL_DIR}${NC}"
-    echo_line "  ${ICON_WARN}  ${YELLOW}  - 启动脚本: ${SCRIPT_OUT_DIR}/run_alas.sh${NC}"
-    echo_line "  ${ICON_INFO}  ${GREEN}  Git, ADB, Pixi及相关依赖不会被删除${NC}"
+    echo_line "  ${ICON_INFO}  ${GREEN}  Git, ADB, Pixi 及相关依赖不会被删除${NC}"
     echo_line ""
     _log_message "WARNING" "等待确认卸载"
     if [ "${UNINSTALL_YES}" = true ]; then
@@ -1581,15 +1602,6 @@ do_uninstall() {
         end_step "${ICON_INFO}" "ALAS 目录不存在，跳过虚拟环境清理" "${GREEN}"
     fi
 
-    start_step "正在删除启动脚本..."
-    if [ -f "${SCRIPT_OUT_DIR}/run_alas.sh" ]; then
-        _log_message "EXEC" "▶ rm -f ${SCRIPT_OUT_DIR}/run_alas.sh"
-        rm -f "${SCRIPT_OUT_DIR}/run_alas.sh"
-        end_step "${ICON_OK}" "启动脚本已删除"
-    else
-        end_step "${ICON_INFO}" "启动脚本不存在，跳过" "${GREEN}"
-    fi
-
     start_step "正在删除 ALAS 目录..."
     if [ -d "${INSTALL_DIR}" ]; then
         _du_origin_url=""
@@ -1641,7 +1653,6 @@ main() {
     clone_alas
     setup_pixi_env
     configure_deploy
-    create_startup_script
     configure_service
     print_completion
     if [ "${KEEP_LOG}" = false ]; then
