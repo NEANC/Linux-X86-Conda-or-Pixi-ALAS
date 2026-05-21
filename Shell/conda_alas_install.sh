@@ -1119,8 +1119,28 @@ dependencies:
 YML_EOF
     _log_message "OK" "✓ environment.yml 已生成"
 
-    . "$(dirname "$(dirname "${CONDA_BIN}")")/etc/profile.d/conda.sh" >> "$LOGFILE" 2>&1
-    _log_message "OK" "✓ Conda shell 已加载 (POSIX)"
+    _conda_base=$("${CONDA_BIN}" info --base 2>/dev/null || true)
+    _conda_sh=""
+    if [ -n "${_conda_base}" ] && [ -f "${_conda_base}/etc/profile.d/conda.sh" ]; then
+        _conda_sh="${_conda_base}/etc/profile.d/conda.sh"
+    elif [ -f "$(dirname "$(dirname "${CONDA_BIN}")")/etc/profile.d/conda.sh" ]; then
+        _conda_sh="$(dirname "$(dirname "${CONDA_BIN}")")/etc/profile.d/conda.sh"
+    elif [ -f "${HOME}/miniforge3/etc/profile.d/conda.sh" ]; then
+        _conda_sh="${HOME}/miniforge3/etc/profile.d/conda.sh"
+    elif [ -f /etc/profile.d/conda.sh ]; then
+        _conda_sh="/etc/profile.d/conda.sh"
+    elif [ -f /opt/conda/etc/profile.d/conda.sh ]; then
+        _conda_sh="/opt/conda/etc/profile.d/conda.sh"
+    fi
+    if [ -n "${_conda_sh}" ]; then
+        _log_message "INFO" "加载 conda.sh: ${_conda_sh}"
+        . "${_conda_sh}" >> "$LOGFILE" 2>&1
+        _log_message "OK" "✓ Conda shell 已加载 (POSIX)"
+    else
+        _log_message "WARNING" "未找到 conda.sh，回退为直接调用 ${CONDA_BIN}"
+        conda() { "${CONDA_BIN}" "$@"; }
+        _log_message "OK" "✓ 已定义 conda 命令包装函数"
+    fi
 
     if [ "${USE_CN_MIRROR}" = true ]; then
         _se_cernet_conda="https://mirrors.cernet.edu.cn/anaconda"
@@ -1226,15 +1246,28 @@ create_launcher() {
     _log_message "INFO" "  Conda: ${CONDA_BIN}"
     _log_message "INFO" "  ALAS 目录: ${ALAS_DIR}"
 
-    cat > "${SCRIPT_OUT_DIR}/run_alas.sh" <<EOF
+    cat > "${SCRIPT_OUT_DIR}/run_alas.sh" <<'LAUNCHER_EOF'
 #!/bin/sh
 # ALAS 启动脚本 (由 posix_conda_alas_install.sh 自动生成)
 # 用法: sh "${SCRIPT_OUT_DIR}/run_alas.sh"
-. "$(dirname "$(dirname "${CONDA_BIN}")")/etc/profile.d/conda.sh"
+_CONDA_SH=""
+_conda_base=$(conda info --base 2>/dev/null || true)
+if [ -n "${_conda_base}" ] && [ -f "${_conda_base}/etc/profile.d/conda.sh" ]; then
+    _CONDA_SH="${_conda_base}/etc/profile.d/conda.sh"
+elif [ -f "${HOME}/miniforge3/etc/profile.d/conda.sh" ]; then
+    _CONDA_SH="${HOME}/miniforge3/etc/profile.d/conda.sh"
+elif [ -f /etc/profile.d/conda.sh ]; then
+    _CONDA_SH="/etc/profile.d/conda.sh"
+elif [ -f /opt/conda/etc/profile.d/conda.sh ]; then
+    _CONDA_SH="/opt/conda/etc/profile.d/conda.sh"
+fi
+if [ -n "${_CONDA_SH}" ]; then
+    . "${_CONDA_SH}"
+fi
 conda activate alas
 cd "${ALAS_DIR}"
 python gui.py
-EOF
+LAUNCHER_EOF
     chmod +x "${SCRIPT_OUT_DIR}/run_alas.sh"
     end_step "${ICON_OK}" "启动脚本已生成: ${SCRIPT_OUT_DIR}/run_alas.sh"
 }
@@ -1619,10 +1652,15 @@ do_uninstall() {
     if [ -n "${_conda_bin}" ]; then
         _log_message "INFO" "使用 conda: ${_conda_bin}"
         _conda_sh=""
-        if [ -f "${HOME}/miniforge3/etc/profile.d/conda.sh" ]; then
+        _conda_base=$("${_conda_bin}" info --base 2>/dev/null || true)
+        if [ -n "${_conda_base}" ] && [ -f "${_conda_base}/etc/profile.d/conda.sh" ]; then
+            _conda_sh="${_conda_base}/etc/profile.d/conda.sh"
+        elif [ -f "${HOME}/miniforge3/etc/profile.d/conda.sh" ]; then
             _conda_sh="${HOME}/miniforge3/etc/profile.d/conda.sh"
         elif [ -f /etc/profile.d/conda.sh ]; then
             _conda_sh="/etc/profile.d/conda.sh"
+        elif [ -f /opt/conda/etc/profile.d/conda.sh ]; then
+            _conda_sh="/opt/conda/etc/profile.d/conda.sh"
         else
             _conda_sh=$(find "${HOME}" -maxdepth 4 -name "conda.sh" -type f 2>/dev/null | head -1 || true)
         fi
