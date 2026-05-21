@@ -472,16 +472,18 @@ detect_os() {
 install_pixi() {
     start_step "正在检查 Pixi..."
 
-    if command -v pixi >/dev/null 2>&1; then
-        PIXI_VER=$(pixi --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')
-        end_step "${ICON_OK}" "Pixi 已安装: ${PIXI_VER}"
+    if [ -x "${HOME}/.pixi/bin/pixi" ]; then
+        export PATH="${HOME}/.pixi/bin:${PATH}"
+        PIXI_BIN_PATH="${HOME}/.pixi/bin/pixi"
+        PIXI_VER=$("${PIXI_BIN_PATH}" --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')
+        end_step "${ICON_OK}" "Pixi 已激活: ${PIXI_VER}"
         return
     fi
 
-    if [ -x "${HOME}/.pixi/bin/pixi" ]; then
-        export PATH="${HOME}/.pixi/bin:${PATH}"
+    if command -v pixi >/dev/null 2>&1; then
+        PIXI_BIN_PATH="$(command -v pixi)"
         PIXI_VER=$(pixi --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')
-        end_step "${ICON_OK}" "Pixi 已激活: ${PIXI_VER}"
+        end_step "${ICON_OK}" "Pixi 已安装: ${PIXI_VER}"
         return
     fi
 

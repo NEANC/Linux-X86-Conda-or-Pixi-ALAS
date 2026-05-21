@@ -466,15 +466,17 @@ install_miniforge() {
     start_step "正在检查 Miniforge..."
 
     CONDA_BIN="${HOME}/miniforge3/bin/conda"
-    if command -v conda >/dev/null 2>&1; then
-        CONDA_VER=$(conda --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')
-        end_step "${ICON_OK}" "Conda 已就绪: ${CONDA_VER}"
-        return
-    fi
 
     if [ -x "${CONDA_BIN}" ]; then
         CONDA_VER=$("${CONDA_BIN}" --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')
         end_step "${ICON_OK}" "Conda 已安装: ${CONDA_VER}"
+        return
+    fi
+
+    if command -v conda >/dev/null 2>&1; then
+        CONDA_BIN="$(command -v conda)"
+        CONDA_VER=$(conda --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')
+        end_step "${ICON_OK}" "Conda 已就绪: ${CONDA_VER}"
         return
     fi
 
