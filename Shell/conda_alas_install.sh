@@ -1134,6 +1134,7 @@ YML_EOF
     fi
     if [ -n "${_conda_sh}" ]; then
         _log_message "INFO" "加载 conda.sh: ${_conda_sh}"
+        # shellcheck source=/dev/null
         . "${_conda_sh}" >> "$LOGFILE" 2>&1
         _log_message "OK" "✓ Conda shell 已加载 (POSIX)"
     else
