@@ -197,6 +197,7 @@ _sigint_handler() {
     if [[ -n "${_TAIL_PID}" ]]; then
         kill "${_TAIL_PID}" 2>/dev/null || true
     fi
+    wait "${_TAIL_PID}" 2>/dev/null || true
     echo -e "\n  ${ICON_WARN}  ${YELLOW}脚本已被用户中断${NC}"
     exit 130
 }
@@ -895,7 +896,10 @@ main() {
         gather_system_info
         print_header
         do_uninstall
-        if [[ -n "${_TAIL_PID}" ]]; then kill "${_TAIL_PID}" 2>/dev/null || true; fi
+        if [[ -n "${_TAIL_PID}" ]]; then
+            kill "${_TAIL_PID}" 2>/dev/null || true
+            wait "${_TAIL_PID}" 2>/dev/null || true
+        fi
         exit 0
     fi
 
@@ -920,7 +924,10 @@ main() {
     configure_service
     print_completion
 
-    if [[ -n "${_TAIL_PID}" ]]; then kill "${_TAIL_PID}" 2>/dev/null || true; fi
+    if [[ -n "${_TAIL_PID}" ]]; then
+        kill "${_TAIL_PID}" 2>/dev/null || true
+        wait "${_TAIL_PID}" 2>/dev/null || true
+    fi
 
     if [[ "${KEEP_LOG}" == false ]]; then
         _log_message "INFO" "安装完成，清理日志文件: ${LOGFILE}"
