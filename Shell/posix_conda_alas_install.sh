@@ -860,7 +860,7 @@ install_deps() {
         _log_message "EXEC" "▶ ${PACKAGE_MANAGER} (CN mirrors)${_id_missing}"
         # shellcheck disable=SC2086
         if cn_package_mirrors ${_id_missing}; then
-            _log_message "OK" "✓ 使用 CN 镜像安装依赖完成"
+            _log_message "OK" "✓ CN 镜像安装完成"
         else
             _log_message "WARNING" "CN 镜像全部不可用，自动回退官方源"
             _cn_fallback=true
@@ -1064,7 +1064,7 @@ dependencies:
 YML_EOF
     _log_message "OK" "✓ environment.yml 已生成"
 
-    source "$(dirname "$(dirname "${CONDA_BIN}")")/etc/profile.d/conda.sh" >> "$LOGFILE" 2>&1
+    . "$(dirname "$(dirname "${CONDA_BIN}")")/etc/profile.d/conda.sh" >> "$LOGFILE" 2>&1
     _log_message "OK" "✓ Conda shell 已加载 (POSIX)"
 
     if [ "${USE_CN_MIRROR}" = true ]; then
@@ -1166,7 +1166,7 @@ create_launcher() {
 #!/bin/sh
 # ALAS 启动脚本 (由 posix_conda_alas_install.sh 自动生成)
 # 用法: sh ${SCRIPT_OUT_DIR}/run_alas.sh
-source "$(dirname "$(dirname "${CONDA_BIN}")")/etc/profile.d/conda.sh"
+. "$(dirname "$(dirname "${CONDA_BIN}")")/etc/profile.d/conda.sh"
 conda activate alas
 cd ${ALAS_DIR}
 python gui.py
@@ -1501,8 +1501,7 @@ do_uninstall() {
     start_step "正在清理 Conda 虚拟环境..."
     if command -v conda >/dev/null 2>&1; then
         CONDA_BIN=$(command -v conda)
-        source "$(dirname "$(dirname "${CONDA_BIN}")")/etc/profile.d/conda.sh" >> "$LOGFILE" 2>&1
-        _log_message "OK" "✓ Conda shell 已加载 (POSIX)"
+        . "$(dirname "$(dirname "${CONDA_BIN}")")/etc/profile.d/conda.sh" >> "$LOGFILE" 2>&1
         if conda env list 2>/dev/null | grep -q "^alas "; then
             _log_message "EXEC" "▶ conda env remove -n alas"
             _log_exec "移除 Conda 环境 (方法1: conda env remove)" conda env remove -n alas -y || \
