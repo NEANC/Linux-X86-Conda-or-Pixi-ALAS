@@ -1,23 +1,28 @@
-#!/bin/bash
+#!/bin/sh
 #==============================================================================
 # AzurLaneAutoScript Conda 一键部署脚本
 # 特性：
+#   - 纯 POSIX sh 兼容 (ash, busybox sh, dash)
+#   - 支持多发行版 (Debian/Ubuntu, Arch, Fedora, RHEL, openSUSE, Alpine)
+#   - 支持多 init 系统 (systemd, OpenRC, SysVinit)
 #   - 静默执行，系统信息面板，步骤反馈
+#   - 国内镜像加速 (-t cn)，开机自启
 #==============================================================================
+# 用法: sh posix_conda_alas_install.sh [-t cn] [-S] [-d DIR] [-l] [--uninstall [-Y]]
+#       sh posix_conda_alas_install.sh -h  # 查看完整帮助
 
-set -euo pipefail
+set -eu
 
 # ---------------------------- 脚本目录（支持管道执行） ----------------------------
-if [[ -n "${BASH_SOURCE[0]:-}" && "${BASH_SOURCE[0]}" != "bash" && "${BASH_SOURCE[0]}" != "-bash" ]]; then
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-elif [[ "$0" != "bash" && "$0" != "-bash" ]]; then
-    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-else
-    SCRIPT_DIR="$PWD"
-fi
+case "$0" in
+    bash|-bash|*/bash|sh|-sh|*/sh|dash|*/dash|ash|*/ash)
+        SCRIPT_DIR="$PWD" ;;
+    *)
+        SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd) ;;
+esac
 
 # ---------------------------- 日志文件 ----------------------------
-LOGFILE="/tmp/alas_install.log"
+LOGFILE="$(mktemp /tmp/alas_install.XXXXXX.log)" || LOGFILE="/tmp/alas_install.$$.log"
 touch "$LOGFILE" || { echo "无法创建日志文件 $LOGFILE"; exit 1; }
 
 # ---------------------------- 日志格式化 ----------------------------
@@ -25,30 +30,15 @@ touch "$LOGFILE" || { echo "无法创建日志文件 $LOGFILE"; exit 1; }
 # (等效于 Python: '%(levelname)s | %(asctime)s.%(msecs)03d | %(message)s', datefmt='%H:%M:%S')
 _LOG_DATEFMT='%H:%M:%S'
 
-if date "+%3N" &>/dev/null; then
+if date "+%3N" >/dev/null 2>&1; then
     _LOG_DATEFMT='%H:%M:%S.%3N'
 fi
 
 _log_message() {
-    local level="$1"
-    local msg="$2"
-    local timestamp
-    timestamp=$(date "+${_LOG_DATEFMT}")
-    echo "${level} | ${timestamp} | ${msg}" >> "$LOGFILE"
-}
-
-_log_exec() {
-    local step_name="$1"
-    shift
-    _log_message "EXEC" "▶ ${step_name}: $*"
-    "$@" >> "$LOGFILE" 2>&1
-    local ret=$?
-    if [[ $ret -ne 0 ]]; then
-        _log_message "ERROR" "✗ ${step_name}: 命令失败 (exit ${ret})"
-    else
-        _log_message "OK"    "✓ ${step_name}: 命令完成"
-    fi
-    return $ret
+    _lm_level="$1"
+    _lm_msg="$2"
+    _lm_timestamp=$(date "+${_LOG_DATEFMT}")
+    echo "${_lm_level} | ${_lm_timestamp} | ${_lm_msg}" >> "$LOGFILE"
 }
 
 # ---------------------------- 加载图标 ----------------------------
@@ -80,53 +70,85 @@ NC='\033[0m'
 SKIP_SERVICE=false
 UNINSTALL=false
 KEEP_LOG=false
-DEPLOY_TEMPLATE="config/deploy.template-linux.yaml"
 USE_CN_MIRROR=false
 GH_PROXY=""
+DEPLOY_TEMPLATE="config/deploy.template-linux.yaml"
+
+# 优先使用 sudo 前的真实用户
+if [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER}" != "root" ]; then
+    USER_NAME="${SUDO_USER}"
+else
+    USER_NAME="$(logname 2>/dev/null || id -un 2>/dev/null || whoami)"
+fi
+
+USER_GROUP=$(id -gn "${USER_NAME}" 2>/dev/null || id -gn 2>/dev/null || echo "${USER_NAME}")
+
+# 获取真实用户的 home 目录
+USER_HOME=$(getent passwd "${USER_NAME}" 2>/dev/null | cut -d: -f6 || true)
+if [ -z "${USER_HOME}" ]; then
+    USER_HOME=$(awk -F: -v u="${USER_NAME}" '$1 == u {print $6; exit}' /etc/passwd 2>/dev/null || true)
+fi
+if [ -z "${USER_HOME}" ]; then
+    if [ "${USER_NAME}" = "root" ]; then
+        USER_HOME="${HOME:-/root}"
+    else
+        USER_HOME="/home/${USER_NAME}"
+    fi
+fi
+
+# 关键：把 HOME 改成真实用户的 home
+HOME="${USER_HOME}"
+export HOME
+
 INSTALL_DIR="${HOME}/AzurLaneAutoScript"
 SCRIPT_OUT_DIR="${HOME}/AzurLaneAutoScript"
 WORK_DIR=""
 ALAS_DIR=""
 CONDA_BIN=""
-USER_NAME="${SUDO_USER:-$(whoami)}"
-USER_GROUP=$(id -gn "${USER_NAME}")
+
 INIT_SYSTEM=""
 PACKAGE_MANAGER=""
 _SPINNER_PID=""
+RAM_SIZE_MIB=""
+ALPINE_GLIBC_LOADER="/lib64/ld-linux-x86-64.so.2"
+UNINSTALL_YES=false
+DEBUG=false
+_TAIL_PID=""
 
 # ---------------------------- 帮助 ----------------------------
 usage() {
     cat <<EOF
-用法: $0 [选项]
+用法: sh $0 [选项]
 
 选项:
   -d, --dir DIR          指定 ALAS 安装目录 (默认: ~/AzurLaneAutoScript)
-  -s, --script-dir DIR   指定脚本输出目录 (默认: ~/AzurLaneAutoScript)
+  -s, --script-dir DIR   指定启动脚本输出目录 (默认: ~/AzurLaneAutoScript)
   -t TEMPLATE            控制使用的 deploy 模板与国内镜像源
-  -S, --skip-service     跳过 systemd 开机自启服务配置
-  --uninstall            反向安装：停止并删除 ALAS、虚拟环境、开机自启
+  -S, --skip-service     跳过开机自启服务配置
+  --uninstall [-Y]       反向安装：停止并删除 ALAS、虚拟环境、开机自启
   -l, --log              保留安装日志，不自动删除
   -h, --help             显示帮助信息
+  --debug                调试模式，日志将实时输出至终端
 EOF
 }
 
 # ---------------------------- 输出与日志函数 ----------------------------
 echo_line() {
-    echo -e "$1"
+    printf '%b\n' "$1"
 }
 
 log_out() {
-    local icon="$1"
-    local color="$2"
-    local msg="$3"
-    echo_line "  ${icon}  ${color}${msg}${NC}"
-    local level="INFO"
-    case "$icon" in
-        "${ICON_OK}")    level="OK"      ;;
-        "${ICON_WARN}")  level="WARNING" ;;
-        "${ICON_ERROR}") level="ERROR"   ;;
+    _lo_icon="$1"
+    _lo_color="$2"
+    _lo_msg="$3"
+    echo_line "  ${_lo_icon}  ${_lo_color}${_lo_msg}${NC}"
+    _lo_level="INFO"
+    case "$_lo_icon" in
+        "${ICON_OK}")    _lo_level="OK"      ;;
+        "${ICON_WARN}")  _lo_level="WARNING" ;;
+        "${ICON_ERROR}") _lo_level="ERROR"   ;;
     esac
-    _log_message "${level}" "${msg}"
+    _log_message "${_lo_level}" "${_lo_msg}"
 }
 
 log_info()    { log_out "${ICON_INFO}"  "${GREEN}"  "$1"; }
@@ -136,23 +158,42 @@ log_error()   { log_out "${ICON_ERROR}" "${RED}"    "$1"; }
 
 # ---------------------------- 流水灯系统 ----------------------------
 _cleanup_spinner() {
-    if [[ -n "$_SPINNER_PID" ]]; then
+    if [ -n "$_SPINNER_PID"  ]; then
         kill "$_SPINNER_PID" 2>/dev/null || true
         wait "$_SPINNER_PID" 2>/dev/null || true
         _SPINNER_PID=""
     fi
 }
 
+_get_spin_char() {
+    case $_SPINNER_IDX in
+        0) printf '⠋' ;;
+        1) printf '⠙' ;;
+        2) printf '⠹' ;;
+        3) printf '⠸' ;;
+        4) printf '⠼' ;;
+        5) printf '⠴' ;;
+        6) printf '⠦' ;;
+        7) printf '⠧' ;;
+        8) printf '⠇' ;;
+        9) printf '⠏' ;;
+    esac
+}
+
 start_step() {
     _cleanup_spinner
-    local msg="$1"
-    _log_message "START" "${msg}"
-    local spin_chars=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
-    local idx=0
+    _ss_msg="$1"
+    _log_message "START" "${_ss_msg}"
+    if [ "${DEBUG}" = true ]; then
+        printf '%b\n' "  ${ICON_GEAR}  ${YELLOW}${_ss_msg}${NC}"
+        return 0
+    fi
+    _SPINNER_IDX=0
     {
         while true; do
-            printf "\r${YELLOW}%s  %s${NC}\033[K" "${spin_chars[$idx]}" "$msg"
-            idx=$(( (idx + 1) % 10 ))
+            _c=$(_get_spin_char)
+            printf "\r${YELLOW}%s  %s${NC}\033[K" "$_c" "$_ss_msg"
+            _SPINNER_IDX=$(( (_SPINNER_IDX + 1) % 10 ))
             sleep 0.20 2>/dev/null || true
         done
     } &
@@ -160,56 +201,61 @@ start_step() {
 }
 
 end_step() {
-    local icon="$1"
-    local msg="$2"
-    local color="${3:-${GREEN}}"
+    _es_icon="$1"
+    _es_msg="$2"
+    _es_color="${3:-${GREEN}}"
     _cleanup_spinner
-    printf "\r${icon}  ${color}%s${NC}\033[K\n" "$msg"
-    local level="INFO"
-    case "$icon" in
-        "${ICON_OK}")    level="OK"      ;;
-        "${ICON_WARN}")  level="WARNING" ;;
-        "${ICON_ERROR}") level="ERROR"   ;;
+    printf "\r${_es_icon}  ${_es_color}%s${NC}\033[K\n" "$_es_msg"
+    _es_level="INFO"
+    case "$_es_icon" in
+        "${ICON_OK}")    _es_level="OK"      ;;
+        "${ICON_WARN}")  _es_level="WARNING" ;;
+        "${ICON_ERROR}") _es_level="ERROR"   ;;
     esac
-    _log_message "${level}" "${msg}"
+    _log_message "${_es_level}" "${_es_msg}"
 }
 
 # ---------------------------- 中断信号处理 ----------------------------
 _sigint_handler() {
     _cleanup_spinner
-    echo -e "\n  ${ICON_WARN}  ${YELLOW}脚本已被用户中断${NC}"
+    if [ -n "${_TAIL_PID}" ]; then
+        kill "${_TAIL_PID}" 2>/dev/null || true
+    fi
+    printf '%b\n' "\n  ${ICON_WARN}  ${YELLOW}脚本已被用户中断${NC}"
     exit 130
 }
 trap '_sigint_handler' INT
 
-# ---------------------------- 错误处理 ----------------------------
-error_handler() {
-    _cleanup_spinner
-    local line_no=$1
-    local error_code=$2
-    echo_line "  ${ICON_ERROR}  ${RED}脚本在第 ${line_no} 行发生错误 (错误码: ${error_code})${NC}"
-    echo_line "  日志保存于: ${LOGFILE}"
-    exit "${error_code}"
-}
-trap 'error_handler ${LINENO} $?' ERR
-
 # ---------------------------- 参数解析 ----------------------------
-while [[ $# -gt 0 ]]; do
+while [ $# -gt 0 ]; do
     case "$1" in
-        -d|--dir) INSTALL_DIR="$2"; shift 2 ;;
-        -s|--script-dir) SCRIPT_OUT_DIR="$2"; shift 2 ;;
+        -d|--dir)
+            [ -z "${2-}" ] && { log_error "缺少参数值: $1"; usage; exit 1; }
+            INSTALL_DIR="$2"; shift 2 ;;
+        -s|--script-dir)
+            [ -z "${2-}" ] && { log_error "缺少参数值: $1"; usage; exit 1; }
+            SCRIPT_OUT_DIR="$2"; shift 2 ;;
         -t|--template)
-            if [[ "$2" =~ ^[Cc][Nn]$ ]]; then
+            [ -z "${2-}" ] && { log_error "缺少参数值: $1"; usage; exit 1; }
+            case "$2" in
+                [Cc][Nn])
                 DEPLOY_TEMPLATE="config/deploy.template-linux-cn.yaml"
                 USE_CN_MIRROR=true
                 GH_PROXY="https://ghfast.top/"
-            else
+                shift 2 ;;
+            *)
                 DEPLOY_TEMPLATE="$2"
-            fi
-            shift 2 ;;
-        --uninstall) UNINSTALL=true; shift ;;
+                shift 2 ;;
+            esac ;;
+        --uninstall)
+            UNINSTALL=true
+            case "${2-}" in
+                -Y|-y|--yes) UNINSTALL_YES=true; shift ;;
+            esac
+            shift ;;
         -l|--log) KEEP_LOG=true; shift ;;
         -S|--skip-service) SKIP_SERVICE=true; shift ;;
+        --debug) DEBUG=true; shift ;;
         -h|--help) usage; exit 0 ;;
         *) log_error "未知参数: $1"; usage; exit 1 ;;
     esac
@@ -217,13 +263,15 @@ done
 
 # ---------------------------- 检测 init 系统 ----------------------------
 detect_init_system() {
-    if command -v systemctl &>/dev/null; then
+    if command -v systemctl >/dev/null 2>&1 && \
+       [ -d /run/systemd/system ] && \
+       systemctl is-system-running >/dev/null 2>&1; then
         INIT_SYSTEM="systemd"
         _log_message "INFO" "检测到 init 系统: systemd"
-    elif command -v rc-service &>/dev/null; then
+    elif command -v rc-service >/dev/null 2>&1; then
         INIT_SYSTEM="openrc"
         _log_message "INFO" "检测到 init 系统: OpenRC"
-    elif command -v service &>/dev/null && [[ -d /etc/init.d ]]; then
+    elif command -v service >/dev/null 2>&1 && [ -d /etc/init.d ]; then
         INIT_SYSTEM="sysvinit"
         _log_message "INFO" "检测到 init 系统: SysVinit"
     else
@@ -234,49 +282,100 @@ detect_init_system() {
 
 # ---------------------------- 权限检查 ----------------------------
 check_root() {
-    if [[ "$(id -u)" -ne 0 ]]; then
-        _log_message "ERROR" "请使用 root 权限运行 (sudo bash $0)"
-        echo_line "  ${ICON_ERROR}  ${RED}请使用 root 权限运行 (sudo bash $0)${NC}"
+    if [ "$(id -u)" -ne 0 ]; then
+        _log_message "ERROR" "请使用 root 权限运行 (sudo sh $0)"
+        echo_line "  ${ICON_ERROR}  ${RED}请使用 root 权限运行 (sudo sh $0)${NC}"
         exit 1
     fi
 }
 
 # ---------------------------- 系统信息收集 ----------------------------
 gather_system_info() {
-    NET_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
-    if [[ -z "${NET_IP}" ]]; then
-        NET_IP=$(ip route get 1 2>/dev/null | sed -n 's/.*src \([0-9.]*\).*/\1/p' || true)
+    # 优先用 ip 命令（Alpine/BusyBox hostname -I 不一定可用）
+    NET_IP=$(ip route get 1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}')
+    [ -z "${NET_IP}" ] && NET_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+    if [ -z "${NET_IP}" ]; then
+        NET_IP="未获取"
     fi
-    [[ -z "${NET_IP}" ]] && NET_IP="未获取"
-
     KERNEL=$(uname -r)
-
-    CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed 's/Model name:\s*//' || true)
-    if [[ -z "${CPU_MODEL}" ]]; then
-        CPU_MODEL=$(grep -m1 "model name" /proc/cpuinfo 2>/dev/null | sed 's/.*: //' || true)
+    # lscpu 在 Alpine 不一定可用，回退到 /proc/cpuinfo
+    if command -v lscpu >/dev/null 2>&1; then
+        CPU_MODEL=$(lscpu | grep -i "Model name" | sed 's/.*:\s*//' | xargs || echo "未知")
+    else
+        CPU_MODEL=$(grep "model name" /proc/cpuinfo 2>/dev/null | head -1 | sed 's/.*: //' | xargs || echo "未知")
     fi
-    [[ -z "${CPU_MODEL}" ]] && CPU_MODEL="未知"
-
-    CPU_CORES=$(nproc 2>/dev/null || true)
-    if [[ -z "${CPU_CORES}" ]]; then
-        CPU_CORES=$(grep -c "^processor" /proc/cpuinfo 2>/dev/null || true)
+    CPU_CORES=$(nproc 2>/dev/null || grep -c "^processor" /proc/cpuinfo 2>/dev/null || echo "1")
+    # 磁盘信息：通过匹配挂载点 / 定位数据行，从行尾反向取列，
+    _gs_disk_used=""
+    _gs_disk_avail=""
+    # 方法1: df -h（人类可读）
+    _gs_df_inner=$(df -h / 2>/dev/null | awk '$NF == "/" {print $(NF-3), $(NF-2)}')
+    if [ -n "${_gs_df_inner}" ]; then
+        _gs_disk_used=$(echo "${_gs_df_inner}" | awk '{print $1}')
+        _gs_disk_avail=$(echo "${_gs_df_inner}" | awk '{print $2}')
     fi
-    [[ -z "${CPU_CORES}" ]] && CPU_CORES="未知"
-
-    DISK_AVAIL=$(df -h / 2>/dev/null | awk 'NR==2{print $4}' || true)
-    DISK_USED=$(df -h / 2>/dev/null | awk 'NR==2{print $3}' || true)
+    # 方法2: df -P（POSIX 标准，1K 块）
+    if [ -z "${_gs_disk_avail}" ]; then
+        _gs_df_inner=$(df -P / 2>/dev/null | awk '$NF == "/" {print $(NF-3), $(NF-2)}')
+        if [ -n "${_gs_df_inner}" ]; then
+            _gs_disk_used=$(echo "${_gs_df_inner}" | awk '{print $1}')
+            _gs_disk_avail=$(echo "${_gs_df_inner}" | awk '{print $2}')
+        fi
+    fi
+    # 方法3: df（默认格式，1K 块）
+    if [ -z "${_gs_disk_avail}" ]; then
+        _gs_df_inner=$(df / 2>/dev/null | awk '$NF == "/" {print $(NF-3), $(NF-2)}')
+        if [ -n "${_gs_df_inner}" ]; then
+            _gs_disk_used=$(echo "${_gs_df_inner}" | awk '{print $1}')
+            _gs_disk_avail=$(echo "${_gs_df_inner}" | awk '{print $2}')
+        fi
+    fi
+    # 将 1K 块数值转换为可读格式（非数值原样保留，如 df -h 的 "4.7G"）
+    if [ -n "${_gs_disk_used}" ]; then
+        if echo "${_gs_disk_used}" | grep -qE '^[0-9]+$'; then
+            DISK_USED=$(awk -v v="${_gs_disk_used}" 'BEGIN{if(v>=1048576) printf "%.1fG",v/1048576; else if(v>=1024) printf "%.1fM",v/1024; else printf "%dK",v}')
+        else
+            DISK_USED="${_gs_disk_used}"
+        fi
+    else
+        DISK_USED="?"
+    fi
+    if [ -n "${_gs_disk_avail}" ]; then
+        if echo "${_gs_disk_avail}" | grep -qE '^[0-9]+$'; then
+            DISK_AVAIL=$(awk -v v="${_gs_disk_avail}" 'BEGIN{if(v>=1048576) printf "%.1fG",v/1048576; else if(v>=1024) printf "%.1fM",v/1024; else printf "%dK",v}')
+        else
+            DISK_AVAIL="${_gs_disk_avail}"
+        fi
+    else
+        DISK_AVAIL="?"
+    fi
     DISK_INFO="可用: ${DISK_AVAIL}  已用: ${DISK_USED}"
 
-    RAM_SIZE_MIB=$(free -m 2>/dev/null | awk '/Mem:/{print $2}' || true)
-    if [[ -z "${RAM_SIZE_MIB}" ]]; then
-        RAM_SIZE_MIB=$(awk '/MemTotal:/{printf "%.0f", $2/1024}' /proc/meminfo 2>/dev/null || true)
+    # 内存大小：优选 /proc/meminfo（Linux 内核接口，不受容器 cgroup 偏差影响）
+    RAM_SIZE_MIB=""
+    RAM_SIZE_MIB=$(awk '/MemTotal/{printf "%.0f", $2/1024}' /proc/meminfo 2>/dev/null || true)
+    if [ -z "${RAM_SIZE_MIB}" ] || [ "${RAM_SIZE_MIB}" = "0" ]; then
+        if [ -r /sys/fs/cgroup/memory.max ]; then
+            _gs_cg_mem=$(cat /sys/fs/cgroup/memory.max 2>/dev/null)
+            if [ "${_gs_cg_mem}" != "max" ] && [ -n "${_gs_cg_mem}" ]; then
+                RAM_SIZE_MIB=$(( _gs_cg_mem / 1048576 ))
+            fi
+        elif [ -r /sys/fs/cgroup/memory/memory.limit_in_bytes ]; then
+            _gs_cg_mem=$(cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null)
+            if [ -n "${_gs_cg_mem}" ] && [ "${_gs_cg_mem}" -lt 1099511627776 ]; then
+                RAM_SIZE_MIB=$(( _gs_cg_mem / 1048576 ))
+            fi
+        fi
     fi
-    [[ -z "${RAM_SIZE_MIB}" ]] && RAM_SIZE_MIB="未知"
+    if [ -z "${RAM_SIZE_MIB}" ]; then
+        RAM_SIZE_MIB=$(free -m 2>/dev/null | awk '/Mem:/{print $2}' || \
+                       awk '/MemTotal/{printf "%d", $2/1024}' /proc/meminfo 2>/dev/null || echo "0")
+    fi
 }
 
 # ---------------------------- 打印标题与系统面板 ----------------------------
 print_header() {
-    clear
+    clear 2>/dev/null || printf '\033[2J\033[H' 2>/dev/null || true
     echo_line "${WHITE}"
     echo_line "    ___    __    ___   _____"
     echo_line "   /   |  / /   /   | / ___/"
@@ -293,65 +392,79 @@ print_header() {
     echo_line "  ${ICON_CPU}  CPU 核心数     : ${GREEN}${CPU_CORES}${NC}"
     echo_line "  ${ICON_DISK}  磁盘大小       : ${BLUE}${DISK_INFO}${NC}"
 
-    local ram_color="${GREEN}"
-    if [[ "${RAM_SIZE_MIB}" -lt 1000 ]]; then
-        ram_color="${YELLOW}"
-    elif [[ "${RAM_SIZE_MIB}" -lt 2000 ]]; then
-        ram_color="${BLUE}"
+    _ph_ram_color="${GREEN}"
+    _ph_ram="${RAM_SIZE_MIB}"
+    if echo "${_ph_ram}" | grep -Eq '^[0-9]+$'; then
+        if [ "${_ph_ram}" -lt 1000 ]; then
+            _ph_ram_color="${YELLOW}"
+        elif [ "${_ph_ram}" -lt 2000 ]; then
+            _ph_ram_color="${BLUE}"
+        fi
     fi
-    echo_line "  ${ICON_RAM}  内存大小       : ${ram_color}${RAM_SIZE_MIB} MiB${NC}"
+    echo_line "  ${ICON_RAM}  内存大小       : ${_ph_ram_color}${_ph_ram} MiB${NC}"
 
-    local user_color="${GREEN}"
-    if [[ "${USER_NAME}" == "root" && "${USER_GROUP}" == "root" ]]; then
-        user_color="${YELLOW}"
+    _ph_user_color="${GREEN}"
+    if [ "${USER_NAME}" = "root" ] && [ "${USER_GROUP}" = "root" ]; then
+        _ph_user_color="${YELLOW}"
     fi
-    echo_line "  ${ICON_USER}  当前用户/组    : ${user_color}${USER_NAME} / ${USER_GROUP}${NC}"
+    echo_line "  ${ICON_USER}  当前用户/组    : ${_ph_user_color}${USER_NAME} / ${USER_GROUP}${NC}"
     echo_line ""
 }
 
 # ---------------------------- 发行版检测 ----------------------------
 detect_os() {
-    local kernel_name
-    kernel_name=$(uname -s 2>/dev/null || true)
-    case "${kernel_name}" in
+    _do_kernel_name=$(uname -s 2>/dev/null || true)
+    case "${_do_kernel_name}" in
         FreeBSD|OpenBSD|NetBSD)
-            _log_message "ERROR" "非 Linux 内核 (${kernel_name})，Unix 系统请手动安装"
-            echo_line "  ${ICON_ERROR}  ${RED}非 Linux 内核 (${kernel_name})，Unix 系统请手动安装${NC}"
+            _log_message "ERROR" "非 Linux 内核 (${_do_kernel_name})，Unix 系统请手动安装"
+            echo_line "  ${ICON_ERROR}  ${RED}非 Linux 内核 (${_do_kernel_name})，Unix 系统请手动安装${NC}"
             exit 1 ;;
-        Linux) ;;
+        Linux)
+            _do_arch=$(uname -m 2>/dev/null || true)
+            if [ "${_do_arch}" != "x86_64" ]; then
+                echo_line "  ${ICON_ERROR}  ${RED}不支持的架构: ${_do_arch}，本脚本仅适用于 x86_64${NC}"
+                exit 1
+            fi
+            ;;
         *)
-            _log_message "ERROR" "不支持的操作系统: ${kernel_name}"
-            echo_line "  ${ICON_ERROR}  ${RED}不支持的操作系统: ${kernel_name}${NC}"
+            _log_message "ERROR" "不支持的操作系统: ${_do_kernel_name}"
+            echo_line "  ${ICON_ERROR}  ${RED}不支持的操作系统: ${_do_kernel_name}${NC}"
             exit 1 ;;
     esac
 
-    if [[ -f /etc/os-release ]]; then
+    if [ -f /etc/os-release ]; then
         . /etc/os-release
-        OS_ID="${ID}"
-        OS_VERSION="${VERSION_ID:-${BUILD_ID:-${VERSION:-}}}"
-    elif [[ -f /etc/lsb-release ]]; then
+        OS_ID="${ID:-unknown}"
+        OS_VERSION="${VERSION_ID:-}"
+        if [ -z "${OS_VERSION}" ]; then
+            OS_VERSION="${BUILD_ID:-}"
+        fi
+        if [ -z "${OS_VERSION}" ]; then
+            OS_VERSION="${VERSION:-}"
+        fi
+    elif [ -f /etc/lsb-release ]; then
         . /etc/lsb-release
-        OS_ID="${DISTRIB_ID,,}"
-        OS_VERSION="${DISTRIB_RELEASE}"
-    elif [[ -f /etc/debian_version ]]; then
+        OS_ID=$(printf '%s' "${DISTRIB_ID:-}" | tr '[:upper:]' '[:lower:]')
+        OS_VERSION="${DISTRIB_RELEASE:-}"
+    elif [ -f /etc/debian_version ]; then
         OS_ID="debian"
         OS_VERSION=$(cat /etc/debian_version 2>/dev/null)
-    elif [[ -f /etc/redhat-release ]]; then
+    elif [ -f /etc/redhat-release ]; then
         OS_ID="rhel"
         OS_VERSION=$(grep -oE '[0-9]+\.[0-9]+' /etc/redhat-release 2>/dev/null || echo "unknown")
-    elif [[ -f /etc/centos-release ]]; then
+    elif [ -f /etc/centos-release ]; then
         OS_ID="centos"
         OS_VERSION=$(grep -oE '[0-9]+\.[0-9]+' /etc/centos-release 2>/dev/null || echo "unknown")
-    elif [[ -f /etc/fedora-release ]]; then
+    elif [ -f /etc/fedora-release ]; then
         OS_ID="fedora"
         OS_VERSION=$(grep -oE '[0-9]+' /etc/fedora-release 2>/dev/null || echo "unknown")
-    elif [[ -f /etc/arch-release ]]; then
+    elif [ -f /etc/arch-release ]; then
         OS_ID="arch"
         OS_VERSION="rolling"
-    elif [[ -f /etc/alpine-release ]]; then
+    elif [ -f /etc/alpine-release ]; then
         OS_ID="alpine"
         OS_VERSION=$(cat /etc/alpine-release 2>/dev/null)
-    elif [[ -f /etc/SuSE-release ]]; then
+    elif [ -f /etc/SuSE-release ]; then
         OS_ID="opensuse"
         OS_VERSION=$(sed -n 's/.*VERSION = \([0-9.]*\).*/\1/p' /etc/SuSE-release 2>/dev/null || echo "unknown")
     else
@@ -361,27 +474,30 @@ detect_os() {
     fi
 }
 
-# ---------------------------- 第2步: 安装/激活 Miniforge ----------------------------
+# ---------------------------- 安装/激活 Miniforge ----------------------------
 install_miniforge() {
     start_step "正在检查 Miniforge..."
 
     CONDA_BIN="${HOME}/miniforge3/bin/conda"
-    if command -v conda &>/dev/null; then
-        CONDA_VER=$(conda --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')
-        CONDA_BIN=$(command -v conda)
-        end_step "${ICON_OK}" "Conda 已就绪: ${CONDA_VER}"
-        return
-    fi
 
-    if [[ -x "${CONDA_BIN}" ]]; then
+    if [ -x "${CONDA_BIN}" ]; then
         CONDA_VER=$("${CONDA_BIN}" --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')
         end_step "${ICON_OK}" "Conda 已安装: ${CONDA_VER}"
         return
     fi
+
+    if command -v conda >/dev/null 2>&1; then
+        CONDA_BIN="$(command -v conda)"
+        CONDA_VER=$(conda --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')
+        end_step "${ICON_OK}" "Conda 已就绪: ${CONDA_VER}"
+        return
+    fi
+
     _log_message "ERROR" "未检测到 Conda"
     start_step "正在安装 Miniforge..."
     _log_message "EXEC" "▶ 下载 Miniforge3-Linux-x86_64.sh"
-    if ! wget -q -O /tmp/Miniforge3-Linux-x86_64.sh \
+    if ! curl -fL --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 600 \
+        -o /tmp/Miniforge3-Linux-x86_64.sh \
         "${GH_PROXY}https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh" >> "$LOGFILE" 2>&1; then
         end_step "${ICON_ERROR}" "Miniforge 下载错误，详情请阅读日志：${LOGFILE}" "${RED}"
         exit 1
@@ -389,7 +505,8 @@ install_miniforge() {
     _log_message "OK" "✓ Miniforge 下载完成"
 
     _log_message "EXEC" "▶ 安装 Miniforge"
-    if ! bash /tmp/Miniforge3-Linux-x86_64.sh -b >> "$LOGFILE" 2>&1; then
+    prepare_alpine_conda_runtime
+    if ! bash /tmp/Miniforge3-Linux-x86_64.sh -b -p "${HOME}/miniforge3" >> "$LOGFILE" 2>&1; then
         end_step "${ICON_ERROR}" "Miniforge 安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
         rm -f /tmp/Miniforge3-Linux-x86_64.sh
         exit 1
@@ -397,7 +514,7 @@ install_miniforge() {
     _log_message "OK" "✓ Miniforge 安装完成"
     rm -f /tmp/Miniforge3-Linux-x86_64.sh
 
-    if [[ -x "${CONDA_BIN}" ]]; then
+    if [ -x "${CONDA_BIN}" ]; then
         CONDA_VER=$("${CONDA_BIN}" --version 2>/dev/null | awk '{print $NF}' || echo '版本获取失败')
         end_step "${ICON_OK}" "Miniforge 已安装: ${CONDA_VER}"
     else
@@ -409,17 +526,17 @@ install_miniforge() {
 
 # ---------------------------- 包管理器检测 ----------------------------
 detect_package_manager() {
-    if command -v apt-get &>/dev/null; then
+    if command -v apt-get >/dev/null 2>&1; then
         PACKAGE_MANAGER="apt"
-    elif command -v pacman &>/dev/null; then
+    elif command -v pacman >/dev/null 2>&1; then
         PACKAGE_MANAGER="pacman"
-    elif command -v dnf &>/dev/null; then
+    elif command -v dnf >/dev/null 2>&1; then
         PACKAGE_MANAGER="dnf"
-    elif command -v yum &>/dev/null; then
+    elif command -v yum >/dev/null 2>&1; then
         PACKAGE_MANAGER="yum"
-    elif command -v zypper &>/dev/null; then
+    elif command -v zypper >/dev/null 2>&1; then
         PACKAGE_MANAGER="zypper"
-    elif command -v apk &>/dev/null; then
+    elif command -v apk >/dev/null 2>&1; then
         PACKAGE_MANAGER="apk"
     else
         PACKAGE_MANAGER="unknown"
@@ -429,121 +546,137 @@ detect_package_manager() {
 
 # ---------------------------- 国内镜像安装 ----------------------------
 cn_package_mirrors() {
-    local -a pkgs=("$@")
-
     case "${PACKAGE_MANAGER}" in
         apt)
-            local codename
-            codename=$(lsb_release -sc 2>/dev/null || echo "stable")
-            local dist_path="ubuntu/"
-            [[ "${OS_ID}" == "debian" ]] && dist_path="debian/"
-            local -a apt_mirrors=(
-                "https://mirrors.ustc.edu.cn/${dist_path}"
-                "https://mirrors.aliyun.com/${dist_path}"
-                "https://repo.huaweicloud.com/${dist_path}"
-            )
-            local mirror_url
-            for mirror_url in "${apt_mirrors[@]}"; do
+            _cm_codename=$(lsb_release -sc 2>/dev/null)
+            if [ -z "${_cm_codename}" ]; then
+                _cm_codename=$(. /etc/os-release 2>/dev/null; printf '%s' "${VERSION_CODENAME:-stable}")
+            fi
+            if [ "${OS_ID}" = "debian" ]; then
+                _cm_dist_path="debian/"
+                _cm_components="main contrib non-free"
+            else
+                _cm_dist_path="ubuntu/"
+                _cm_components="main universe"
+            fi
+            for _cm_mirror in \
+                "https://mirrors.ustc.edu.cn/${_cm_dist_path}" \
+                "https://mirrors.aliyun.com/${_cm_dist_path}" \
+                "https://repo.huaweicloud.com/${_cm_dist_path}"; do
                 cat > "/tmp/alas-apt-$$.list" <<EOF
-deb ${mirror_url} ${codename} main universe
-deb ${mirror_url} ${codename}-updates main universe
-deb ${mirror_url} ${codename}-security main universe
+deb ${_cm_mirror} ${_cm_codename} ${_cm_components}
+deb ${_cm_mirror} ${_cm_codename}-updates ${_cm_components}
 EOF
-                _log_message "INFO" "尝试镜像: ${mirror_url}"
+                if [ "${OS_ID}" = "debian" ]; then
+                    _cm_sec_mirror=$(printf '%s' "${_cm_mirror}" | sed 's|/debian/|/debian-security/|')
+                    printf 'deb %s %s %s\n' "${_cm_sec_mirror}" "${_cm_codename}-security" "${_cm_components}" >> "/tmp/alas-apt-$$.list"
+                else
+                    printf 'deb %s %s %s\n' "${_cm_mirror}" "${_cm_codename}-security" "${_cm_components}" >> "/tmp/alas-apt-$$.list"
+                fi
+                _log_message "INFO" "尝试镜像: ${_cm_mirror}"
                 if apt-get -o Dir::Etc::sourcelist="/tmp/alas-apt-$$.list" \
                             -o Dir::Etc::sourceparts="-" \
                             -o APT::Get::List-Cleanup="0" \
                             -qq update >> "$LOGFILE" 2>&1; then
                     if apt-get -o Dir::Etc::sourcelist="/tmp/alas-apt-$$.list" \
                                -o Dir::Etc::sourceparts="-" \
-                               -qq install -y "${pkgs[@]}" >> "$LOGFILE" 2>&1; then
+                               -qq install -y "$@" >> "$LOGFILE" 2>&1; then
                         rm -f "/tmp/alas-apt-$$.list"
                         return 0
                     fi
                 fi
                 rm -f "/tmp/alas-apt-$$.list"
-                _log_message "WARNING" "镜像 ${mirror_url} 不可用，尝试下一个"
+                _log_message "WARNING" "镜像 ${_cm_mirror} 不可用，尝试下一个"
             done
             return 1
             ;;
         pacman)
-            local -a pacman_mirrors=(
-                "https://mirrors.ustc.edu.cn/archlinux/\$repo/os/\$arch"
-                "https://mirrors.aliyun.com/archlinux/\$repo/os/\$arch"
-                "https://repo.huaweicloud.com/archlinux/\$repo/os/\$arch"
-            )
-            local mirror_url
-            for mirror_url in "${pacman_mirrors[@]}"; do
-                echo "Server = ${mirror_url}" > "/tmp/alas-mirrorlist-$$"
-                sed "s|^Include = /etc/pacman.d/mirrorlist|Include = /tmp/alas-mirrorlist-$$|" \
+            for _cm_mirror in \
+                "https://mirrors.ustc.edu.cn/archlinux/\$repo/os/\$arch" \
+                "https://mirrors.aliyun.com/archlinux/\$repo/os/\$arch" \
+                "https://repo.huaweicloud.com/archlinux/\$repo/os/\$arch"; do
+                echo "Server = ${_cm_mirror}" > "/tmp/alas-mirrorlist-$$"
+                sed "s|^Include = /etc/pacman.d/mirrorlist|Include = /tmp/alas-mirrorlist-$$|g" \
                     /etc/pacman.conf > "/tmp/alas-pacman-$$.conf"
-                _log_message "INFO" "尝试镜像: ${mirror_url}"
-                if pacman --config "/tmp/alas-pacman-$$.conf" -Syy --noconfirm "${pkgs[@]}" >> "$LOGFILE" 2>&1; then
+                _log_message "INFO" "尝试镜像: ${_cm_mirror}"
+                if pacman --config "/tmp/alas-pacman-$$.conf" -Syy --noconfirm "$@" >> "$LOGFILE" 2>&1; then
                     rm -f "/tmp/alas-pacman-$$.conf" "/tmp/alas-mirrorlist-$$"
                     return 0
                 fi
                 rm -f "/tmp/alas-pacman-$$.conf" "/tmp/alas-mirrorlist-$$"
-                _log_message "WARNING" "镜像 ${mirror_url} 不可用，尝试下一个"
+                _log_message "WARNING" "镜像 ${_cm_mirror} 不可用，尝试下一个"
             done
             return 1
             ;;
         dnf)
-            local -a dnf_mirrors=(
-                "https://mirrors.ustc.edu.cn/centos/\$releasever/BaseOS/\$basearch/os/"
-                "https://mirrors.aliyun.com/centos/\$releasever/BaseOS/\$basearch/os/"
-                "https://repo.huaweicloud.com/centos/\$releasever/BaseOS/\$basearch/os/"
-            )
-            local mirror_url
-            for mirror_url in "${dnf_mirrors[@]}"; do
-                _log_message "INFO" "尝试镜像: ${mirror_url}"
-                if dnf --disablerepo='*' --repofrompath="cn-temp-$$,${mirror_url}" --enablerepo="cn-temp-$$" \
+            if [ "${OS_ID}" = "fedora" ]; then
+                _cm_dnf_base="fedora/linux/releases/\$releasever/Everything/\$basearch/os/"
+            else
+                _cm_dnf_base="centos/\$releasever/BaseOS/\$basearch/os/"
+            fi
+            for _cm_mirror in \
+                "https://mirrors.ustc.edu.cn/${_cm_dnf_base}" \
+                "https://mirrors.aliyun.com/${_cm_dnf_base}" \
+                "https://repo.huaweicloud.com/${_cm_dnf_base}"; do
+                _log_message "INFO" "尝试镜像: ${_cm_mirror}"
+                if dnf --disablerepo='*' --repofrompath="cn-temp-$$,${_cm_mirror}" --enablerepo="cn-temp-$$" \
                        -q makecache >> "$LOGFILE" 2>&1; then
-                    if dnf --disablerepo='*' --repofrompath="cn-temp-$$,${mirror_url}" --enablerepo="cn-temp-$$" \
-                           -q install -y "${pkgs[@]}" >> "$LOGFILE" 2>&1; then
+                    if dnf --disablerepo='*' --repofrompath="cn-temp-$$,${_cm_mirror}" --enablerepo="cn-temp-$$" \
+                           -q install -y "$@" >> "$LOGFILE" 2>&1; then
                         return 0
                     fi
                 fi
-                _log_message "WARNING" "镜像 ${mirror_url} 不可用，尝试下一个"
+                _log_message "WARNING" "镜像 ${_cm_mirror} 不可用，尝试下一个"
             done
             return 1
             ;;
         apk)
-            local alpine_ver
-            alpine_ver=$(cat /etc/alpine-release 2>/dev/null | cut -d. -f1,2 || echo "latest-stable")
-            local -a apk_mirrors=(
-                "https://mirrors.ustc.edu.cn/alpine/v${alpine_ver}/main"
-                "https://mirrors.ustc.edu.cn/alpine/v${alpine_ver}/community"
-                "https://mirrors.aliyun.com/alpine/v${alpine_ver}/main"
-                "https://mirrors.aliyun.com/alpine/v${alpine_ver}/community"
-                "https://repo.huaweicloud.com/alpine/v${alpine_ver}/main"
-                "https://repo.huaweicloud.com/alpine/v${alpine_ver}/community"
-            )
-            local mirror_url
-            for mirror_url in "${apk_mirrors[@]}"; do
-                _log_message "INFO" "尝试镜像: ${mirror_url}"
-                if apk add --no-cache --repository="${mirror_url}" "${pkgs[@]}" >> "$LOGFILE" 2>&1; then
+            _cm_alpine_ver=$(cut -d. -f1,2 /etc/alpine-release 2>/dev/null || echo "latest-stable")
+            for _cm_mirror in \
+                "https://mirrors.ustc.edu.cn/alpine/v${_cm_alpine_ver}/main" \
+                "https://mirrors.ustc.edu.cn/alpine/v${_cm_alpine_ver}/community" \
+                "https://mirrors.aliyun.com/alpine/v${_cm_alpine_ver}/main" \
+                "https://mirrors.aliyun.com/alpine/v${_cm_alpine_ver}/community" \
+                "https://repo.huaweicloud.com/alpine/v${_cm_alpine_ver}/main" \
+                "https://repo.huaweicloud.com/alpine/v${_cm_alpine_ver}/community"; do
+                _log_message "INFO" "尝试镜像: ${_cm_mirror}"
+                if apk add --no-cache --repository="${_cm_mirror}" "$@" >> "$LOGFILE" 2>&1; then
                     return 0
                 fi
-                _log_message "WARNING" "镜像 ${mirror_url} 不可用，尝试下一个"
+                _log_message "WARNING" "镜像 ${_cm_mirror} 不可用，尝试下一个"
             done
             return 1
             ;;
         zypper)
-            local zypp_ver
-            zypp_ver=$(sed -n 's/.*VERSION_ID="\?\([^"]*\).*/\1/p' /etc/os-release 2>/dev/null || echo "15.6")
-            local -a zypp_mirrors=(
-                "https://mirrors.ustc.edu.cn/opensuse/distribution/leap/${zypp_ver}/repo/oss/"
-                "https://mirrors.aliyun.com/opensuse/distribution/leap/${zypp_ver}/repo/oss/"
-                "https://repo.huaweicloud.com/opensuse/distribution/leap/${zypp_ver}/repo/oss/"
-            )
-            local mirror_url
-            for mirror_url in "${zypp_mirrors[@]}"; do
-                _log_message "INFO" "尝试镜像: ${mirror_url}"
-                if zypper --non-interactive --no-gpg-checks --plus-repo "${mirror_url}" \
-                       install -y "${pkgs[@]}" >> "$LOGFILE" 2>&1; then
+            _cm_zypp_ver=$(sed -n 's/.*VERSION_ID="\?\([^"]*\).*/\1/p' /etc/os-release 2>/dev/null || echo "15.6")
+            for _cm_mirror in \
+                "https://mirrors.ustc.edu.cn/opensuse/distribution/leap/${_cm_zypp_ver}/repo/oss/" \
+                "https://mirrors.aliyun.com/opensuse/distribution/leap/${_cm_zypp_ver}/repo/oss/" \
+                "https://repo.huaweicloud.com/opensuse/distribution/leap/${_cm_zypp_ver}/repo/oss/"; do
+                _log_message "INFO" "尝试镜像: ${_cm_mirror}"
+                if zypper --non-interactive --plus-repo "${_cm_mirror}" \
+                       install -y "$@" >> "$LOGFILE" 2>&1; then
                     return 0
                 fi
-                _log_message "WARNING" "镜像 ${mirror_url} 不可用，尝试下一个"
+                _log_message "WARNING" "镜像 ${_cm_mirror} 不可用，尝试下一个"
+            done
+            return 1
+            ;;
+        yum)
+            _cm_yum_base="centos/\$releasever/os/\$basearch/"
+            for _cm_mirror in \
+                "https://mirrors.ustc.edu.cn/${_cm_yum_base}" \
+                "https://mirrors.aliyun.com/${_cm_yum_base}" \
+                "https://repo.huaweicloud.com/${_cm_yum_base}"; do
+                _log_message "INFO" "尝试镜像: ${_cm_mirror}"
+                if yum --disablerepo='*' --repofrompath="cn-temp-$$,${_cm_mirror}" --enablerepo="cn-temp-$$" \
+                       -q makecache >> "$LOGFILE" 2>&1; then
+                    if yum --disablerepo='*' --repofrompath="cn-temp-$$,${_cm_mirror}" --enablerepo="cn-temp-$$" \
+                           -q install -y "$@" >> "$LOGFILE" 2>&1; then
+                        return 0
+                    fi
+                fi
+                _log_message "WARNING" "镜像 ${_cm_mirror} 不可用，尝试下一个"
             done
             return 1
             ;;
@@ -554,53 +687,204 @@ EOF
     esac
 }
 
-# ---------------------------- 第1步: 检查依赖 ----------------------------
+# ---------------------------- Alpine 专用：确保 glibc loader ----------------------------
+ensure_alpine_glibc_loader() {
+    if [ -e "${ALPINE_GLIBC_LOADER}" ]; then
+        _log_message "OK" "glibc loader 已存在: ${ALPINE_GLIBC_LOADER}"
+        return 0
+    fi
+
+    for _eg_candidate in /usr/glibc-compat/lib/ld-linux-x86-64.so.2 /lib/ld-linux-x86-64.so.2; do
+        if [ -e "${_eg_candidate}" ]; then
+            mkdir -p /lib64 /lib
+
+            if [ "${_eg_candidate}" != "${ALPINE_GLIBC_LOADER}" ]; then
+                ln -sf "${_eg_candidate}" "${ALPINE_GLIBC_LOADER}"
+            fi
+
+            if [ "${_eg_candidate}" != "/lib/ld-linux-x86-64.so.2" ]; then
+                ln -sf "${_eg_candidate}" /lib/ld-linux-x86-64.so.2 2>/dev/null || true
+            fi
+
+            if [ -e "${ALPINE_GLIBC_LOADER}" ]; then
+                _log_message "OK" "已创建 glibc loader 兼容链接: ${ALPINE_GLIBC_LOADER} -> ${_eg_candidate}"
+                return 0
+            fi
+        fi
+    done
+
+    _log_message "ERROR" "未找到 glibc loader，Conda 的 linux-64 Python 可能无法启动"
+    return 1
+}
+
+# ---------------------------- Alpine 专用：安装第三方 glibc（sgerrand v2.34）----------------------------
+install_alpine_real_glibc() {
+    _ir_glibc_ver="2.34-r0"
+    _log_message "INFO" "正在安装 Alpine 第三方 glibc 兼容包..."
+    _log_message "WARNING" "将安装 sgerrand/alpine-pkg-glibc (${_ir_glibc_ver})，用于运行 conda linux-64 Python"
+
+    if apk info -e glibc >/dev/null 2>&1 && has_real_glibc; then
+        _log_message "OK" "第三方 glibc 已存在"
+        return
+    fi
+
+    if apk info -e gcompat >/dev/null 2>&1; then
+        _log_message "EXEC" "▶ 移除 gcompat 以避免与 glibc loader 冲突"
+        apk del gcompat >> "$LOGFILE" 2>&1 || true
+    fi
+
+    _ir_tmp_dir="/tmp/alas_glibc_$$"
+    _ir_key_file="/etc/apk/keys/sgerrand.rsa.pub"
+    _ir_key_url="https://alpine-pkgs.sgerrand.com/sgerrand.rsa.pub"
+    _ir_key_fallback="https://raw.githubusercontent.com/sgerrand/alpine-pkg-glibc/master/sgerrand.rsa.pub"
+    _ir_release_url="https://github.com/sgerrand/alpine-pkg-glibc/releases/download/${_ir_glibc_ver}"
+    _ir_glibc_apk="${_ir_tmp_dir}/glibc-${_ir_glibc_ver}.apk"
+    _ir_glibc_bin_apk="${_ir_tmp_dir}/glibc-bin-${_ir_glibc_ver}.apk"
+
+    mkdir -p "${_ir_tmp_dir}" /etc/apk/keys /lib64 /lib
+
+    _log_message "EXEC" "▶ 下载 sgerrand APK 签名 key"
+    if ! curl -fSL --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 180 \
+            -o "${_ir_key_file}" "${_ir_key_url}" >> "$LOGFILE" 2>&1; then
+        _log_message "WARNING" "sgerrand 官方源不可用，尝试 GitHub raw fallback"
+        if ! curl -fSL --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 180 \
+                -o "${_ir_key_file}" "${_ir_key_fallback}" >> "$LOGFILE" 2>&1; then
+            rm -rf "${_ir_tmp_dir}"
+            end_step "${ICON_ERROR}" "第三方 glibc key 下载失败" "${RED}"
+            exit 1
+        fi
+    fi
+
+    _log_message "EXEC" "▶ 下载 glibc APK: ${_ir_glibc_ver}"
+    if ! curl -fSL --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 180 \
+            -o "${_ir_glibc_apk}" "${GH_PROXY}${_ir_release_url}/glibc-${_ir_glibc_ver}.apk" >> "$LOGFILE" 2>&1 || \
+       ! curl -fSL --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 180 \
+            -o "${_ir_glibc_bin_apk}" "${GH_PROXY}${_ir_release_url}/glibc-bin-${_ir_glibc_ver}.apk" >> "$LOGFILE" 2>&1; then
+        rm -rf "${_ir_tmp_dir}"
+        end_step "${ICON_ERROR}" "第三方 glibc APK 下载失败: ${_ir_release_url}" "${RED}"
+        exit 1
+    fi
+
+    _log_message "EXEC" "▶ apk add --force-overwrite glibc"
+    if ! apk add --force-overwrite "${_ir_glibc_apk}" "${_ir_glibc_bin_apk}" >> "$LOGFILE" 2>&1; then
+        rm -rf "${_ir_tmp_dir}"
+        end_step "${ICON_ERROR}" "第三方 glibc 安装失败，详情请查看日志: ${LOGFILE}" "${RED}"
+        exit 1
+    fi
+
+    rm -rf "${_ir_tmp_dir}"
+
+    ensure_alpine_glibc_loader || {
+        end_step "${ICON_ERROR}" "第三方 glibc 安装后仍缺少 loader" "${RED}"
+        exit 1
+    }
+
+    has_real_glibc || {
+        end_step "${ICON_ERROR}" "第三方 glibc 安装完成，但真实 glibc 校验失败" "${RED}"
+        exit 1
+    }
+
+    _log_message "OK" "第三方 glibc 安装完成"
+}
+
+# ---------------------------- Alpine 专用：检测真实 glibc ----------------------------
+has_real_glibc() {
+    if [ -x /usr/glibc-compat/bin/getconf ]; then
+        /usr/glibc-compat/bin/getconf GNU_LIBC_VERSION >/dev/null 2>&1 && return 0
+    fi
+
+    if command -v getconf >/dev/null 2>&1; then
+        getconf GNU_LIBC_VERSION >/dev/null 2>&1 && return 0
+    fi
+
+    if [ -x /usr/glibc-compat/lib/libc.so.6 ]; then
+        /usr/glibc-compat/lib/libc.so.6 2>&1 | grep -qi 'GNU C Library' && return 0
+    fi
+
+    return 1
+}
+
+# ---------------------------- Alpine 专用：准备 Conda 运行环境 ----------------------------
+prepare_alpine_conda_runtime() {
+    if [ "${PACKAGE_MANAGER}" != "apk" ]; then
+        return 0
+    fi
+    _log_message "INFO" "正在准备 Alpine Conda 运行环境..."
+
+    if apk info -e gcompat >/dev/null 2>&1; then
+        _log_message "EXEC" "▶ 移除 gcompat，避免与真实 glibc 冲突"
+        apk del gcompat >> "$LOGFILE" 2>&1 || {
+            end_step "${ICON_ERROR}" "gcompat 移除失败，请先手动执行: apk del gcompat" "${RED}"
+            exit 1
+        }
+    fi
+
+    if ! has_real_glibc; then
+        install_alpine_real_glibc || {
+            end_step "${ICON_ERROR}" "Alpine glibc 安装失败" "${RED}"
+            exit 1
+        }
+    fi
+
+    has_real_glibc || {
+        end_step "${ICON_ERROR}" "未检测到真实 glibc，不能继续安装 Miniforge" "${RED}"
+        exit 1
+    }
+
+    ensure_alpine_glibc_loader || {
+        end_step "${ICON_ERROR}" "未检测到 glibc loader: ${ALPINE_GLIBC_LOADER}" "${RED}"
+        exit 1
+    }
+
+    command -v bash >/dev/null 2>&1 || {
+        end_step "${ICON_ERROR}" "未检测到 bash，Miniforge 安装器不能使用 BusyBox sh 执行" "${RED}"
+        exit 1
+    }
+}
+
+# ---------------------------- 检查依赖 ----------------------------
 install_deps() {
     start_step "正在检查依赖..."
 
     detect_package_manager
 
-    local missing_pkgs=()
+    _id_missing=""
 
     case "${PACKAGE_MANAGER}" in
         apt)
-            local check_list=(curl git adb)
-            for pkg in "${check_list[@]}"; do
-                if dpkg -s "$pkg" &>/dev/null; then
-                    _log_message "OK" "依赖已存在: ${pkg}"
+            for _id_pkg in curl git adb; do
+                if dpkg -s "$_id_pkg" >/dev/null 2>&1; then
+                    _log_message "OK" "依赖已存在: ${_id_pkg}"
                 else
-                    _log_message "WARNING" "依赖缺失: ${pkg}"
-                    missing_pkgs+=("$pkg")
+                    _log_message "WARNING" "依赖缺失: ${_id_pkg}"
+                    _id_missing="${_id_missing} ${_id_pkg}"
                 fi
             done ;;
         pacman)
-            local check_list=(curl git android-tools)
-            for pkg in "${check_list[@]}"; do
-                if pacman -Q "$pkg" &>/dev/null; then
-                    _log_message "OK" "依赖已存在: ${pkg}"
+            for _id_pkg in curl git android-tools; do
+                if pacman -Q "$_id_pkg" >/dev/null 2>&1; then
+                    _log_message "OK" "依赖已存在: ${_id_pkg}"
                 else
-                    _log_message "WARNING" "依赖缺失: ${pkg}"
-                    missing_pkgs+=("$pkg")
+                    _log_message "WARNING" "依赖缺失: ${_id_pkg}"
+                    _id_missing="${_id_missing} ${_id_pkg}"
                 fi
             done ;;
         dnf|yum|zypper)
-            local check_list=(curl git adb)
-            for pkg in "${check_list[@]}"; do
-                if rpm -q "$pkg" &>/dev/null; then
-                    _log_message "OK" "依赖已存在: ${pkg}"
+            for _id_pkg in curl git adb; do
+                if rpm -q "$_id_pkg" >/dev/null 2>&1; then
+                    _log_message "OK" "依赖已存在: ${_id_pkg}"
                 else
-                    _log_message "WARNING" "依赖缺失: ${pkg}"
-                    missing_pkgs+=("$pkg")
+                    _log_message "WARNING" "依赖缺失: ${_id_pkg}"
+                    _id_missing="${_id_missing} ${_id_pkg}"
                 fi
             done ;;
         apk)
-            local check_list=(curl git android-tools)
-            for pkg in "${check_list[@]}"; do
-                if apk info -e "$pkg" &>/dev/null; then
-                    _log_message "OK" "依赖已存在: ${pkg}"
+            for _id_pkg in git android-tools curl ca-certificates tar gzip xz bzip2 zstd bash libstdc++ libgcc coreutils; do
+                if apk info -e "$_id_pkg" >/dev/null 2>&1; then
+                    _log_message "OK" "依赖已存在: ${_id_pkg}"
                 else
-                    _log_message "WARNING" "依赖缺失: ${pkg}"
-                    missing_pkgs+=("$pkg")
+                    _log_message "WARNING" "依赖缺失: ${_id_pkg}"
+                    _id_missing="${_id_missing} ${_id_pkg}"
                 fi
             done ;;
         *)
@@ -608,23 +892,36 @@ install_deps() {
             exit 1 ;;
     esac
 
-    if [[ ${#missing_pkgs[@]} -eq 0 ]]; then
-        end_step "${ICON_OK}" "curl 已安装: $(curl --version 2>/dev/null | head -n1 | awk '{print $2}')"
-        end_step "${ICON_OK}" "Git 已安装: $(git --version 2>/dev/null | awk '{print $NF}')"
-        end_step "${ICON_OK}" "ADB 已安装: $(adb --version 2>/dev/null | head -n1 | awk '{print $NF}')"
+    if [ -z "${_id_missing}" ]; then
+        prepare_alpine_conda_runtime
+        _log_message "OK" "✓ curl $(curl --version 2>/dev/null | head -n1 | awk '{print $2}')"
+        _log_message "OK" "✓ Git $(git --version 2>/dev/null | awk '{print $NF}')"
+        _log_message "OK" "✓ ADB $(adb --version 2>/dev/null | head -n1 | awk '{print $NF}')"
+        if [ "${PACKAGE_MANAGER}" = "apk" ]; then
+            _log_message "OK" "✓ tar $(tar --version 2>/dev/null | head -1 | awk '{print $NF}')"
+            _log_message "OK" "✓ xz $(xz --version 2>/dev/null | head -1 | awk '{print $NF}')"
+            _log_message "OK" "✓ ca-certificates $(apk info -v ca-certificates 2>/dev/null | sed 's/^ca-certificates-//' || echo '✓')"
+            _log_message "OK" "✓ libstdc++ $(apk info -v libstdc++ 2>/dev/null | sed 's/^libstdc++-//' || echo '✓')"
+            _log_message "OK" "✓ libgcc $(apk info -v libgcc 2>/dev/null | sed 's/^libgcc-//' || echo '✓')"
+        fi
+        end_step "${ICON_OK}" "依赖检查完成"
         return
     fi
 
-    start_step "正在安装缺失的依赖: ${missing_pkgs[*]}..."
+    start_step "正在安装缺失的依赖:${_id_missing}..."
 
-    if [[ "${USE_CN_MIRROR}" == true ]]; then
-        _log_message "EXEC" "▶ ${PACKAGE_MANAGER} (CN mirrors) ${missing_pkgs[*]}"
-        cn_package_mirrors "${missing_pkgs[@]}" || {
-            _log_message "ERROR" "✗ CN 镜像安装失败"
-            end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
-            exit 1
-        }
-    else
+    _cn_fallback=false
+    if [ "${USE_CN_MIRROR}" = true ]; then
+        _log_message "EXEC" "▶ ${PACKAGE_MANAGER} (CN mirrors)${_id_missing}"
+        # shellcheck disable=SC2086
+        if cn_package_mirrors ${_id_missing}; then
+            _log_message "OK" "✓ 使用 CN 镜像安装依赖完成"
+        else
+            _log_message "WARNING" "CN 镜像全部不可用，自动回退官方源"
+            _cn_fallback=true
+        fi
+    fi
+    if [ "${USE_CN_MIRROR}" != true ] || [ "${_cn_fallback}" = true ]; then
         case "${PACKAGE_MANAGER}" in
             apt)
                 _log_message "EXEC" "▶ apt-get update"
@@ -634,15 +931,17 @@ install_deps() {
                     exit 1
                 fi
                 _log_message "OK" "✓ apt-get update 完成"
-                _log_message "EXEC" "▶ apt-get install -y ${missing_pkgs[*]}"
-                if ! apt-get -qq install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
+                _log_message "EXEC" "▶ apt-get install -y${_id_missing}"
+                # shellcheck disable=SC2086
+                if ! apt-get -qq install -y ${_id_missing} >> "$LOGFILE" 2>&1; then
                     _log_message "ERROR" "✗ apt-get install 失败"
                     end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
                     exit 1
                 fi ;;
             pacman)
-                _log_message "EXEC" "▶ pacman -Syy --noconfirm ${missing_pkgs[*]}"
-                if ! pacman -Syy --noconfirm "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
+                _log_message "EXEC" "▶ pacman -Syy --noconfirm${_id_missing}"
+                # shellcheck disable=SC2086
+                if ! pacman -Syy --noconfirm ${_id_missing} >> "$LOGFILE" 2>&1; then
                     _log_message "ERROR" "✗ pacman 安装失败"
                     end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
                     exit 1
@@ -655,15 +954,17 @@ install_deps() {
                     exit 1
                 fi
                 _log_message "OK" "✓ dnf makecache 完成"
-                _log_message "EXEC" "▶ dnf install -y ${missing_pkgs[*]}"
-                if ! dnf -q install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
+                _log_message "EXEC" "▶ dnf install -y${_id_missing}"
+                # shellcheck disable=SC2086
+                if ! dnf -q install -y ${_id_missing} >> "$LOGFILE" 2>&1; then
                     _log_message "ERROR" "✗ dnf install 失败"
                     end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
                     exit 1
                 fi ;;
             yum)
-                _log_message "EXEC" "▶ yum install -y ${missing_pkgs[*]}"
-                if ! yum -q install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
+                _log_message "EXEC" "▶ yum install -y${_id_missing}"
+                # shellcheck disable=SC2086
+                if ! yum -q install -y ${_id_missing} >> "$LOGFILE" 2>&1; then
                     _log_message "ERROR" "✗ yum install 失败"
                     end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
                     exit 1
@@ -676,15 +977,17 @@ install_deps() {
                     exit 1
                 fi
                 _log_message "OK" "✓ zypper refresh 完成"
-                _log_message "EXEC" "▶ zypper --non-interactive install -y ${missing_pkgs[*]}"
-                if ! zypper --non-interactive install -y "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
+                _log_message "EXEC" "▶ zypper --non-interactive install -y${_id_missing}"
+                # shellcheck disable=SC2086
+                if ! zypper --non-interactive install -y ${_id_missing} >> "$LOGFILE" 2>&1; then
                     _log_message "ERROR" "✗ zypper install 失败"
                     end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
                     exit 1
                 fi ;;
             apk)
-                _log_message "EXEC" "▶ apk add --no-cache ${missing_pkgs[*]}"
-                if ! apk add --no-cache "${missing_pkgs[@]}" >> "$LOGFILE" 2>&1; then
+                _log_message "EXEC" "▶ apk add --no-cache${_id_missing}"
+                # shellcheck disable=SC2086
+                if ! apk add --no-cache ${_id_missing} >> "$LOGFILE" 2>&1; then
                     _log_message "ERROR" "✗ apk add 失败"
                     end_step "${ICON_ERROR}" "依赖安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
                     exit 1
@@ -692,23 +995,50 @@ install_deps() {
         esac
     fi
 
-    end_step "${ICON_OK}" "curl 已安装: $(curl --version 2>/dev/null | head -n1 | awk '{print $2}')"
-    end_step "${ICON_OK}" "Git 已安装: $(git --version 2>/dev/null | awk '{print $NF}')"
-    end_step "${ICON_OK}" "ADB 已安装: $(adb --version 2>/dev/null | head -n1 | awk '{print $NF}')"
-    _log_message "OK" "✓ 依赖安装完成"
+    prepare_alpine_conda_runtime
+
+    _log_message "OK" "✓ curl $(curl --version 2>/dev/null | head -n1 | awk '{print $2}')"
+    _log_message "OK" "✓ Git $(git --version 2>/dev/null | awk '{print $NF}')"
+    _log_message "OK" "✓ ADB $(adb --version 2>/dev/null | head -n1 | awk '{print $NF}')"
+    if [ "${PACKAGE_MANAGER}" = "apk" ]; then
+        _log_message "OK" "✓ tar $(tar --version 2>/dev/null | head -1 | awk '{print $NF}')"
+        _log_message "OK" "✓ xz $(xz --version 2>/dev/null | head -1 | awk '{print $NF}')"
+        _log_message "OK" "✓ ca-certificates $(apk info -v ca-certificates 2>/dev/null | sed 's/^ca-certificates-//' || echo '✓')"
+        _log_message "OK" "✓ libstdc++ $(apk info -v libstdc++ 2>/dev/null | sed 's/^libstdc++-//' || echo '✓')"
+        _log_message "OK" "✓ libgcc $(apk info -v libgcc 2>/dev/null | sed 's/^libgcc-//' || echo '✓')"
+    fi
+    end_step "${ICON_OK}" "依赖检查完成"
 }
 
-# ---------------------------- 第3步: 克隆仓库 ----------------------------
+# ---------------------------- 克隆仓库 ----------------------------
 clone_alas() {
     start_step "正在克隆 ALAS 仓库..."
 
     WORK_DIR="${INSTALL_DIR}"
-    if [[ -d "${WORK_DIR}" ]]; then
-        _log_message "WARNING" "ALAS 目录已存在，跳过克隆: ${WORK_DIR}"
-        end_step "${ICON_WARN}" "ALAS 目录已存在，跳过克隆" "${YELLOW}"
-        cd "${WORK_DIR}"
-        ALAS_DIR="${WORK_DIR}"
-        return
+    if [ -d "${WORK_DIR}" ]; then
+        _ca_origin_url=""
+        if [ -d "${WORK_DIR}/.git" ]; then
+            _ca_origin_url=$(git -C "${WORK_DIR}" remote get-url origin 2>/dev/null || true)
+        fi
+
+        case "${_ca_origin_url}" in
+            *AzurLaneAutoScript*)
+                _log_message "OK" "git 远程 URL 验证通过: ${_ca_origin_url}"
+                _log_message "WARNING" "ALAS 仓库已存在，跳过克隆: ${WORK_DIR}"
+                end_step "${ICON_WARN}" "ALAS 仓库已存在，跳过克隆" "${YELLOW}"
+                cd "${WORK_DIR}"
+                ALAS_DIR="${WORK_DIR}"
+                return
+                ;;
+            "")
+                _log_message "WARNING" "目录 ${WORK_DIR} 中无 .git 信息，可能是非完整 ALAS 安装，将覆盖安装"
+                _log_message "EXEC" "▶ 删除旧目录: rm -rf ${WORK_DIR}"
+                rm -rf "${WORK_DIR}" ;;
+            *)
+                _log_message "ERROR" "安装目录已存在，但不是 AzurLaneAutoScript 仓库: ${WORK_DIR} (remote: ${_ca_origin_url})"
+                end_step "${ICON_ERROR}" "安装目录已存在且是其他 git 仓库 (${_ca_origin_url})，请使用 --dir 参数指定目录或使用手动处理" "${RED}"
+                exit 1 ;;
+        esac
     fi
 
     REPO_URL="https://github.com/LmeSzinc/AzurLaneAutoScript.git"
@@ -725,20 +1055,18 @@ clone_alas() {
     end_step "${ICON_OK}" "ALAS 仓库已克隆"
 }
 
-# ---------------------------- 第4步: 配置虚拟环境 ----------------------------
+# ---------------------------- 配置虚拟环境 ----------------------------
 setup_conda_env() {
     start_step "正在配置 Conda 虚拟环境..."
 
     cd "${ALAS_DIR}"
-    if [[ -f environment.yml ]]; then
+    if [ -f environment.yml ]; then
         _log_message "EXEC" "▶ 备份已有 environment.yml → environment.yml.bak"
         cp environment.yml environment.yml.bak
         _log_message "OK" "✓ 备份完成"
     fi
 
-    ENV_URL="https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Conda/environment.yml"
     _log_message "EXEC" "▶ 生成 environment.yml"
-
     cat > environment.yml << 'YML_EOF'
 name: alas
 channels:
@@ -791,18 +1119,39 @@ dependencies:
 YML_EOF
     _log_message "OK" "✓ environment.yml 已生成"
 
-    eval "$("${CONDA_BIN}" shell.bash hook)" >> "$LOGFILE" 2>&1
-    _log_message "OK" "✓ Conda shell hook 已加载"
+    _conda_base=$("${CONDA_BIN}" info --base 2>/dev/null || true)
+    _conda_sh=""
+    if [ -n "${_conda_base}" ] && [ -f "${_conda_base}/etc/profile.d/conda.sh" ]; then
+        _conda_sh="${_conda_base}/etc/profile.d/conda.sh"
+    elif [ -f "$(dirname "$(dirname "${CONDA_BIN}")")/etc/profile.d/conda.sh" ]; then
+        _conda_sh="$(dirname "$(dirname "${CONDA_BIN}")")/etc/profile.d/conda.sh"
+    elif [ -f "${HOME}/miniforge3/etc/profile.d/conda.sh" ]; then
+        _conda_sh="${HOME}/miniforge3/etc/profile.d/conda.sh"
+    elif [ -f /etc/profile.d/conda.sh ]; then
+        _conda_sh="/etc/profile.d/conda.sh"
+    elif [ -f /opt/conda/etc/profile.d/conda.sh ]; then
+        _conda_sh="/opt/conda/etc/profile.d/conda.sh"
+    fi
+    if [ -n "${_conda_sh}" ]; then
+        _log_message "INFO" "加载 conda.sh: ${_conda_sh}"
+        # shellcheck source=/dev/null
+        . "${_conda_sh}" >> "$LOGFILE" 2>&1
+        _log_message "OK" "✓ Conda shell 已加载 (POSIX)"
+    else
+        _log_message "WARNING" "未找到 conda.sh，回退为直接调用 ${CONDA_BIN}"
+        conda() { "${CONDA_BIN}" "$@"; }
+        _log_message "OK" "✓ 已定义 conda 命令包装函数"
+    fi
 
-    if [[ "${USE_CN_MIRROR}" == true ]]; then
-        local cernet_conda="https://mirrors.cernet.edu.cn/anaconda"
-        local cernet_pypi="https://mirrors.cernet.edu.cn/pypi/web/simple"
+    if [ "${USE_CN_MIRROR}" = true ]; then
+        _se_cernet_conda="https://mirrors.cernet.edu.cn/anaconda"
+        _se_cernet_pypi="https://mirrors.cernet.edu.cn/pypi/web/simple"
 
         _log_message "EXEC" "▶ 配置国内镜像源 (cernet)"
-        conda config --prepend channels "${cernet_conda}/cloud/conda-forge/" >> "$LOGFILE" 2>&1
-        conda config --prepend channels "${cernet_conda}/pkgs/main/" >> "$LOGFILE" 2>&1
+        conda config --prepend channels "${_se_cernet_conda}/cloud/conda-forge/" >> "$LOGFILE" 2>&1
+        conda config --prepend channels "${_se_cernet_conda}/pkgs/main/" >> "$LOGFILE" 2>&1
 
-        export PIP_INDEX_URL="${cernet_pypi}"
+        export PIP_INDEX_URL="${_se_cernet_pypi}"
         export PIP_TRUSTED_HOST="mirrors.cernet.edu.cn"
         export PIP_TIMEOUT=60
         _log_message "OK" "✓ 国内镜像源已配置"
@@ -810,21 +1159,53 @@ YML_EOF
 
     if conda env list 2>/dev/null | grep -q "^alas "; then
         _log_message "WARNING" "检测到已有 alas 环境，正在移除..."
-        _log_exec "移除旧环境 (方法1: conda env remove)" conda env remove -n alas -y || \
-        _log_exec "移除旧环境 (方法2: rm -rf)" rm -rf "$(conda info --base 2>/dev/null)/envs/alas"
+        _log_message "EXEC" "▶ conda clean -a -y"
+        conda clean -a -y >> "$LOGFILE" 2>&1 || true
+        _log_message "EXEC" "▶ conda env remove -n alas -y"
+        conda env remove -n alas -y >> "$LOGFILE" 2>&1 || \
+        {
+            _conda_base=$(conda info --base 2>/dev/null || true)
+            if [ -n "${_conda_base}" ] && [ -d "${_conda_base}/envs/alas" ]; then
+                _log_message "EXEC" "▶ rm -rf ${_conda_base}/envs/alas"
+                rm -rf "${_conda_base}/envs/alas" >> "$LOGFILE" 2>&1 || true
+            fi
+        }
         _log_message "OK" "✓ 旧环境已移除"
     fi
 
-    _log_message "EXEC" "▶ conda env create -f environment.yml (这可能需要较长时间)"
-    if ! conda env create -f environment.yml >> "$LOGFILE" 2>&1; then
+    _se_install_log="/tmp/conda_install_$$.log"
+    _se_install_attempt=1
+    _se_cn_fallback_done=false
+    while true; do
+        _log_message "EXEC" "▶ conda env create -f environment.yml (第 ${_se_install_attempt} 次，这可能需要较长时间)"
+        if conda env create -f environment.yml > "${_se_install_log}" 2>&1; then
+            cat "${_se_install_log}" >> "$LOGFILE" 2>/dev/null || true
+            rm -f "${_se_install_log}"
+            break
+        fi
+
+        cat "${_se_install_log}" >> "$LOGFILE" 2>/dev/null || true
+        if [ "${USE_CN_MIRROR}" = true ] && [ "${_se_cn_fallback_done}" != true ] && \
+           grep -Eqi '403|403 Forbidden|HTTP.*403' "${_se_install_log}" 2>/dev/null; then
+            _log_message "WARNING" "国内镜像源不可用（403 Forbidden），自动降级到官方源"
+            rm -f "${_se_install_log}"
+            _se_cn_fallback_done=true
+            conda config --remove channels "https://mirrors.cernet.edu.cn/anaconda/cloud/conda-forge/" >> "$LOGFILE" 2>&1 || true
+            conda config --remove channels "https://mirrors.cernet.edu.cn/anaconda/pkgs/main/" >> "$LOGFILE" 2>&1 || true
+            unset PIP_INDEX_URL
+            conda env remove -n alas -y >> "$LOGFILE" 2>&1 || true
+            _se_install_attempt=$((_se_install_attempt + 1))
+            continue
+        fi
+
         end_step "${ICON_ERROR}" "虚拟环境构建错误，详情请阅读日志：${LOGFILE}" "${RED}"
+        rm -f "${_se_install_log}"
         exit 1
-    fi
+    done
     _log_message "OK" "✓ conda env create 完成"
 
     unset PIP_INDEX_URL
 
-    # 检查是否有依赖缺失，如有则逐条尝试独立安装
     _log_message "EXEC" "▶ 验证环境: python -c 'import alas_webapp'"
     if ! conda run -n alas python -c "import alas_webapp" >> "$LOGFILE" 2>&1; then
         _log_message "WARNING" "⚠ 依赖完整性检查未通过，尝试修复..."
@@ -836,12 +1217,12 @@ YML_EOF
     end_step "${ICON_OK}" "虚拟环境已构建"
 }
 
-# ---------------------------- 第5步: 配置 config/deploy.yaml ----------------------------
+# ---------------------------- 配置 config/deploy.yaml ----------------------------
 configure_deploy() {
     start_step "配置 config/deploy.yaml"
 
     cd "${ALAS_DIR}"
-    if [[ -f config/deploy.yaml ]]; then
+    if [ -f config/deploy.yaml ]; then
         _log_message "EXEC" "▶ 备份已有 deploy.yaml → deploy.yaml.bak"
         cp config/deploy.yaml config/deploy.yaml.bak
         _log_message "OK" "✓ 备份完成"
@@ -849,7 +1230,7 @@ configure_deploy() {
 
     TEMPLATE="${DEPLOY_TEMPLATE}"
 
-    if [[ -f "${TEMPLATE}" ]]; then
+    if [ -f "${TEMPLATE}" ]; then
         _log_message "EXEC" "▶ cp ${TEMPLATE} config/deploy.yaml"
         cp "${TEMPLATE}" config/deploy.yaml
         end_step "${ICON_OK}" "cp ${TEMPLATE} config/deploy.yaml"
@@ -858,7 +1239,7 @@ configure_deploy() {
     fi
 }
 
-# ---------------------------- 第6步: 创建启动脚本 ----------------------------
+# ---------------------------- 创建启动脚本 ----------------------------
 create_launcher() {
     start_step "正在生成启动脚本..."
 
@@ -866,40 +1247,56 @@ create_launcher() {
     _log_message "INFO" "  Conda: ${CONDA_BIN}"
     _log_message "INFO" "  ALAS 目录: ${ALAS_DIR}"
 
-    cat > "${SCRIPT_OUT_DIR}/run_alas.sh" <<EOF
-#!/bin/bash
-eval "\$(${CONDA_BIN} shell.bash hook)"
-conda activate alas
-cd ${ALAS_DIR}
-python gui.py
-EOF
+    cat > "${SCRIPT_OUT_DIR}/run_alas.sh" <<'LAUNCHER_EOF'
+#!/bin/sh
+
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+CONDA_BIN=""
+
+if command -v conda >/dev/null 2>&1; then
+    CONDA_BIN=$(command -v conda)
+elif [ -x "${HOME}/miniforge3/bin/conda" ]; then
+    CONDA_BIN="${HOME}/miniforge3/bin/conda"
+elif [ -x /opt/conda/bin/conda ]; then
+    CONDA_BIN="/opt/conda/bin/conda"
+elif [ -x /usr/local/bin/conda ]; then
+    CONDA_BIN="/usr/local/bin/conda"
+elif [ -x /usr/bin/conda ]; then
+    CONDA_BIN="/usr/bin/conda"
+fi
+
+if [ -z "${CONDA_BIN}" ]; then
+    echo "ERROR: conda not found. Please install Miniforge/Conda first." >&2
+    exit 127
+fi
+
+exec "${CONDA_BIN}" run -n alas --cwd "${SCRIPT_DIR}" --no-capture-output python gui.py
+LAUNCHER_EOF
     chmod +x "${SCRIPT_OUT_DIR}/run_alas.sh"
     end_step "${ICON_OK}" "启动脚本已生成: ${SCRIPT_OUT_DIR}/run_alas.sh"
 }
 
-# ---------------------------- 第7步: 配置 init 服务 ----------------------------
+# ---------------------------- 配置 init 服务 ----------------------------
 configure_service() {
-    if [[ "${SKIP_SERVICE}" == true ]]; then
-        end_step "${ICON_INFO}" "检测到 -S、--skip-service 已跳过服务配置"
-        return
-    fi
-
-    if [[ "${INIT_SYSTEM}" == "unknown" ]]; then
+    if [ "${INIT_SYSTEM}" = "unknown" ]; then
         end_step "${ICON_WARN}" "未检测到 init 系统，跳过服务配置" "${YELLOW}"
         return
     fi
 
-    if [[ "${INIT_SYSTEM}" == "systemd" ]]; then
+    if [ "${INIT_SYSTEM}" = "systemd" ]; then
         _configure_systemd
-    elif [[ "${INIT_SYSTEM}" == "openrc" ]]; then
+    elif [ "${INIT_SYSTEM}" = "openrc" ]; then
         _configure_openrc
-    elif [[ "${INIT_SYSTEM}" == "sysvinit" ]]; then
+    elif [ "${INIT_SYSTEM}" = "sysvinit" ]; then
         _configure_sysvinit
     fi
 }
 
 _configure_systemd() {
-    start_step "正在配置 systemd 开机自启..."
+    start_step "正在配置 systemd 服务..."
 
     _log_message "EXEC" "▶ 生成 /etc/systemd/system/run_alas.service"
     _log_message "INFO" "  用户: ${USER_NAME}, 组: ${USER_GROUP}"
@@ -930,71 +1327,74 @@ EOF
     systemctl daemon-reload >> "$LOGFILE" 2>&1
     _log_message "OK" "✓ daemon-reload 完成"
 
+    _log_message "EXEC" "▶ systemctl start run_alas.service"
+    systemctl start run_alas.service >> "$LOGFILE" 2>&1
+    _log_message "OK" "✓ systemctl start 已执行"
+    sleep 2
+
+    if systemctl is-active --quiet run_alas.service 2>/dev/null; then
+        _log_message "OK" "✓ 服务运行中"
+    else
+        _log_message "ERROR" "✗ 服务启动后立即崩溃"
+        end_step "${ICON_ERROR}" "systemd 服务启动失败，请查看日志: ${LOGFILE}" "${RED}"
+        return
+    fi
+
+    if [ "${SKIP_SERVICE}" = "true" ]; then
+        _log_message "INFO" "检测到 -S、--skip-service，跳过开机自启注册"
+        end_step "${ICON_INFO}" "由于设置了 -S、--skip-service参数，systemd 服务已启动但未启用开机自启" "${GREEN}"
+        return
+    fi
+
     _log_message "EXEC" "▶ systemctl enable run_alas.service"
     systemctl enable run_alas.service >> "$LOGFILE" 2>&1
     _log_message "OK" "✓ 服务已启用开机自启"
 
-    _log_message "EXEC" "▶ systemctl start run_alas.service"
-    systemctl start run_alas.service >> "$LOGFILE" 2>&1
-    _log_message "OK" "✓ 服务已启动"
-
-    if systemctl is-active --quiet run_alas.service; then
-        end_step "${ICON_OK}" "systemd 服务已启动并设为开机自启"
-    else
-        end_step "${ICON_ERROR}" "systemd 服务启动失败，请查看日志: ${LOGFILE}" "${RED}"
-    fi
+    end_step "${ICON_OK}" "systemd 服务已启动并设为开机自启"
 }
 
 _configure_openrc() {
-    start_step "正在配置 OpenRC 开机自启..."
+    start_step "正在配置 OpenRC 服务..."
 
     _log_message "EXEC" "▶ 生成 /etc/init.d/run_alas"
     _log_message "INFO" "  用户: ${USER_NAME}, 组: ${USER_GROUP}"
     _log_message "INFO" "  工作目录: ${ALAS_DIR}"
     _log_message "INFO" "  启动命令: ${SCRIPT_OUT_DIR}/run_alas.sh"
 
-    cat > /etc/init.d/run_alas <<'OPENRC_EOF'
+    cat > /etc/init.d/run_alas <<EOF
 #!/sbin/openrc-run
-name="run_alas"
-description="ALAS Auto Script"
+
+name="ALAS Auto Script"
+description="AzurLaneAutoScript"
+command="${SCRIPT_OUT_DIR}/run_alas.sh"
+command_user="${USER_NAME}:${USER_GROUP}"
+directory="${ALAS_DIR}"
+pidfile="/run/\${RC_SVCNAME}.pid"
+command_background=true
 
 depend() {
     need net
-    after bootmisc
+    after firewall
 }
-
-start() {
-    ebegin "Starting ALAS"
-    start-stop-daemon --start --background --make-pidfile \
-        --pidfile /var/run/run_alas.pid \
-        --chdir ALAS_DIR_PLACEHOLDER \
-        --user USER_PLACEHOLDER \
-        --exec SCRIPT_PLACEHOLDER
-    eend $?
-}
-
-stop() {
-    ebegin "Stopping ALAS"
-    start-stop-daemon --stop --pidfile /var/run/run_alas.pid
-    eend $?
-}
-OPENRC_EOF
-
-    sed -i "s|ALAS_DIR_PLACEHOLDER|${ALAS_DIR}|g" /etc/init.d/run_alas
-    sed -i "s|USER_PLACEHOLDER|${USER_NAME}|g" /etc/init.d/run_alas
-    sed -i "s|SCRIPT_PLACEHOLDER|${SCRIPT_OUT_DIR}/run_alas.sh|g" /etc/init.d/run_alas
-    chmod +x /etc/init.d/run_alas
+EOF
+    chmod 755 /etc/init.d/run_alas
     _log_message "OK" "✓ OpenRC 服务脚本已创建"
-
-    _log_message "EXEC" "▶ rc-update add run_alas default"
-    rc-update add run_alas default >> "$LOGFILE" 2>&1
-    _log_message "OK" "✓ 服务已添加至 default 运行级"
 
     _log_message "EXEC" "▶ rc-service run_alas start"
     rc-service run_alas start >> "$LOGFILE" 2>&1
     _log_message "OK" "✓ 服务已启动"
 
-    if rc-service run_alas status &>/dev/null; then
+    if [ "${SKIP_SERVICE}" = "true" ]; then
+        _log_message "INFO" "检测到 -S、--skip-service，跳过开机自启注册"
+        end_step "${ICON_INFO}" "由于设置了 -S、--skip-service参数，OpenRC 服务脚本仅已创建" "${GREEN}"
+        return
+    fi
+
+        _log_message "EXEC" "▶ rc-update add run_alas default"
+        rc-update add run_alas default >> "$LOGFILE" 2>&1
+        _log_message "OK" "✓ 服务已添加至 default 运行级"
+
+    if rc-service run_alas status >/dev/null 2>&1; then
         end_step "${ICON_OK}" "OpenRC 服务已启动并设为开机自启"
     else
         end_step "${ICON_ERROR}" "OpenRC 服务启动失败，请查看日志: ${LOGFILE}" "${RED}"
@@ -1002,7 +1402,7 @@ OPENRC_EOF
 }
 
 _configure_sysvinit() {
-    start_step "正在配置 SysVinit 开机自启..."
+    start_step "正在配置 SysVinit 服务..."
 
     _log_message "EXEC" "▶ 生成 /etc/init.d/run_alas"
     _log_message "INFO" "  用户: ${USER_NAME}, 组: ${USER_GROUP}"
@@ -1054,37 +1454,98 @@ esac
 exit 0
 SYSV_EOF
 
-    sed -i "s|USER_PLACEHOLDER|${USER_NAME}|g" /etc/init.d/run_alas
     sed -i "s|DIR_PLACEHOLDER|${ALAS_DIR}|g" /etc/init.d/run_alas
+    sed -i "s|USER_PLACEHOLDER|${USER_NAME}|g" /etc/init.d/run_alas
     sed -i "s|SCRIPT_PLACEHOLDER|${SCRIPT_OUT_DIR}/run_alas.sh|g" /etc/init.d/run_alas
-    chmod +x /etc/init.d/run_alas
+    chmod 755 /etc/init.d/run_alas
     _log_message "OK" "✓ SysVinit 服务脚本已创建"
 
-    if command -v update-rc.d &>/dev/null; then
-        _log_message "EXEC" "▶ update-rc.d run_alas defaults"
-        update-rc.d run_alas defaults >> "$LOGFILE" 2>&1
-    elif command -v chkconfig &>/dev/null; then
-        _log_message "EXEC" "▶ chkconfig --add run_alas"
-        chkconfig --add run_alas >> "$LOGFILE" 2>&1
-    fi
-    _log_message "OK" "✓ 服务已添加至启动项"
-
     _log_message "EXEC" "▶ service run_alas start"
-    service run_alas start >> "$LOGFILE" 2>&1
-    _log_message "OK" "✓ 服务已启动"
+    if service run_alas start >> "$LOGFILE" 2>&1; then
+        if service run_alas status >/dev/null 2>&1; then
+            _log_message "OK" "✓ 服务已启动"
+        else
+            _log_message "ERROR" "✗ 服务启动命令返回成功，但进程未运行"
+            end_step "${ICON_ERROR}" "SysVinit 服务启动失败，请查看日志: ${LOGFILE}" "${RED}"
+            return
+        fi
+    else
+        _log_message "ERROR" "✗ 服务启动命令执行失败"
+        end_step "${ICON_ERROR}" "SysVinit 服务启动失败，请查看日志: ${LOGFILE}" "${RED}"
+        return
+    fi
 
-    if service run_alas status >> "$LOGFILE" 2>&1; then
+    if [ "${SKIP_SERVICE}" = "true" ]; then
+        _log_message "INFO" "检测到 -S、--skip-service，跳过开机自启注册"
+        end_step "${ICON_INFO}" "由于设置了 -S、--skip-service参数，SysVinit 服务脚本仅已创建" "${GREEN}"
+        return
+    fi
+
+    REGISTERED=false
+    if command -v update-rc.d >/dev/null 2>&1; then
+        _log_message "EXEC" "▶ update-rc.d run_alas defaults"
+        if update-rc.d run_alas defaults >> "$LOGFILE" 2>&1; then
+            REGISTERED=true
+        fi
+    elif command -v chkconfig >/dev/null 2>&1; then
+        _log_message "EXEC" "▶ chkconfig --add run_alas"
+        if chkconfig --add run_alas >> "$LOGFILE" 2>&1; then
+            REGISTERED=true
+        fi
+    fi
+
+    if [ "${REGISTERED}" = "true" ]; then
+        _log_message "OK" "✓ 服务已注册开机自启"
         end_step "${ICON_OK}" "SysVinit 服务已启动并设为开机自启"
     else
-        end_step "${ICON_ERROR}" "SysVinit 服务启动失败，请查看日志: ${LOGFILE}" "${RED}"
+        _log_message "WARN" "⚠ 未找到可用的自启注册工具，开机自启配置失败"
+        end_step "${ICON_WARN}" "SysVinit 服务已启动，但开机自启配置失败" "${YELLOW}"
     fi
+}
+
+# ---------------------------- 修正文件归属 ----------------------------
+fix_user_permissions() {
+    chown -R "${USER_NAME}:${USER_GROUP}" "${INSTALL_DIR}" 2>/dev/null || true
+    chown -R "${USER_NAME}:${USER_GROUP}" "${SCRIPT_OUT_DIR}" 2>/dev/null || true
+    [ -d "${HOME}/miniforge3" ] && chown -R "${USER_NAME}:${USER_GROUP}" "${HOME}/miniforge3" 2>/dev/null || true
 }
 
 # ---------------------------- 完成摘要 ----------------------------
 print_completion() {
     echo_line ""
-    echo_line "${ICON_ROCKET}  ALAS 已经完成安装，请通过 ${CYAN}http://${NET_IP}:22267${NC} 访问 WEBUI"
-    echo_line ""
+    echo_line "${ICON_ROCKET}  ${GREEN}ALAS 已经完成安装，请通过 ${CYAN}http://${NET_IP}:22267${NC} ${GREEN}访问 WEBUI${NC}"
+    echo_line "  ─────────────────────────────────────────────────"
+    echo_line "  ${ICON_INFO}  ALAS已安装到:  ${BLUE}${ALAS_DIR}${NC}"
+
+    if [ "${INIT_SYSTEM}" = "unknown" ]; then
+        echo_line "  ${ICON_INFO}  手动启动:  ${CYAN}sh ${SCRIPT_OUT_DIR}/run_alas.sh${NC}"
+    else
+        if [ "${SKIP_SERVICE}" = true ]; then
+            echo_line "  ${ICON_WARN}  ${YELLOW}服务已启动，由于设置了 -S、--skip-service参数，未设置开机自启${NC}"
+        fi
+        echo_line ""
+        echo_line "  ${ICON_INFO}  服务管理命令: "
+        case "${INIT_SYSTEM}" in
+            systemd)
+                echo_line "      启动服务:  ${CYAN}systemctl start run_alas.service${NC}"
+                echo_line "      停止服务:  ${CYAN}systemctl stop run_alas.service${NC}"
+                echo_line "      重启服务:  ${CYAN}systemctl restart run_alas.service${NC}"
+                echo_line "      检查状态:  ${CYAN}systemctl status run_alas.service${NC}"
+                ;;
+            openrc)
+                echo_line "      启动服务:  ${CYAN}rc-service run_alas start${NC}"
+                echo_line "      停止服务:  ${CYAN}rc-service run_alas stop${NC}"
+                echo_line "      重启服务:  ${CYAN}rc-service run_alas restart${NC}"
+                echo_line "      检查状态:  ${CYAN}rc-service run_alas status${NC}"
+                ;;
+            sysvinit)
+                echo_line "      启动服务:  ${CYAN}service run_alas start${NC}"
+                echo_line "      停止服务:  ${CYAN}service run_alas stop${NC}"
+                echo_line "      重启服务:  ${CYAN}service run_alas restart${NC}"
+                echo_line "      检查状态:  ${CYAN}service run_alas status${NC}"
+                ;;
+        esac
+    fi
 }
 
 # ---------------------------- 反向安装（卸载） ----------------------------
@@ -1092,103 +1553,181 @@ do_uninstall() {
     echo_line ""
     echo_line "  ${ICON_WARN}  ${YELLOW}即将执行 ALAS 卸载，将删除以下内容：${NC}"
     echo_line "  ${ICON_WARN}  ${YELLOW}  - 开机自启服务${NC}"
-    echo_line "  ${ICON_WARN}  ${YELLOW}  - Conda 虚拟环境 (alas)${NC}"
+    echo_line "  ${ICON_WARN}  ${YELLOW}  - Conda 虚拟环境${NC}"
     echo_line "  ${ICON_WARN}  ${YELLOW}  - ALAS 目录: ${INSTALL_DIR}${NC}"
     echo_line "  ${ICON_WARN}  ${YELLOW}  - 启动脚本: ${SCRIPT_OUT_DIR}/run_alas.sh${NC}"
-    echo_line "  ${ICON_INFO}  ${GREEN}  Git, ADB, Miniforge 不会被删除${NC}"
+    echo_line "  ${ICON_INFO}  ${GREEN}  Git, ADB, Miniforge 及相关依赖不会被删除${NC}"
     echo_line ""
     _log_message "WARNING" "等待确认卸载"
-    while true; do
-        echo -n "  确认继续吗？ [yes/N] ："
-        read -r CONFIRM < /dev/tty
-        case "${CONFIRM}" in
-            yes|YES)
-                _log_message "INFO" "已确认卸载"
-                break ;;
-            no|NO|n|N)
-                _log_message "INFO" "卸载取消"
-                echo_line "  ${ICON_INFO}  已取消卸载"; exit 0 ;;
-            *)
-                echo_line "  ${ICON_WARN}  无效输入，请输入 yes 或 N" "${YELLOW}" ;;
-        esac
-    done
+    if [ "${UNINSTALL_YES}" = true ]; then
+        _log_message "INFO" "已通过 -Y 自动确认卸载"
+    elif [ "${OS_ID}" = "alpine" ]; then
+        echo_line "  ${ICON_ERROR}  ${RED}脚本无法读取终端输入，请使用静默方式运行卸载${NC}"
+        exit 1
+    else
+        while true; do
+            printf "  确认继续吗？ [yes/N] ："
+            if [ -c /dev/tty ] && [ -r /dev/tty ]; then
+                read -r CONFIRM < /dev/tty
+            else
+                read -r CONFIRM || {
+                    echo_line "  ${ICON_ERROR}  ${RED}脚本无法读取终端输入，请使用静默方式运行卸载${NC}"
+                    exit 1
+                }
+            fi
+            CONFIRM=$(printf '%s' "${CONFIRM}" | tr -d '\r')
+            # 去除字符串末尾的所有空白字符，等效 CONFIRM=$(printf "%s" "$CONFIRM" | sed -e 's/[[:space:]]*$//')
+            CONFIRM=${CONFIRM%"${CONFIRM##*[![:space:]]}"}
+            case "${CONFIRM}" in
+                yes|Yes|YES)
+                    _log_message "INFO" "已确认卸载"
+                    break ;;
+                no|NO|n|N)
+                    _log_message "INFO" "卸载取消"
+                    echo_line "  ${ICON_INFO}  已取消卸载"; exit 0 ;;
+                *)
+                    echo_line "  ${ICON_WARN}  ${YELLOW}无效输入，请输入 yes 或 N${NC}" ;;
+            esac
+        done
+    fi
 
     echo_line ""
 
-    detect_init_system
-
     start_step "正在停止 ALAS 服务..."
-    if [[ "${INIT_SYSTEM}" == "systemd" ]]; then
+    detect_init_system
+    _svc_done=false
+    if [ "${INIT_SYSTEM}" = "systemd" ]; then
         if systemctl is-active --quiet run_alas.service 2>/dev/null; then
             _log_message "EXEC" "▶ systemctl stop run_alas.service"
             systemctl stop run_alas.service >> "$LOGFILE" 2>&1
             _log_message "OK" "✓ 服务已停止"
+            _svc_done=true
         fi
         if systemctl is-enabled --quiet run_alas.service 2>/dev/null; then
             _log_message "EXEC" "▶ systemctl disable run_alas.service"
             systemctl disable run_alas.service >> "$LOGFILE" 2>&1
             _log_message "OK" "✓ 服务已禁用"
+            _svc_done=true
         fi
-        if [[ -f /etc/systemd/system/run_alas.service ]]; then
+        if [ -f /etc/systemd/system/run_alas.service ]; then
             _log_message "EXEC" "▶ 删除服务单元文件"
             rm -f /etc/systemd/system/run_alas.service
             systemctl daemon-reload >> "$LOGFILE" 2>&1
+            _log_message "OK" "✓ 服务单元文件已删除"
+            _svc_done=true
         fi
-    elif [[ "${INIT_SYSTEM}" == "openrc" ]]; then
-        if rc-service run_alas status &>/dev/null; then
-            _log_message "EXEC" "▶ rc-service run_alas stop"
-            rc-service run_alas stop >> "$LOGFILE" 2>&1
+    elif [ "${INIT_SYSTEM}" = "openrc" ]; then
+        if command -v rc-service >/dev/null 2>&1; then
+            rc-service run_alas stop >> "$LOGFILE" 2>&1 || true
             _log_message "OK" "✓ 服务已停止"
+            _svc_done=true
         fi
-        _log_message "EXEC" "▶ rc-update del run_alas"
-        rc-update del run_alas >> "$LOGFILE" 2>&1 || true
-        _log_message "OK" "✓ 服务已从运行级移除"
-        if [[ -f /etc/init.d/run_alas ]]; then
+        rc-update del run_alas default >> "$LOGFILE" 2>&1 || true
+        if [ -f /etc/init.d/run_alas ]; then
             _log_message "EXEC" "▶ 删除 OpenRC 服务脚本"
             rm -f /etc/init.d/run_alas
+            _svc_done=true
         fi
-    elif [[ "${INIT_SYSTEM}" == "sysvinit" ]]; then
-        _log_message "EXEC" "▶ service run_alas stop"
+    elif [ "${INIT_SYSTEM}" = "sysvinit" ]; then
         service run_alas stop >> "$LOGFILE" 2>&1 || true
         _log_message "OK" "✓ 服务已停止"
-        if command -v update-rc.d &>/dev/null; then
+        _svc_done=true
+        if command -v update-rc.d >/dev/null 2>&1; then
             _log_message "EXEC" "▶ update-rc.d -f run_alas remove"
             update-rc.d -f run_alas remove >> "$LOGFILE" 2>&1 || true
-        elif command -v chkconfig &>/dev/null; then
+        elif command -v chkconfig >/dev/null 2>&1; then
             _log_message "EXEC" "▶ chkconfig --del run_alas"
             chkconfig --del run_alas >> "$LOGFILE" 2>&1 || true
         fi
-        if [[ -f /etc/init.d/run_alas ]]; then
+        if [ -f /etc/init.d/run_alas ]; then
             _log_message "EXEC" "▶ 删除 SysVinit 服务脚本"
             rm -f /etc/init.d/run_alas
         fi
     fi
-    end_step "${ICON_OK}" "服务已停止并移除"
+    if [ "$_svc_done" = true ]; then
+        end_step "${ICON_OK}" "服务已停止并移除"
+    else
+        end_step "${ICON_INFO}" "未检测到 ALAS 服务，跳过" "${GREEN}"
+    fi
 
     start_step "正在清理 Conda 虚拟环境..."
-    CONDA_BIN="${HOME}/miniforge3/bin/conda"
-    command -v conda &>/dev/null && CONDA_BIN=$(command -v conda)
-    eval "$("${CONDA_BIN}" shell.bash hook)" >> "$LOGFILE" 2>&1
-    if conda env list 2>/dev/null | grep -q "^alas "; then
-        _log_message "EXEC" "▶ conda env remove -n alas"
-        _log_exec "移除 Conda 环境 (方法1: conda env remove)" conda env remove -n alas -y || \
-        _log_exec "移除 Conda 环境 (方法2: rm -rf)" rm -rf "$(conda info --base 2>/dev/null)/envs/alas"
-    else
-        _log_message "INFO" "未检测到 alas 环境，跳过"
+    _conda_bin=""
+    if [ -x "${HOME}/miniforge3/bin/conda" ]; then
+        _conda_bin="${HOME}/miniforge3/bin/conda"
+        export PATH="${HOME}/miniforge3/bin:${PATH}"
     fi
-    end_step "${ICON_OK}" "虚拟环境已清理"
-
-    start_step "正在删除 ALAS 目录..."
-    _log_message "EXEC" "▶ rm -rf ${INSTALL_DIR}"
-    rm -rf "${INSTALL_DIR}"
-    end_step "${ICON_OK}" "目录已删除"
+    if [ -n "${_conda_bin}" ]; then
+        _log_message "INFO" "使用 conda: ${_conda_bin}"
+        _conda_sh=""
+        _conda_base=$("${_conda_bin}" info --base 2>/dev/null || true)
+        if [ -n "${_conda_base}" ] && [ -f "${_conda_base}/etc/profile.d/conda.sh" ]; then
+            _conda_sh="${_conda_base}/etc/profile.d/conda.sh"
+        elif [ -f "${HOME}/miniforge3/etc/profile.d/conda.sh" ]; then
+            _conda_sh="${HOME}/miniforge3/etc/profile.d/conda.sh"
+        elif [ -f /etc/profile.d/conda.sh ]; then
+            _conda_sh="/etc/profile.d/conda.sh"
+        elif [ -f /opt/conda/etc/profile.d/conda.sh ]; then
+            _conda_sh="/opt/conda/etc/profile.d/conda.sh"
+        else
+            _conda_sh=$(find "${HOME}" -maxdepth 4 -name "conda.sh" -type f 2>/dev/null | head -1 || true)
+        fi
+        if [ -n "${_conda_sh}" ]; then
+            _log_message "INFO" "加载 conda.sh: ${_conda_sh}"
+            # shellcheck disable=SC1090
+            . "${_conda_sh}" >> "$LOGFILE" 2>&1 || true
+        else
+            _log_message "WARNING" "未找到 conda.sh，尝试直接使用 conda 命令"
+        fi
+        _conda_version=$(conda --version 2>/dev/null || echo "conda 命令不可用")
+        _log_message "INFO" "验证: ${_conda_version}"
+        if conda env list 2>/dev/null | grep -q "^alas "; then
+            _log_message "EXEC" "▶ conda env remove -n alas"
+            conda env remove -n alas -y >> "$LOGFILE" 2>&1 || true
+            _conda_base=$(conda info --base 2>/dev/null || true)
+            if [ -n "${_conda_base}" ] && [ -d "${_conda_base}/envs/alas" ]; then
+                _log_message "EXEC" "▶ rm -rf ${_conda_base}/envs/alas"
+                rm -rf "${_conda_base}/envs/alas" >> "$LOGFILE" 2>&1 || true
+            fi
+        else
+            _log_message "INFO" "未检测到 Conda 环境，跳过"
+        fi
+        end_step "${ICON_OK}" "虚拟环境已清理"
+    else
+        end_step "${ICON_INFO}" "未检测到 Conda，跳过虚拟环境清理" "${GREEN}"
+    fi
 
     start_step "正在删除启动脚本..."
-    _log_message "EXEC" "▶ rm -f ${SCRIPT_OUT_DIR}/run_alas.sh"
-    rm -f "${SCRIPT_OUT_DIR}/run_alas.sh"
-    end_step "${ICON_OK}" "启动脚本已删除"
+    if [ -f "${SCRIPT_OUT_DIR}/run_alas.sh" ]; then
+        _log_message "EXEC" "▶ rm -f ${SCRIPT_OUT_DIR}/run_alas.sh"
+        rm -f "${SCRIPT_OUT_DIR}/run_alas.sh"
+        end_step "${ICON_OK}" "启动脚本已删除"
+    else
+        end_step "${ICON_INFO}" "启动脚本不存在，跳过" "${GREEN}"
+    fi
 
-    if [[ "${KEEP_LOG}" == false ]]; then
+    start_step "正在删除 ALAS 目录..."
+    if [ -d "${INSTALL_DIR}" ]; then
+        _du_origin_url=""
+        if [ -d "${INSTALL_DIR}/.git" ]; then
+            _du_origin_url=$(git -C "${INSTALL_DIR}" remote get-url origin 2>/dev/null || true)
+        fi
+        case "${_du_origin_url}" in
+            *AzurLaneAutoScript*)
+                _log_message "OK" "git 远程 URL 验证通过: ${_du_origin_url}" ;;
+            "")
+                _log_message "WARNING" "目录中没有 .git 信息，可能不是完整的 ALAS 仓库，但仍继续删除" ;;
+            *)
+                end_step "${ICON_ERROR}" "目录 ${INSTALL_DIR} 是其他 git 仓库 (${_du_origin_url})，为避免误删将终止卸载" "${RED}"
+                exit 1 ;;
+        esac
+        _log_message "EXEC" "▶ rm -rf ${INSTALL_DIR}"
+        rm -rf "${INSTALL_DIR}"
+        end_step "${ICON_OK}" "目录已删除"
+    else
+        end_step "${ICON_INFO}" "ALAS 目录已不存在，跳过" "${GREEN}"
+    fi
+
+    if [ "${KEEP_LOG}" = false ]; then
         _log_message "INFO" "清理日志文件: ${LOGFILE}"
         rm -f "$LOGFILE"
     fi
@@ -1199,14 +1738,31 @@ do_uninstall() {
 
 # ---------------------------- 主流程 ----------------------------
 main() {
-    if [[ "${UNINSTALL}" == true ]]; then
+    if [ "${UNINSTALL}" = true ]; then
+        if [ "${DEBUG}" = true ] && command -v tail >/dev/null 2>&1; then
+            tail -n +0 -f "$LOGFILE" 2>/dev/null &
+            _TAIL_PID=$!
+            printf '%b\n' "  ${ICON_GEAR}  ${CYAN}检测到 --debug, 进入调试模式${NC}"
+            printf '%b\n' "  ${ICON_GEAR}  ${CYAN}日志将实时输出至终端${NC}"
+            echo_line ""
+        fi
         detect_os
         gather_system_info
         print_header
         check_root
         do_uninstall
+        if [ -n "${_TAIL_PID}" ]; then kill "${_TAIL_PID}" 2>/dev/null || true; fi
         exit 0
     fi
+
+    if [ "${DEBUG}" = true ] && command -v tail >/dev/null 2>&1; then
+        tail -n +0 -f "$LOGFILE" 2>/dev/null &
+        _TAIL_PID=$!
+        printf '%b\n' "  ${ICON_GEAR}  ${CYAN}检测到 --debug, 进入调试模式${NC}"
+        printf '%b\n' "  ${ICON_GEAR}  ${CYAN}日志将实时输出至终端${NC}"
+        echo_line ""
+    fi
+
     detect_os
     gather_system_info
     print_header
@@ -1219,12 +1775,18 @@ main() {
     configure_deploy
     create_launcher
     configure_service
+    fix_user_permissions
     print_completion
-    if [[ "${KEEP_LOG}" == false ]]; then
+
+    if [ -n "${_TAIL_PID}" ]; then kill "${_TAIL_PID}" 2>/dev/null || true; fi
+
+    if [ "${KEEP_LOG}" = false ]; then
         _log_message "INFO" "安装完成，清理日志文件: ${LOGFILE}"
         rm -f "$LOGFILE"
     else
+        echo_line ""
         echo_line "  ${ICON_INFO}  日志已保存至：${LOGFILE}"
+        echo_line ""
     fi
 }
 main

@@ -17,7 +17,7 @@ else
 fi
 
 # ---------------------------- 日志文件 ----------------------------
-LOGFILE="/tmp/alas_install.log"
+LOGFILE="$(mktemp /tmp/alas_install.XXXXXX.log)" || LOGFILE="/tmp/alas_install.$$.log"
 touch "$LOGFILE" || { echo "无法创建日志文件 $LOGFILE"; exit 1; }
 
 # ---------------------------- 日志格式化 ----------------------------
@@ -72,19 +72,39 @@ WHITE='\033[37m'
 NC='\033[0m'
 
 # ---------------------------- 全局变量 ----------------------------
-INSTALL_DIR="${HOME}/AzurLaneAutoScript"
-SCRIPT_OUT_DIR="${HOME}/AzurLaneAutoScript"
 DEPLOY_TEMPLATE="config/deploy.template-linux.yaml"
 USE_CN_MIRROR=false
 GH_PROXY=""
 WORK_DIR=""
 ALAS_DIR=""
 CONDA_BIN=""
-USER_NAME="$(whoami)"
-_SPINNER_PID=""
+
 SKIP_SERVICE=true
 UNINSTALL=false
+UNINSTALL_YES=false
 KEEP_LOG=false
+DEBUG=false
+_TAIL_PID=""
+
+# 优先取 sudo 前的用户；否则取当前用户
+if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
+    USER_NAME="${SUDO_USER}"
+else
+    USER_NAME="$(stat -f '%Su' /dev/console 2>/dev/null || whoami)"
+fi
+
+USER_HOME="$(dscl . -read "/Users/${USER_NAME}" NFSHomeDirectory 2>/dev/null | awk '{print $2}')"
+if [[ -z "${USER_HOME}" ]]; then
+    USER_HOME="/Users/${USER_NAME}"
+fi
+
+HOME="${USER_HOME}"
+export HOME
+
+INSTALL_DIR="${HOME}/AzurLaneAutoScript"
+SCRIPT_OUT_DIR="${HOME}/AzurLaneAutoScript"
+
+_SPINNER_PID=""
 
 # ---------------------------- 帮助 ----------------------------
 usage() {
@@ -96,9 +116,10 @@ usage() {
   -s, --script-dir DIR   指定脚本输出目录 (默认: ~/AzurLaneAutoScript)
   -t TEMPLATE            控制使用的 deploy 模板与国内镜像源
   -S, --setup-service    配置 ALAS 开机自启
-  --uninstall            反向安装：停止并删除 ALAS、虚拟环境、开机自启
+  --uninstall [-Y]       反向安装：停止并删除 ALAS、虚拟环境、开机自启
   -l, --log              保留安装日志，不自动删除
   -h, --help             显示帮助信息
+  --debug                调试模式，日志将实时输出至终端
 EOF
 }
 
@@ -139,6 +160,10 @@ start_step() {
     _cleanup_spinner
     local msg="$1"
     _log_message "START" "${msg}"
+    if [[ "${DEBUG}" == true ]]; then
+        printf '%b\n' "  ${ICON_GEAR}  ${YELLOW}${msg}${NC}"
+        return 0
+    fi
     local spin_chars=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
     local idx=0
     {
@@ -169,6 +194,10 @@ end_step() {
 # ---------------------------- 中断信号处理 ----------------------------
 _sigint_handler() {
     _cleanup_spinner
+    if [[ -n "${_TAIL_PID}" ]]; then
+        kill "${_TAIL_PID}" 2>/dev/null || true
+    fi
+    wait "${_TAIL_PID}" 2>/dev/null || true
     echo -e "\n  ${ICON_WARN}  ${YELLOW}脚本已被用户中断${NC}"
     exit 130
 }
@@ -188,9 +217,14 @@ trap 'error_handler ${LINENO} $?' ERR
 # ---------------------------- 参数解析 ----------------------------
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        -d|--dir) INSTALL_DIR="$2"; shift 2 ;;
-        -s|--script-dir) SCRIPT_OUT_DIR="$2"; shift 2 ;;
+        -d|--dir)
+            [[ -z "${2-}" ]] && { log_error "缺少参数值: $1"; usage; exit 1; }
+            INSTALL_DIR="$2"; shift 2 ;;
+        -s|--script-dir)
+            [[ -z "${2-}" ]] && { log_error "缺少参数值: $1"; usage; exit 1; }
+            SCRIPT_OUT_DIR="$2"; shift 2 ;;
         -t|--template)
+            [[ -z "${2-}" ]] && { log_error "缺少参数值: $1"; usage; exit 1; }
             if [[ "$2" =~ ^[Cc][Nn]$ ]]; then
                 DEPLOY_TEMPLATE="config/deploy.template-linux-cn.yaml"
                 USE_CN_MIRROR=true
@@ -199,24 +233,59 @@ while [[ $# -gt 0 ]]; do
                 DEPLOY_TEMPLATE="$2"
             fi
             shift 2 ;;
-        --uninstall) UNINSTALL=true; shift ;;
+        --uninstall)
+            UNINSTALL=true
+            if [[ "${2-}" == -Y || "${2-}" == -y || "${2-}" == --yes ]]; then
+                UNINSTALL_YES=true
+                shift
+            fi
+            shift ;;
         -l|--log) KEEP_LOG=true; shift ;;
         -S|--setup-service) SKIP_SERVICE=false; shift ;;
+        --debug) DEBUG=true; shift ;;
         -h|--help) usage; exit 0 ;;
         *) log_error "未知参数: $1"; usage; exit 1 ;;
     esac
 done
 
 # ---------------------------- 平台检查 ----------------------------
-if [[ "$(uname)" != "Darwin" ]]; then
-    echo -e "${RED}本脚本仅适用于 arm 架构的 macOS 系统${NC}"
+if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
+    echo -e "${RED}本脚本仅适用于 Apple Silicon macOS${NC}"
     exit 1
 fi
+
+# ---------------------------- sudo 警告 ----------------------------
+_sudo_warning() {
+    if [[ "$(id -u)" -ne 0 ]]; then
+        return 0
+    fi
+    echo_line ""
+    echo_line "  ${ICON_WARN}  ${YELLOW}警告！您正在使用 sudo/root 运行本脚本。${NC}"
+    echo_line "  ${ICON_INFO}  ${GREEN}为了避免权限问题，建议使用非 root 用户安装。${NC}"
+    echo_line ""
+    while true; do
+        echo -n "  是否继续？ [yes/N] ："
+        read -r CONFIRM < /dev/tty
+        CONFIRM=$(printf '%s' "${CONFIRM}" | tr -d '\r')
+        case "${CONFIRM}" in
+            yes|Yes|YES)
+                _log_message "INFO" "已确认在 root 下继续执行"
+                echo_line ""
+                return 0 ;;
+            no|NO|n|N)
+                echo_line "  ${ICON_INFO}  已取消执行"; exit 0 ;;
+            *)
+                echo_line "  ${ICON_WARN}  ${YELLOW}无效输入，请输入 yes 或 N${NC}" ;;
+        esac
+    done
+}
 
 # ---------------------------- 系统信息收集 ----------------------------
 gather_system_info() {
     NET_IP=$(ifconfig 2>/dev/null | grep "inet " | grep -Fv 127.0.0.1 | awk '{print $2}' | head -1 || echo "未获取")
-    [[ -z "${NET_IP}" ]] && NET_IP="未获取"
+    if [[ -z "${NET_IP}" ]]; then
+        NET_IP="未获取"
+    fi
     MACOS_VER=$(sw_vers -productVersion 2>/dev/null || echo "未知")
     CPU_MODEL=$(sysctl -n machdep.cpu.brand_string 2>/dev/null || echo "未知")
     CPU_CORES=$(sysctl -n hw.ncpu 2>/dev/null || echo "未知")
@@ -228,7 +297,7 @@ gather_system_info() {
 
 # ---------------------------- 打印标题与系统面板 ----------------------------
 print_header() {
-    clear
+    clear 2>/dev/null || true
     echo_line "${WHITE}"
     echo_line "    ___    __    ___   _____"
     echo_line "   /   |  / /   /   | / ___/"
@@ -364,12 +433,30 @@ clone_alas() {
     start_step "正在克隆 ALAS 仓库..."
 
     WORK_DIR="${INSTALL_DIR}"
-    if [[ -d "${WORK_DIR}" ]]; then
-        _log_message "WARNING" "ALAS 目录已存在，跳过克隆: ${WORK_DIR}"
-        end_step "${ICON_WARN}" "ALAS 目录已存在，跳过克隆" "${YELLOW}"
-        cd "${WORK_DIR}"
-        ALAS_DIR="${WORK_DIR}"
-        return
+    if [ -d "${WORK_DIR}" ]; then
+        _ca_origin_url=""
+        if [ -d "${WORK_DIR}/.git" ]; then
+            _ca_origin_url=$(git -C "${WORK_DIR}" remote get-url origin 2>/dev/null || true)
+        fi
+
+        case "${_ca_origin_url}" in
+            *AzurLaneAutoScript*)
+                _log_message "OK" "git 远程 URL 验证通过: ${_ca_origin_url}"
+                _log_message "WARNING" "ALAS 仓库已存在，跳过克隆: ${WORK_DIR}"
+                end_step "${ICON_WARN}" "ALAS 仓库已存在，跳过克隆" "${YELLOW}"
+                cd "${WORK_DIR}"
+                ALAS_DIR="${WORK_DIR}"
+                return
+                ;;
+            "")
+                _log_message "WARNING" "目录 ${WORK_DIR} 中无 .git 信息，可能是非完整 ALAS 安装，将覆盖安装"
+                _log_message "EXEC" "▶ 删除旧目录: rm -rf ${WORK_DIR}"
+                rm -rf "${WORK_DIR}" ;;
+            *)
+                _log_message "ERROR" "安装目录已存在，但不是 AzurLaneAutoScript 仓库: ${WORK_DIR} (remote: ${_ca_origin_url})"
+                end_step "${ICON_ERROR}" "安装目录已存在且是其他 git 仓库 (${_ca_origin_url})，请使用 --dir 参数指定目录或手动处理" "${RED}"
+                exit 1 ;;
+        esac
     fi
 
     REPO_URL="https://github.com/LmeSzinc/AzurLaneAutoScript.git"
@@ -697,9 +784,9 @@ create_launcher() {
 
     cat > "${SCRIPT_OUT_DIR}/run_alas.sh" <<EOF
 #!/bin/bash
-eval "\$(${CONDA_BIN} shell.bash hook)"
+eval "\$("${CONDA_BIN}" shell.bash hook)"
 conda activate alas
-cd ${ALAS_DIR}
+cd "${ALAS_DIR}"
 python gui.py
 EOF
     chmod +x "${SCRIPT_OUT_DIR}/run_alas.sh"
@@ -776,8 +863,8 @@ create_desktop_commands() {
     cat > "${desktop_dir}/运行ALAS.command" << 'CMD_EOF'
 #!/bin/bash
 WINDOW_ID=$(osascript -e 'tell application "Terminal" to id of front window')
-(sleep 3 && open http://127.0.0.1:22267) &
-launchctl stop com.alas.run && launchctl start com.alas.run
+(sleep 3 && open "http://127.0.0.1:22267") &
+launchctl kickstart -k "gui/$(id -u)/com.alas.run" 2>/dev/null || launchctl start com.alas.run
 osascript -e "tell application \"Terminal\" to close window id $WINDOW_ID"
 CMD_EOF
     chmod +x "${desktop_dir}/运行ALAS.command"
@@ -797,8 +884,8 @@ CMD_EOF
     cat > "${desktop_dir}/重启ALAS.command" << 'CMD_EOF'
 #!/bin/bash
 WINDOW_ID=$(osascript -e 'tell application "Terminal" to id of front window')
-(sleep 3 && open http://127.0.0.1:22267) &
-launchctl stop com.alas.run && launchctl start com.alas.run
+(sleep 3 && open "http://127.0.0.1:22267") &
+launchctl kickstart -k "gui/$(id -u)/com.alas.run" 2>/dev/null || launchctl start com.alas.run
 osascript -e "tell application \"Terminal\" to close window id $WINDOW_ID"
 CMD_EOF
     chmod +x "${desktop_dir}/重启ALAS.command"
@@ -811,6 +898,22 @@ CMD_EOF
 print_completion() {
     echo_line ""
     echo_line "${ICON_ROCKET}  ALAS 已经完成安装，请通过 ${CYAN}http://${NET_IP}:22267${NC} 访问 WEBUI"
+    echo_line "  ─────────────────────────────────────────────────"
+    echo_line "  ${ICON_INFO}  ALAS已安装到:  ${BLUE}${ALAS_DIR}${NC}"
+
+    if [ "${SKIP_SERVICE}" = false ]; then
+        echo_line "  ${ICON_INFO}  ${GREEN}开机自启服务已配置${NC}"
+    fi
+    echo_line ""
+    echo_line "  ${ICON_INFO}  桌面快捷脚本 (双击即可)："
+    echo_line "      ${CYAN}运行ALAS.command${NC}"
+    echo_line "      ${CYAN}停止ALAS.command${NC}"
+    echo_line "      ${CYAN}重启ALAS.command${NC}"
+    echo_line ""
+    echo_line "  ${ICON_INFO}  命令行管理："
+    echo_line "      启动服务: ${CYAN}launchctl start com.alas.run${NC}"
+    echo_line "      停止服务: ${CYAN}launchctl stop com.alas.run${NC}"
+    echo_line "      检查状态: ${CYAN}launchctl list com.alas.run${NC}"
     echo_line ""
 }
 
@@ -826,61 +929,94 @@ do_uninstall() {
     echo_line "  ${ICON_INFO}  ${GREEN}  Homebrew, git, adb, Miniforge 不会被删除${NC}"
     echo_line ""
     _log_message "WARNING" "等待确认卸载"
-    while true; do
-        echo -n "  确认继续吗？ [yes/N] ："
-        read -r CONFIRM < /dev/tty
-        case "${CONFIRM}" in
-            yes|YES)
-                _log_message "INFO" "已确认卸载"
-                break ;;
-            no|NO|n|N)
-                _log_message "INFO" "卸载取消"
-                echo_line "  ${ICON_INFO}  已取消卸载"; exit 0 ;;
-            *)
-                echo_line "  ${ICON_WARN}  无效输入，请输入 yes 或 N" "${YELLOW}" ;;
-        esac
-    done
+    if [[ "${UNINSTALL_YES}" == true ]]; then
+        _log_message "INFO" "已通过 -Y 自动确认卸载"
+    else
+        while true; do
+            echo -n "  确认继续吗？ [yes/N] ："
+            read -r CONFIRM < /dev/tty
+            CONFIRM=$(printf '%s' "${CONFIRM}" | tr -d '\r')
+            case "${CONFIRM}" in
+                yes|Yes|YES)
+                    _log_message "INFO" "已确认卸载"
+                    break ;;
+                no|NO|n|N)
+                    _log_message "INFO" "卸载取消"
+                    echo_line "  ${ICON_INFO}  已取消卸载"; exit 0 ;;
+                *)
+                    echo_line "  ${ICON_WARN}  ${YELLOW}无效输入，请输入 yes 或 N${NC}" ;;
+            esac
+        done
+    fi
 
     echo_line ""
 
     start_step "正在停止 ALAS 服务..."
-    _log_message "EXEC" "▶ launchctl bootout gui/$(id -u)/com.alas.run"
-    launchctl bootout "gui/$(id -u)/com.alas.run" 2>/dev/null || true
-    _log_message "EXEC" "▶ rm -f plist 文件"
-    rm -f "${HOME}/Library/LaunchAgents/com.alas.run.plist"
-    end_step "${ICON_OK}" "服务已停止并移除"
+    _svc_done=false
+    if launchctl list "com.alas.run" &>/dev/null; then
+        _log_message "EXEC" "▶ launchctl bootout gui/$(id -u)/com.alas.run"
+        launchctl bootout "gui/$(id -u)/com.alas.run" 2>/dev/null || true
+        _svc_done=true
+    fi
+    if [[ -f "${HOME}/Library/LaunchAgents/com.alas.run.plist" ]]; then
+        _log_message "EXEC" "▶ rm -f plist 文件"
+        rm -f "${HOME}/Library/LaunchAgents/com.alas.run.plist"
+        _svc_done=true
+    fi
+    if [[ "$_svc_done" == true ]]; then
+        end_step "${ICON_OK}" "服务已停止并移除"
+    else
+        end_step "${ICON_INFO}" "未检测到 ALAS 服务，跳过" "${GREEN}"
+    fi
 
     start_step "正在清理 Conda 虚拟环境..."
-    CONDA_BIN="${HOME}/miniforge3/bin/conda"
-    command -v conda &>/dev/null && CONDA_BIN=$(command -v conda)
-    eval "$("${CONDA_BIN}" shell.bash hook)" >> "$LOGFILE" 2>&1
-    if conda env list 2>/dev/null | grep -q "^alas "; then
-        _log_message "EXEC" "▶ conda env remove -n alas"
-        _log_exec "移除 Conda 环境 (方法1: conda env remove)" conda env remove -n alas -y || \
-        _log_exec "移除 Conda 环境 (方法2: rm -rf)" rm -rf "$(conda info --base 2>/dev/null)/envs/alas"
+    if command -v conda &>/dev/null; then
+        CONDA_BIN=$(command -v conda)
+        eval "$("${CONDA_BIN}" shell.bash hook)" >> "$LOGFILE" 2>&1
+        if conda env list 2>/dev/null | grep -q "^alas "; then
+            _log_message "EXEC" "▶ conda env remove -n alas"
+            _log_exec "移除 Conda 环境 (方法1: conda env remove)" conda env remove -n alas -y || \
+            _log_exec "移除 Conda 环境 (方法2: rm -rf)" rm -rf "$(conda info --base 2>/dev/null)/envs/alas"
+        else
+            _log_message "INFO" "未检测到 alas 环境，跳过"
+        fi
+        end_step "${ICON_OK}" "虚拟环境已清理"
     else
-        _log_message "INFO" "未检测到 alas 环境，跳过"
+        end_step "${ICON_INFO}" "未检测到 Conda，跳过虚拟环境清理" "${GREEN}"
     fi
-    end_step "${ICON_OK}" "虚拟环境已清理"
-
-    start_step "正在删除 ALAS 目录..."
-    _log_message "EXEC" "▶ rm -rf ${INSTALL_DIR}"
-    rm -rf "${INSTALL_DIR}"
-    end_step "${ICON_OK}" "目录已删除"
 
     start_step "正在删除启动脚本..."
-    _log_message "EXEC" "▶ rm -f ${SCRIPT_OUT_DIR}/run_alas.sh"
-    rm -f "${SCRIPT_OUT_DIR}/run_alas.sh"
-    end_step "${ICON_OK}" "启动脚本已删除"
+    if [[ -f "${SCRIPT_OUT_DIR}/run_alas.sh" ]]; then
+        _log_message "EXEC" "▶ rm -f ${SCRIPT_OUT_DIR}/run_alas.sh"
+        rm -f "${SCRIPT_OUT_DIR}/run_alas.sh"
+        end_step "${ICON_OK}" "启动脚本已删除"
+    else
+        end_step "${ICON_INFO}" "启动脚本不存在，跳过" "${GREEN}"
+    fi
 
     start_step "正在删除桌面快捷脚本..."
-    _log_message "EXEC" "▶ rm -f ${HOME}/Desktop/运行ALAS.command"
-    rm -f "${HOME}/Desktop/运行ALAS.command"
-    _log_message "EXEC" "▶ rm -f ${HOME}/Desktop/停止ALAS.command"
-    rm -f "${HOME}/Desktop/停止ALAS.command"
-    _log_message "EXEC" "▶ rm -f ${HOME}/Desktop/重启ALAS.command"
-    rm -f "${HOME}/Desktop/重启ALAS.command"
-    end_step "${ICON_OK}" "桌面快捷脚本已删除"
+    _desktop_cleaned=false
+    for _df in "${HOME}/Desktop/运行ALAS.command" "${HOME}/Desktop/停止ALAS.command" "${HOME}/Desktop/重启ALAS.command"; do
+        if [[ -f "$_df" ]]; then
+            _log_message "EXEC" "▶ rm -f $_df"
+            rm -f "$_df"
+            _desktop_cleaned=true
+        fi
+    done
+    if [[ "$_desktop_cleaned" == true ]]; then
+        end_step "${ICON_OK}" "桌面快捷脚本已删除"
+    else
+        end_step "${ICON_INFO}" "桌面快捷脚本不存在，跳过" "${GREEN}"
+    fi
+
+    start_step "正在删除 ALAS 目录..."
+    if [[ -d "${INSTALL_DIR}" ]]; then
+        _log_message "EXEC" "▶ rm -rf ${INSTALL_DIR}"
+        rm -rf "${INSTALL_DIR}"
+        end_step "${ICON_OK}" "目录已删除"
+    else
+        end_step "${ICON_INFO}" "ALAS 目录已不存在，跳过" "${GREEN}"
+    fi
 
     if [[ "${KEEP_LOG}" == false ]]; then
         _log_message "INFO" "清理日志文件: ${LOGFILE}"
@@ -895,12 +1031,33 @@ do_uninstall() {
 # ---------------------------- 主流程 ----------------------------
 main() {
     if [[ "${UNINSTALL}" == true ]]; then
-        detect_os
+        if [[ "${DEBUG}" == true ]] && command -v tail >/dev/null 2>&1; then
+            tail -n +0 -f "$LOGFILE" 2>/dev/null &
+            _TAIL_PID=$!
+            printf '%b\n' "  ${ICON_GEAR}  ${CYAN}检测到 --debug, 进入调试模式${NC}"
+            printf '%b\n' "  ${ICON_GEAR}  ${CYAN}日志将实时输出至终端${NC}"
+            echo_line ""
+        fi
+        _sudo_warning
         gather_system_info
         print_header
         do_uninstall
+        if [[ -n "${_TAIL_PID}" ]]; then
+            kill "${_TAIL_PID}" 2>/dev/null || true
+            wait "${_TAIL_PID}" 2>/dev/null || true
+        fi
         exit 0
     fi
+
+    if [[ "${DEBUG}" == true ]] && command -v tail >/dev/null 2>&1; then
+        tail -n +0 -f "$LOGFILE" 2>/dev/null &
+        _TAIL_PID=$!
+        printf '%b\n' "  ${ICON_GEAR}  ${CYAN}检测到 --debug, 进入调试模式${NC}"
+        printf '%b\n' "  ${ICON_GEAR}  ${CYAN}日志将实时输出至终端${NC}"
+        echo_line ""
+    fi
+
+    _sudo_warning
     gather_system_info
     print_header
     install_homebrew
@@ -912,12 +1069,19 @@ main() {
     create_desktop_commands
     configure_service
     print_completion
+
+    if [[ -n "${_TAIL_PID}" ]]; then
+        kill "${_TAIL_PID}" 2>/dev/null || true
+        wait "${_TAIL_PID}" 2>/dev/null || true
+    fi
+
     if [[ "${KEEP_LOG}" == false ]]; then
         _log_message "INFO" "安装完成，清理日志文件: ${LOGFILE}"
         rm -f "$LOGFILE"
     else
-        _log_message "INFO" "安装完成，日志已保存至: ${LOGFILE}"
+        echo_line ""
         echo_line "  ${ICON_INFO}  日志已保存至：${LOGFILE}"
+        echo_line ""
     fi
 }
 main

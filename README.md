@@ -4,6 +4,9 @@
 > 本文测试环境为 PVE 下的 LXC Debian 13 X86_64，其他版本的 Linux 可能会有些许差异，但整体步骤基本相同；  
 > 由于 Linux 发行版众多，无法保证每个发行版都能完全适用，若遇到问题请提交 Issues
 
+> [!TIP]
+> 现提供一键安装 Shell 脚本，请前往 [Shell 脚本库](./Shell/README.md) 查看详细说明
+
 在 X86_64 Linux 中使用 Conda 或 Pixi 安装与配置 [AzurLaneAutoScript](https://github.com/LmeSzinc/AzurLaneAutoScript) 的指南
 
 ---
@@ -17,16 +20,6 @@
 1. [Pixi 版本](./Pixi/README.md)
 2. [Conda 版本](./Conda/README.md)
 3. [Shell 脚本](./Shell/README.md)
-
----
-
-> [!TIP]
-> 现提供一键安装 Shell 脚本  
-> 脚本已通过 PVE 下的 LXC Debian 13 X86_64 中测试，若有错误请提交 Issues
-
-## Shell 脚本
-
-请前往 [Shell 脚本库](./Shell/README.md)
 
 ---
 

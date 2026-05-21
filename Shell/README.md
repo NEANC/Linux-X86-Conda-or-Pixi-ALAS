@@ -8,7 +8,6 @@
 
 | 脚本                            | 适用平台              | 管理器                         |
 | ------------------------------- | --------------------- | ------------------------------ |
-| `alpine_pixi_alas_install.sh`   | Alpine Linux x86-64   | Pixi                           |
 | `pixi_alas_install.sh`          | Linux x86-64          | Pixi                           |
 | `conda_alas_install.sh`         | Linux x86-64          | Conda (Miniforge)              |
 | `arm_mac_conda_alas_install.sh` | macOS (Apple Silicon) | Conda (Miniforge via Homebrew) |
@@ -27,60 +26,51 @@
 | `--uninstall`          | 反向操作：停止服务并清理所有 ALAS 相关文件           |                                             |
 | `-l, --log`            | 保留安装日志，不自动删除                             |                                             |
 | `-h, --help`           | 显示帮助信息                                         |                                             |
+| `--debug`              | 调试模式，日志将实时输出至终端                       |                                             |
 
 ---
 
-> [!IMPORTANT]  
-> Alpine 版脚本仅支持 Alpine Linux x86-64 平台，不支持其他 Linux 发行版，其他版本也不支持 Alpine
+## Linux x86-64
 
-## Linux
+> [!IMPORTANT]
+> 脚本测试环境为 PVE 下的 LXC Debian 13 X86_64 与 Alpine Linux x86-64，GitHub Actions 的 Ubuntu-latest  
+> 其他版本的 Linux 若遇到问题请提交 Issues
 
 ### Pixi 版部署脚本
 
 ```bash
 # 标准安装
-curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/pixi_alas_install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/pixi_alas_install.sh | sudo sh
 
 # 使用国内镜像
-curl -fsSL https://ghfast.top/https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/pixi_alas_install.sh | sudo bash -s -- -t CN
+curl -fsSL https://ghfast.top/https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/pixi_alas_install.sh | sudo sh -s -- -t CN
 
 # 卸载
-curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/pixi_alas_install.sh | sudo bash -s -- --uninstall
+curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/pixi_alas_install.sh | sudo sh -s -- --uninstall
 ```
 
 ### Conda 版部署脚本
 
 ```bash
 # 标准安装
-curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/conda_alas_install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/conda_alas_install.sh | sudo sh
 
 # 使用国内镜像
-curl -fsSL https://ghfast.top/https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/conda_alas_install.sh | sudo bash -s -- -t CN
+curl -fsSL https://ghfast.top/https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/conda_alas_install.sh | sudo sh -s -- -t CN
 
 # 卸载
-curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/conda_alas_install.sh | sudo bash -s -- --uninstall
-```
-
-> [!WARNING]
-
-### Alpine Linux 版
-
-```bash
-# 标准安装
-curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/alpine_pixi_alas_install.sh | sudo sh
-
-# 使用国内镜像
-curl -fsSL https://ghfast.top/https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/alpine_pixi_alas_install.sh | sudo sh -s -- -t CN
-
-# 卸载
-curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/alpine_pixi_alas_install.sh | sudo sh -s -- --uninstall
+curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/conda_alas_install.sh | sudo sh -s -- --uninstall
 ```
 
 ---
 
 ## ARM macOS
 
-### Conda 版部署脚本
+> [!IMPORTANT]
+> 已通过 GitHub Actions 的 macOSos-latest 环境测试  
+> 其他版本的 macOS 若遇到问题请提交 Issues
+
+### Conda 版部署脚本 via Homebrew
 
 ```bash
 # 标准安装
@@ -99,7 +89,7 @@ curl -fsSL https://ghfast.top/https://raw.githubusercontent.com/NEANC/Linux-X86-
 curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/master/Shell/arm_mac_conda_alas_install.sh | bash -s -- --uninstall
 ```
 
-### Pixi 版部署脚本
+### Pixi 版部署脚本 via Homebrew
 
 ```bash
 # 标准安装
