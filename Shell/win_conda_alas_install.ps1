@@ -535,52 +535,57 @@ dependencies:
 
     while ($true) {
         Write-Log "EXEC" "`u{25B6} conda env create -f $envFile (第 ${attempt} 次，这可能需要较长时间)"
-        try {
-            & $CondaBin env create -f $envFile 2>&1 | Tee-Object -FilePath $installLog | Out-LogFile
+        & $CondaBin env create -f $envFile 2>&1 | Tee-Object -FilePath $installLog | Out-LogFile
+        $envCreateCode = $LASTEXITCODE
+        $global:LASTEXITCODE = 0
+
+        if ($envCreateCode -eq 0) {
             Write-Log "OK" "`u{2713} conda env create 完成"
             Remove-Item $installLog -Force -ErrorAction SilentlyContinue
             break
-        } catch {
-            $errContent = Get-Content $installLog -Raw -ErrorAction SilentlyContinue
-
-            if ($UseCNMirror -and (-not $cnFallbackDone) -and ($errContent -match "403|403 Forbidden")) {
-                Write-Log "WARNING" "国内镜像源不可用（403 Forbidden），自动降级到官方源"
-                Remove-Item $installLog -Force -ErrorAction SilentlyContinue
-                $cnFallbackDone = $true
-                & $CondaBin config --remove channels "https://mirrors.cernet.edu.cn/anaconda/cloud/conda-forge/" 2>&1 | Out-LogFile
-                & $CondaBin config --remove channels "https://mirrors.cernet.edu.cn/anaconda/pkgs/main/" 2>&1 | Out-LogFile
-                $env:PIP_INDEX_URL = $null
-                & $CondaBin env remove -n alas -y 2>&1 | Out-LogFile
-                $attempt++
-                continue
-            }
-
-            Complete-Step "`u{274C}" "虚拟环境构建错误，详情请阅读日志：$LogFile" "Red"
-            Remove-Item $installLog -Force -ErrorAction SilentlyContinue
-            throw
         }
+
+        $errContent = Get-Content $installLog -Raw -ErrorAction SilentlyContinue
+
+        if ($UseCNMirror -and (-not $cnFallbackDone) -and ($errContent -match "403|403 Forbidden")) {
+            Write-Log "WARNING" "国内镜像源不可用（403 Forbidden），自动降级到官方源"
+            Remove-Item $installLog -Force -ErrorAction SilentlyContinue
+            $cnFallbackDone = $true
+            & $CondaBin config --remove channels "https://mirrors.cernet.edu.cn/anaconda/cloud/conda-forge/" 2>&1 | Out-LogFile
+            & $CondaBin config --remove channels "https://mirrors.cernet.edu.cn/anaconda/pkgs/main/" 2>&1 | Out-LogFile
+            $env:PIP_INDEX_URL = $null
+            & $CondaBin env remove -n alas -y 2>&1 | Out-LogFile
+            $attempt++
+            continue
+        }
+
+        Complete-Step "`u{274C}" "虚拟环境构建错误，详情请阅读日志：$LogFile" "Red"
+        Remove-Item $installLog -Force -ErrorAction SilentlyContinue
+        throw "conda env create failed with exit code $envCreateCode"
     }
 
     $env:PIP_INDEX_URL = $null
 
     Write-Log "EXEC" "`u{25B6} 验证环境: python -c 'import alas_webapp'"
-    try {
-        & $CondaBin run -n alas python -c "import alas_webapp,cv2,uiautomator2,adbutils,yaml" 2>&1 | Out-LogFile
-        Write-Log "OK" "`u{2713} 依赖完整性检查通过"
-    } catch {
+    & $CondaBin run -n alas python -c "import alas_webapp,cv2,uiautomator2,adbutils,yaml" 2>&1 | Out-LogFile
+    if ($LASTEXITCODE -ne 0) {
+        $global:LASTEXITCODE = 0
         Write-Log "WARNING" "`u{26A0} 依赖完整性检查未通过，尝试修复..."
         & $CondaBin env update -n alas --file $envFile 2>&1 | Out-LogFile
+        $global:LASTEXITCODE = 0
         Write-Log "OK" "`u{2713} 依赖修复完成"
 
         Write-Log "EXEC" "`u{25B6} 二次验证: python -c 'import alas_webapp'"
-        try {
-            & $CondaBin run -n alas python -c "import alas_webapp,cv2,uiautomator2,adbutils,yaml" 2>&1 | Out-LogFile
-            Write-Log "OK" "`u{2713} 二次验证通过"
-        } catch {
+        & $CondaBin run -n alas python -c "import alas_webapp,cv2,uiautomator2,adbutils,yaml" 2>&1 | Out-LogFile
+        if ($LASTEXITCODE -ne 0) {
             Write-Log "ERROR" "二次验证仍失败，请查看日志"
             Complete-Step "`u{274C}" "依赖修复后验证仍失败，请查看日志：$LogFile" "Red"
-            throw
+            throw "conda run import check failed after env update"
         }
+        $global:LASTEXITCODE = 0
+        Write-Log "OK" "`u{2713} 二次验证通过"
+    } else {
+        Write-Log "OK" "`u{2713} 依赖完整性检查通过"
     }
 
     Complete-Step "`u{2714}`u{FE0F}" "虚拟环境已构建"

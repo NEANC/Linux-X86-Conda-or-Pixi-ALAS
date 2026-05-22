@@ -479,7 +479,7 @@ requests = "*"
 [pypi-dependencies]
 anyio = "==1.3.1"
 adbutils = "==0.11.0"
-uiautomator2 = "==2.16.17"
+uiautomator2 = ">=2.16.17"
 uiautomator2cache = "==0.3.0.1"
 onepush = "==1.4.0"
 pypresence = "==4.2.1"
@@ -543,40 +543,43 @@ index-url = "$cernetPypi"
 
     while ($true) {
         Write-Log "EXEC" "`u{25B6} pixi install --manifest-path pixi.toml (第 ${attempt} 次，这可能需要较长时间)"
-        try {
-            pixi install --manifest-path pixi.toml 2>&1 | Tee-Object -FilePath $installLog | Out-LogFile
+        pixi install --manifest-path pixi.toml 2>&1 | Tee-Object -FilePath $installLog | Out-LogFile
+        $pixiCode = $LASTEXITCODE
+        $global:LASTEXITCODE = 0
+
+        if ($pixiCode -eq 0) {
             Write-Log "OK" "`u{2713} pixi install 完成"
             Remove-Item $installLog -Force -ErrorAction SilentlyContinue
             break
-        } catch {
-            $errContent = Get-Content $installLog -Raw -ErrorAction SilentlyContinue
-
-            if ($UseCNMirror -and (-not $cnFallbackDone) -and ($errContent -match "403|403 Forbidden")) {
-                Write-Log "WARNING" "国内镜像源不可用（403 Forbidden），自动降级到官方源"
-                Remove-Item $installLog -Force -ErrorAction SilentlyContinue
-                $cnFallbackDone = $true
-
-                $content = Get-Content pixi.toml -Raw
-                $content = $content -replace 'channels = \["https://mirrors\.cernet\.edu\.cn/anaconda/cloud/conda-forge"\]', 'channels = ["conda-forge"]'
-                $content = $content -replace '\r?\n\[pypi-options\]\r?\nindex-url = "https://mirrors\.cernet\.edu\.cn/pypi/web/simple"\r?\n', "`n"
-                Set-Content pixi.toml -Value $content
-
-                Write-Log "EXEC" "`u{25B6} pixi clean cache -y"
-                try { pixi clean cache -y 2>&1 | Out-LogFile } catch {}
-                Write-Log "EXEC" "`u{25B6} pixi clean --environment default"
-                try { pixi clean --environment default 2>&1 | Out-LogFile }
-                catch {
-                    try { pixi clean -y 2>&1 | Out-LogFile }
-                    catch { Remove-Item .pixi,pixi.lock -Recurse -Force -ErrorAction SilentlyContinue }
-                }
-                $attempt++
-                continue
-            }
-
-            Complete-Step "`u{274C}" "虚拟环境构建错误，详情请阅读日志：$LogFile" "Red"
-            Remove-Item $installLog -Force -ErrorAction SilentlyContinue
-            throw
         }
+
+        $errContent = Get-Content $installLog -Raw -ErrorAction SilentlyContinue
+
+        if ($UseCNMirror -and (-not $cnFallbackDone) -and ($errContent -match "403|403 Forbidden")) {
+            Write-Log "WARNING" "国内镜像源不可用（403 Forbidden），自动降级到官方源"
+            Remove-Item $installLog -Force -ErrorAction SilentlyContinue
+            $cnFallbackDone = $true
+
+            $content = Get-Content pixi.toml -Raw
+            $content = $content -replace 'channels = \["https://mirrors\.cernet\.edu\.cn/anaconda/cloud/conda-forge"\]', 'channels = ["conda-forge"]'
+            $content = $content -replace '\r?\n\[pypi-options\]\r?\nindex-url = "https://mirrors\.cernet\.edu\.cn/pypi/web/simple"\r?\n', "`n"
+            Set-Content pixi.toml -Value $content
+
+            Write-Log "EXEC" "`u{25B6} pixi clean cache -y"
+            try { pixi clean cache -y 2>&1 | Out-LogFile } catch {}
+            Write-Log "EXEC" "`u{25B6} pixi clean --environment default"
+            try { pixi clean --environment default 2>&1 | Out-LogFile }
+            catch {
+                try { pixi clean -y 2>&1 | Out-LogFile }
+                catch { Remove-Item .pixi,pixi.lock -Recurse -Force -ErrorAction SilentlyContinue }
+            }
+            $attempt++
+            continue
+        }
+
+        Complete-Step "`u{274C}" "虚拟环境构建错误，详情请阅读日志：$LogFile" "Red"
+        Remove-Item $installLog -Force -ErrorAction SilentlyContinue
+        throw "pixi install failed with exit code $pixiCode"
     }
 
     Complete-Step "`u{2714}`u{FE0F}" "虚拟环境已构建"
