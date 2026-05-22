@@ -85,6 +85,113 @@ jobs:
         if: always()
         run: sudo bash Shell/${{ matrix.script }} --debug --uninstall -y 2>&1
 
+  # Windows 部署测试
+  deploy-windows:
+    name: ${{ matrix.name }}
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      CONDA_PLUGINS_AUTO_ACCEPT_TOS: yes
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: "Conda Windows", script: win_conda_alas_install.ps1, flags: "--debug", verify: environment.yml, uninstall_flags: "--debug --uninstall --yes" }
+          - { name: "Pixi Windows",  script: win_pixi_install.ps1,  flags: "--debug", verify: pixi.toml, uninstall_flags: "--debug --uninstall --yes" }
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run deployment
+        run: ./Shell/${{ matrix.script }} ${{ matrix.flags }} 2>&1
+      - name: Start ALAS manually (head 150)
+        if: always()
+        shell: pwsh
+        run: |
+          Write-Output "=== Starting ALAS via run_alas.bat ==="
+          $ALAS_DIR = "$env:USERPROFILE\AzurLaneAutoScript"
+          $launcher = Join-Path $ALAS_DIR "run_alas.bat"
+
+          if (-not ((Test-Path -LiteralPath $ALAS_DIR) -and (Test-Path -LiteralPath "$ALAS_DIR\${{ matrix.verify }}"))) {
+            Write-Output "ERROR: ALAS directory not found at $ALAS_DIR (deploy may have failed)"
+            exit 1
+          }
+
+          $proc = Start-Process -NoNewWindow -PassThru `
+            -RedirectStandardOutput "$env:TEMP\alas_run.log" `
+            -RedirectStandardError "$env:TEMP\alas_run_err.log" `
+            -FilePath "cmd.exe" `
+            -ArgumentList "/c", "`"$launcher`""
+          $ALAS_PID = $proc.Id
+          Write-Output "ALAS PID: $ALAS_PID ($ALAS_DIR)"
+
+          Start-Sleep -Seconds 40
+
+          $exitCode = $null
+          if (-not $proc.HasExited) {
+            Write-Output "ALAS is still running after 40s"
+            try {
+              $resp = Invoke-WebRequest -Uri "http://127.0.0.1:22267" -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
+              Write-Output "WebUI health check: HTTP $($resp.StatusCode) - OK"
+            } catch {
+              Write-Output "WARNING: WebUI health check failed: $_"
+            }
+            Write-Output "Stopping test process..."
+            Stop-Process -Id $ALAS_PID -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 2
+            $exitCode = 0
+          } else {
+            $exitCode = $proc.ExitCode
+            Write-Output "ALAS exited early. Exit code: $exitCode"
+          }
+
+          Write-Output "=== ALAS output (first 150 lines) ==="
+          $logContent = ""
+          if (Test-Path "$env:TEMP\alas_run.log") {
+            Get-Content "$env:TEMP\alas_run.log" -TotalCount 150 | Write-Output
+            $logContent = Get-Content "$env:TEMP\alas_run.log" -Raw -ErrorAction SilentlyContinue
+          } else {
+            Write-Output "(stdout is empty)"
+          }
+          if (Test-Path "$env:TEMP\alas_run_err.log") {
+            $errContent = Get-Content "$env:TEMP\alas_run_err.log" -Raw -ErrorAction SilentlyContinue
+            if ($errContent) {
+              Write-Output "=== ALAS stderr ==="
+              Get-Content "$env:TEMP\alas_run_err.log" -TotalCount 50 | Write-Output
+              $logContent = "$logContent`n$errContent"
+            }
+          }
+
+          if ($logContent -match "(?i)(can't open file|No such file or directory|Traceback|ModuleNotFoundError|ImportError)") {
+            Write-Output "ERROR: ALAS startup log contains fatal error"
+            exit 1
+          }
+
+          if ($null -ne $exitCode -and $exitCode -ne 0) {
+            Write-Output "ERROR: ALAS exited early with non-zero status $exitCode"
+            exit $exitCode
+          }
+
+          Remove-Item "$env:TEMP\alas_run.log" -Force -ErrorAction SilentlyContinue
+          Remove-Item "$env:TEMP\alas_run_err.log" -Force -ErrorAction SilentlyContinue
+      - name: Uninstall
+        if: always()
+        shell: pwsh
+        run: ./Shell/${{ matrix.script }} ${{ matrix.uninstall_flags }} 2>&1
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}-logs
+          path: |
+            ${{ runner.temp }}/alas_install*.log
+            ${{ runner.temp }}/alas_run*.log
+            ~/AzurLaneAutoScript/environment.yml
+            ~/AzurLaneAutoScript/pixi.toml
+            ~/AzurLaneAutoScript/environment.windows.generated.yml
+            ~/AzurLaneAutoScript/config/deploy.yaml
+
   # macOS 部署测试
   deploy-macos:
     name: ${{ matrix.name }}
