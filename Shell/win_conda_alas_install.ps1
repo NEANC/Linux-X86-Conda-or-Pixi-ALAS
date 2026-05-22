@@ -450,7 +450,6 @@ dependencies:
   - av>=8.0.3,<9
   - numpy=1.16.6
   - scipy=1.4.1
-  - pillow
   - psutil=5.9.3
   - pyyaml
   - tqdm
@@ -458,6 +457,7 @@ dependencies:
   - pyzmq=22.3.0
   - pip
   - pip:
+      - pillow
       - opencv-python==4.5.5.62
       - imageio==2.27.0
       - adbutils==0.11.0
