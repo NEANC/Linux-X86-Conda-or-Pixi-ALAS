@@ -27,7 +27,11 @@
 
 [guoh064](https://github.com/guoh064) 没有你，就没有这个教程
 
-- 提供了最初的 `pixi.toml` 文件
+- 提供了 Linux 与 macOS 版本的 `pixi.toml` 文件
+
+[Ange-Katrina](https://github.com/Ange-Katrina)
+
+- 提供了对 Alpine Linux 的相关支持
 
 ---
 
