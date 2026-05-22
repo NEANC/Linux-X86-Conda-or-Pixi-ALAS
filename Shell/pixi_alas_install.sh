@@ -503,8 +503,31 @@ install_pixi() {
     start_step "正在安装 Pixi..."
     if [ "${USE_CN_MIRROR}" = true ]; then
         _ip_pixi_dl="${GH_PROXY}https://github.com/prefix-dev/pixi/releases/latest/download/pixi-x86_64-unknown-linux-musl.tar.gz"
+
+        # URL 安全转成单引号 shell 字面量
+        _q_pixi_dl=$(printf "%s" "$_ip_pixi_dl" | sed "s/'/'\\\\''/g")
+
         _log_message "EXEC" "▶ 安装 Pixi (国内源): PIXI_DOWNLOAD_URL=${_ip_pixi_dl}"
-        if ! curl -fsSL https://pixi.sh/install.sh | PIXI_DOWNLOAD_URL="${_ip_pixi_dl}" sh >> "$LOGFILE" 2>&1; then
+
+        if ! {
+            set -e
+
+            # 如果 curl 没成功拉到 installer，避免右侧 sh 只执行了前几行后返回 0
+            printf "__pixi_stream_complete=false\n"
+            printf "trap '[ \"\$__pixi_stream_complete\" = true ] || exit 99' EXIT\n"
+
+            # 关键：把变量直接注入到 installer 脚本正文之前
+            printf "PIXI_DOWNLOAD_URL='%s'\n" "$_q_pixi_dl"
+            printf "export PIXI_DOWNLOAD_URL\n"
+
+            # 调试日志：确认 installer 看到的变量
+            printf "printf 'DEBUG: PIXI_DOWNLOAD_URL=%%s\\\\n' \"\$PIXI_DOWNLOAD_URL\" >&2\n"
+
+            curl -fsSL https://pixi.sh/install.sh
+
+            # curl 成功且 installer 正常读到结尾后才设置完成标记
+            printf "\n__pixi_stream_complete=true\n"
+        } | sh >> "$LOGFILE" 2>&1; then
             end_step "${ICON_ERROR}" "Pixi 安装错误，详情请阅读日志：${LOGFILE}" "${RED}"
             exit 1
         fi
