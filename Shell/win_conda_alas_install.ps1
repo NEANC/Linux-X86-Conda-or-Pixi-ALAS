@@ -23,6 +23,19 @@ function Write-Log {
 function Write-Warn { param($m) Write-Host "  `u{26A0}`u{FE0F}  $m" -ForegroundColor Yellow }
 function Write-ErrorMsg { param($m) Write-Host "  `u{274C}  $m" -ForegroundColor Red }
 
+function Out-LogFile {
+    begin {
+        $teeArgs = @{ FilePath = $LogFile; Append = $true; ErrorAction = 'SilentlyContinue' }
+    }
+    process {
+        if ($script:Debug) {
+            $_ | Tee-Object @teeArgs
+        } else {
+            Add-Content -Path $LogFile -Value $_
+        }
+    }
+}
+
 function Invoke-Native {
     param(
         [Parameter(Mandatory=$true)][string]$FilePath,
@@ -30,7 +43,7 @@ function Invoke-Native {
     )
     $cmdDesc = "$FilePath $($Arguments -join ' ')"
     Write-Log "CMD" $cmdDesc
-    & $FilePath @Arguments 2>&1 | Add-Content -Path $LogFile
+    & $FilePath @Arguments 2>&1 | Out-LogFile
     $code = $LASTEXITCODE
     $global:LASTEXITCODE = 0
     if ($null -ne $code -and $code -ne 0) {
@@ -480,8 +493,8 @@ dependencies:
         $cernetPypi = "https://mirrors.cernet.edu.cn/pypi/web/simple"
 
         Write-Log "EXEC" "`u{25B6} 配置国内镜像源 (cernet)"
-        & $CondaBin config --prepend channels "$cernetConda/cloud/conda-forge/" 2>&1 | Add-Content -Path $LogFile
-        & $CondaBin config --prepend channels "$cernetConda/pkgs/main/" 2>&1 | Add-Content -Path $LogFile
+        & $CondaBin config --prepend channels "$cernetConda/cloud/conda-forge/" 2>&1 | Out-LogFile
+        & $CondaBin config --prepend channels "$cernetConda/pkgs/main/" 2>&1 | Out-LogFile
 
         $env:PIP_INDEX_URL = $cernetPypi
         $env:PIP_TRUSTED_HOST = "mirrors.cernet.edu.cn"
@@ -500,13 +513,13 @@ dependencies:
         Write-Log "WARNING" "检测到已有 alas 环境，正在移除..."
         Write-Log "EXEC" "`u{25B6} conda clean -a -y"
         try {
-            & $CondaBin clean -a -y 2>&1 | Add-Content -Path $LogFile
+            & $CondaBin clean -a -y 2>&1 | Out-LogFile
         } catch {
             Write-Log "WARNING" "conda clean 失败，继续移除环境"
         }
         Write-Log "EXEC" "`u{25B6} conda env remove -n alas -y"
         try {
-            & $CondaBin env remove -n alas -y 2>&1 | Add-Content -Path $LogFile
+            & $CondaBin env remove -n alas -y 2>&1 | Out-LogFile
         } catch {
             $envsPath = & $CondaBin info --base 2>$null
             if ($envsPath -and (Test-Path "$envsPath\envs\alas")) {
@@ -523,7 +536,7 @@ dependencies:
     while ($true) {
         Write-Log "EXEC" "`u{25B6} conda env create -f $envFile (第 ${attempt} 次，这可能需要较长时间)"
         try {
-            & $CondaBin env create -f $envFile 2>&1 | Tee-Object -FilePath $installLog | Add-Content -Path $LogFile
+            & $CondaBin env create -f $envFile 2>&1 | Tee-Object -FilePath $installLog | Out-LogFile
             Write-Log "OK" "`u{2713} conda env create 完成"
             Remove-Item $installLog -Force -ErrorAction SilentlyContinue
             break
@@ -534,10 +547,10 @@ dependencies:
                 Write-Log "WARNING" "国内镜像源不可用（403 Forbidden），自动降级到官方源"
                 Remove-Item $installLog -Force -ErrorAction SilentlyContinue
                 $cnFallbackDone = $true
-                & $CondaBin config --remove channels "https://mirrors.cernet.edu.cn/anaconda/cloud/conda-forge/" 2>&1 | Add-Content -Path $LogFile
-                & $CondaBin config --remove channels "https://mirrors.cernet.edu.cn/anaconda/pkgs/main/" 2>&1 | Add-Content -Path $LogFile
+                & $CondaBin config --remove channels "https://mirrors.cernet.edu.cn/anaconda/cloud/conda-forge/" 2>&1 | Out-LogFile
+                & $CondaBin config --remove channels "https://mirrors.cernet.edu.cn/anaconda/pkgs/main/" 2>&1 | Out-LogFile
                 $env:PIP_INDEX_URL = $null
-                & $CondaBin env remove -n alas -y 2>&1 | Add-Content -Path $LogFile
+                & $CondaBin env remove -n alas -y 2>&1 | Out-LogFile
                 $attempt++
                 continue
             }
@@ -553,17 +566,17 @@ dependencies:
     Write-Log "EXEC" "`u{25B6} 验证环境: python -c 'import alas_webapp'"
     $checkPassed = $true
     try {
-        & $CondaBin run -n alas python -c "import alas_webapp,cv2,uiautomator2,adbutils,yaml" 2>&1 | Add-Content -Path $LogFile
+        & $CondaBin run -n alas python -c "import alas_webapp,cv2,uiautomator2,adbutils,yaml" 2>&1 | Out-LogFile
         Write-Log "OK" "`u{2713} 依赖完整性检查通过"
     } catch {
         $checkPassed = $false
         Write-Log "WARNING" "`u{26A0} 依赖完整性检查未通过，尝试修复..."
-        & $CondaBin env update -n alas --file $envFile 2>&1 | Add-Content -Path $LogFile
+        & $CondaBin env update -n alas --file $envFile 2>&1 | Out-LogFile
         Write-Log "OK" "`u{2713} 依赖修复完成"
 
         Write-Log "EXEC" "`u{25B6} 二次验证: python -c 'import alas_webapp'"
         try {
-            & $CondaBin run -n alas python -c "import alas_webapp,cv2,uiautomator2,adbutils,yaml" 2>&1 | Add-Content -Path $LogFile
+            & $CondaBin run -n alas python -c "import alas_webapp,cv2,uiautomator2,adbutils,yaml" 2>&1 | Out-LogFile
             Write-Log "OK" "`u{2713} 二次验证通过"
             $checkPassed = $true
         } catch {
@@ -791,13 +804,13 @@ function Invoke-Uninstall {
         if ($alasExists) {
             Write-Log "EXEC" "`u{25B6} conda clean -a -y"
             try {
-                & $foundConda clean -a -y 2>&1 | Add-Content -Path $LogFile
+                & $foundConda clean -a -y 2>&1 | Out-LogFile
             } catch {
                 Write-Log "WARNING" "conda clean 失败，继续移除环境"
             }
             Write-Log "EXEC" "`u{25B6} conda env remove -n alas -y"
             try {
-                & $foundConda env remove -n alas -y 2>&1 | Add-Content -Path $LogFile
+                & $foundConda env remove -n alas -y 2>&1 | Out-LogFile
             } catch {
                 $envsPath = & $foundConda info --base 2>$null
                 if ($envsPath -and (Test-Path "$envsPath\envs\alas")) {

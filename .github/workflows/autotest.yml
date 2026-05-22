@@ -128,7 +128,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: "Conda Windows", script: win_conda_alas_install.ps1, flags: "--debug", verify: environment.yml, uninstall_flags: "--debug --uninstall --yes" }
+          - { name: "Conda Windows", script: win_conda_alas_install.ps1, flags: "--debug", verify: environment.windows.generated.yml, uninstall_flags: "--debug --uninstall --yes" }
           - { name: "Pixi Windows",  script: win_pixi_install.ps1,  flags: "--debug", verify: pixi.toml, uninstall_flags: "--debug --uninstall --yes" }
     defaults:
       run:

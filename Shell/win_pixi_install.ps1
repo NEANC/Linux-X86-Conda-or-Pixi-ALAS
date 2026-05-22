@@ -23,6 +23,19 @@ function Write-Log {
 function Write-Warn { param($m) Write-Host "  `u{26A0}`u{FE0F}  $m" -ForegroundColor Yellow }
 function Write-ErrorMsg { param($m) Write-Host "  `u{274C}  $m" -ForegroundColor Red }
 
+function Out-LogFile {
+    begin {
+        $teeArgs = @{ FilePath = $LogFile; Append = $true; ErrorAction = 'SilentlyContinue' }
+    }
+    process {
+        if ($script:Debug) {
+            $_ | Tee-Object @teeArgs
+        } else {
+            Add-Content -Path $LogFile -Value $_
+        }
+    }
+}
+
 function Invoke-Native {
     param(
         [Parameter(Mandatory=$true)][string]$FilePath,
@@ -30,7 +43,7 @@ function Invoke-Native {
     )
     $cmdDesc = "$FilePath $($Arguments -join ' ')"
     Write-Log "CMD" $cmdDesc
-    & $FilePath @Arguments 2>&1 | Add-Content -Path $LogFile
+    & $FilePath @Arguments 2>&1 | Out-LogFile
     $code = $LASTEXITCODE
     $global:LASTEXITCODE = 0
     if ($null -ne $code -and $code -ne 0) {
@@ -443,7 +456,7 @@ start = "python gui.py"
 python = "==3.7.9"
 av = ">=8.0.3,<9"
 numpy = "==1.21.6"
-scipy = "==1.4.1"
+scipy = ">=1.4.1,<1.12"
 pillow = "*"
 opencv = "*"
 imageio = "==2.27.0"
@@ -504,17 +517,17 @@ index-url = "$cernetPypi"
         Write-Log "WARNING" "检测到已有 Pixi 环境，正在清理..."
         Write-Log "EXEC" "`u{25B6} pixi clean cache -y"
         try {
-            pixi clean cache -y 2>&1 | Add-Content -Path $LogFile
+            pixi clean cache -y 2>&1 | Out-LogFile
         } catch {
             Write-Log "WARNING" "pixi clean cache 失败，继续清理"
         }
         Write-Log "EXEC" "`u{25B6} pixi clean --environment default"
         try {
-            pixi clean --environment default 2>&1 | Add-Content -Path $LogFile
+            pixi clean --environment default 2>&1 | Out-LogFile
         } catch {
             Write-Log "EXEC" "`u{25B6} pixi clean"
             try {
-                pixi clean -y 2>&1 | Add-Content -Path $LogFile
+                pixi clean -y 2>&1 | Out-LogFile
             } catch {
                 Write-Log "EXEC" "`u{25B6} rm -rf .pixi pixi.lock"
                 Remove-Item .pixi -Recurse -Force -ErrorAction SilentlyContinue
@@ -531,7 +544,7 @@ index-url = "$cernetPypi"
     while ($true) {
         Write-Log "EXEC" "`u{25B6} pixi install --manifest-path pixi.toml (第 ${attempt} 次，这可能需要较长时间)"
         try {
-            pixi install --manifest-path pixi.toml 2>&1 | Tee-Object -FilePath $installLog | Add-Content -Path $LogFile
+            pixi install --manifest-path pixi.toml 2>&1 | Tee-Object -FilePath $installLog | Out-LogFile
             Write-Log "OK" "`u{2713} pixi install 完成"
             Remove-Item $installLog -Force -ErrorAction SilentlyContinue
             break
@@ -549,11 +562,11 @@ index-url = "$cernetPypi"
                 Set-Content pixi.toml -Value $content
 
                 Write-Log "EXEC" "`u{25B6} pixi clean cache -y"
-                try { pixi clean cache -y 2>&1 | Add-Content -Path $LogFile } catch {}
+                try { pixi clean cache -y 2>&1 | Out-LogFile } catch {}
                 Write-Log "EXEC" "`u{25B6} pixi clean --environment default"
-                try { pixi clean --environment default 2>&1 | Add-Content -Path $LogFile }
+                try { pixi clean --environment default 2>&1 | Out-LogFile }
                 catch {
-                    try { pixi clean -y 2>&1 | Add-Content -Path $LogFile }
+                    try { pixi clean -y 2>&1 | Out-LogFile }
                     catch { Remove-Item .pixi,pixi.lock -Recurse -Force -ErrorAction SilentlyContinue }
                 }
                 $attempt++
@@ -766,17 +779,17 @@ function Invoke-Uninstall {
         if ($hasEnv) {
             Write-Log "EXEC" "`u{25B6} pixi clean cache -y"
             try {
-                pixi clean cache -y 2>&1 | Add-Content -Path $LogFile
+                pixi clean cache -y 2>&1 | Out-LogFile
             } catch {
                 Write-Log "WARNING" "pixi clean cache 失败，继续清理"
             }
             Write-Log "EXEC" "`u{25B6} pixi clean --environment default"
             try {
-                pixi clean --environment default 2>&1 | Add-Content -Path $LogFile
+                pixi clean --environment default 2>&1 | Out-LogFile
             } catch {
                 Write-Log "EXEC" "`u{25B6} pixi clean"
                 try {
-                    pixi clean -y 2>&1 | Add-Content -Path $LogFile
+                    pixi clean -y 2>&1 | Out-LogFile
                 } catch {
                     Write-Log "EXEC" "`u{25B6} rm -rf .pixi pixi.lock"
                     Remove-Item .pixi -Recurse -Force -ErrorAction SilentlyContinue
