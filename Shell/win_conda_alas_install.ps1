@@ -564,12 +564,10 @@ dependencies:
     $env:PIP_INDEX_URL = $null
 
     Write-Log "EXEC" "`u{25B6} 验证环境: python -c 'import alas_webapp'"
-    $checkPassed = $true
     try {
         & $CondaBin run -n alas python -c "import alas_webapp,cv2,uiautomator2,adbutils,yaml" 2>&1 | Out-LogFile
         Write-Log "OK" "`u{2713} 依赖完整性检查通过"
     } catch {
-        $checkPassed = $false
         Write-Log "WARNING" "`u{26A0} 依赖完整性检查未通过，尝试修复..."
         & $CondaBin env update -n alas --file $envFile 2>&1 | Out-LogFile
         Write-Log "OK" "`u{2713} 依赖修复完成"
@@ -578,7 +576,6 @@ dependencies:
         try {
             & $CondaBin run -n alas python -c "import alas_webapp,cv2,uiautomator2,adbutils,yaml" 2>&1 | Out-LogFile
             Write-Log "OK" "`u{2713} 二次验证通过"
-            $checkPassed = $true
         } catch {
             Write-Log "ERROR" "二次验证仍失败，请查看日志"
             Complete-Step "`u{274C}" "依赖修复后验证仍失败，请查看日志：$LogFile" "Red"
