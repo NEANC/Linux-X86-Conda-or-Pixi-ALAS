@@ -15,9 +15,39 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # 检测变更文件，决定运行哪些平台
+  changes:
+    name: 检测变更
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      linux: ${{ steps.filter.outputs.linux }}
+      windows: ${{ steps.filter.outputs.windows }}
+      macos: ${{ steps.filter.outputs.macos }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 3
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            linux:
+              - "Shell/conda_alas_install.sh"
+              - "Shell/pixi_alas_install.sh"
+            windows:
+              - "Shell/win_conda_alas_install.ps1"
+              - "Shell/win_pixi_install.ps1"
+            macos:
+              - "Shell/arm_mac_conda_alas_install.sh"
+              - "Shell/arm_mac_pixi_alas_install.sh"
+
   # Linux 部署测试
   deploy-linux:
     name: ${{ matrix.name }}
+    needs: changes
+    if: ${{ needs.changes.outputs.linux == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -88,6 +118,8 @@ jobs:
   # Windows 部署测试
   deploy-windows:
     name: ${{ matrix.name }}
+    needs: changes
+    if: ${{ needs.changes.outputs.windows == 'true' }}
     runs-on: windows-latest
     timeout-minutes: 20
     env:
@@ -195,6 +227,8 @@ jobs:
   # macOS 部署测试
   deploy-macos:
     name: ${{ matrix.name }}
+    needs: changes
+    if: ${{ needs.changes.outputs.macos == 'true' }}
     runs-on: macos-latest
     timeout-minutes: 15
     strategy:
