@@ -5,10 +5,12 @@ on:
     branches: [master]
     paths:
       - "docker/**"
+      - "Pixi/pixi.toml"
       - ".github/workflows/docker-build.yml"
   pull_request:
     paths:
       - "docker/**"
+      - "Pixi/pixi.toml"
       - ".github/workflows/docker-build.yml"
   workflow_dispatch:
 
@@ -21,8 +23,8 @@ env:
   IMAGE_NAME: ${{ github.repository_owner }}/alas-pixi-alpine
 
 jobs:
-  build:
-    name: 构建 Docker 镜像
+  build-and-test:
+    name: 构建 Docker 镜像并测试
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -31,9 +33,6 @@ jobs:
     steps:
       - name: 检出仓库
         uses: actions/checkout@v6
-
-      - name: 设置 QEMU (多平台支持)
-        uses: docker/setup-qemu-action@v3
 
       - name: 设置 Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -57,13 +56,66 @@ jobs:
             type=sha,prefix=,format=short
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/master' }}
 
-      - name: 构建并推送 Docker 镜像
+      - name: 构建 Docker 镜像
         uses: docker/build-push-action@v6
         with:
           context: .
           file: docker/Dockerfile
           platforms: linux/amd64
-          push: ${{ github.event_name != 'pull_request' }}
+          load: true
+          tags: alas-pixi-alpine:ci-test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: 克隆 ALAS 仓库
+        run: |
+          git clone https://github.com/LmeSzinc/AzurLaneAutoScript.git AzurLaneAutoScript
+
+      - name: 启动容器并运行测试
+        env:
+          ALAS_REPO_PATH: ${{ github.workspace }}/AzurLaneAutoScript
+          ALAS_TEST_IMAGE: alas-pixi-alpine:ci-test
+        run: |
+          set -eu
+
+          echo "========== 启动测试容器 =========="
+          docker compose -f docker/docker-compose.test.yml up -d
+
+          echo ""
+          echo "等待 Pixi 环境部署与 ALAS 启动..."
+          sleep 45
+
+          echo ""
+          echo "========== 容器状态 =========="
+          docker ps -a --filter name=alas-test \
+            --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+
+          echo ""
+          echo "========== 容器日志 =========="
+          docker logs alas-test
+
+          echo ""
+          if docker ps --filter name=alas-test --format '{{.Names}}' | grep -q alas-test; then
+            echo "========== ✅ 容器运行正常，测试通过 =========="
+          else
+            echo "========== ❌ 容器已退出，测试失败 =========="
+            exit 1
+          fi
+
+      - name: 清理测试资源
+        if: always()
+        run: |
+          docker compose -f docker/docker-compose.test.yml down -v 2>/dev/null || true
+          docker rm -f alas-test 2>/dev/null || true
+
+      - name: 推送镜像
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/amd64
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
