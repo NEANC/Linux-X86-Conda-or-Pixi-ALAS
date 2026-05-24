@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     AzurLaneAutoScript Windows Conda 一键部署脚本
 .DESCRIPTION
@@ -14,7 +14,7 @@ $null = New-Item -ItemType File -Path $LogFile -Force
 
 $LogDateFormat = "HH:mm:ss"
 
-function Write-Log {
+function Write-InstallLog {
     param([string]$Level, [string]$Message)
     $timestamp = Get-Date -Format "${LogDateFormat}.fff"
     Add-Content -Path $LogFile -Value "${Level} | ${timestamp} | ${Message}"
@@ -42,7 +42,7 @@ function Invoke-Native {
         [Parameter(ValueFromRemainingArguments=$true)][string[]]$Arguments
     )
     $cmdDesc = "$FilePath $($Arguments -join ' ')"
-    Write-Log "CMD" $cmdDesc
+    Write-InstallLog "CMD" $cmdDesc
     & $FilePath @Arguments 2>&1 | Out-LogFile
     $code = $LASTEXITCODE
     $global:LASTEXITCODE = 0
@@ -51,33 +51,34 @@ function Invoke-Native {
     }
 }
 
-$Global:SpinnerJob = $null
+$script:SpinnerJob = $null
 
 function Start-Step {
     param([string]$Message)
     Stop-Spinner
-    Write-Log "START" $Message
+    Write-InstallLog "START" $Message
     if ($script:Debug) {
         Write-Host "  `u{2699}`u{FE0F}  $Message" -ForegroundColor Yellow
         return
     }
     $spinChars = @('`u{280B}','`u{2819}','`u{2839}','`u{2838}','`u{283C}','`u{2834}','`u{2826}','`u{2827}','`u{2807}','`u{280F}')
-    $Global:SpinnerJob = Start-Job -ScriptBlock {
-        param($msg, $chars)
+    $script:SpinnerJob = Start-Job -ScriptBlock {
+        $chars = $using:spinChars
+        $msg = $using:Message
         $i = 0
         while ($true) {
             Write-Host "`r`e[33m$($chars[$i % 10])  $msg`e[0m`e[K" -NoNewline
             $i++
             Start-Sleep -Milliseconds 200
         }
-    } -ArgumentList $Message, $spinChars
+    }
 }
 
 function Stop-Spinner {
-    if ($Global:SpinnerJob) {
-        Stop-Job -Job $Global:SpinnerJob -ErrorAction SilentlyContinue
-        Remove-Job -Job $Global:SpinnerJob -ErrorAction SilentlyContinue
-        $Global:SpinnerJob = $null
+    if ($script:SpinnerJob) {
+        Stop-Job -Job $script:SpinnerJob -ErrorAction SilentlyContinue
+        Remove-Job -Job $script:SpinnerJob -ErrorAction SilentlyContinue
+        $script:SpinnerJob = $null
     }
 }
 
@@ -96,7 +97,7 @@ function Complete-Step {
         "`u{274C}"         { $level = "ERROR" }
         "`u{1F4A1}"        { $level = "INFO" }
     }
-    Write-Log $level $Message
+    Write-InstallLog $level $Message
 }
 
 $InstallDir = "$env:USERPROFILE\AzurLaneAutoScript"
@@ -192,7 +193,7 @@ for ($i = 0; $i -lt $args.Count; $i++) {
     }
 }
 
-function Test-Prerequisites {
+function Test-Prerequisite {
     $os = Get-CimInstance Win32_OperatingSystem
     $verMajor = [int]$os.Version.Split('.')[0]
     if ($verMajor -lt 10) {
@@ -302,26 +303,26 @@ function Install-Miniforge {
         $script:CondaBin = $foundConda
         try {
             $ver = (& $foundConda --version 2>$null | ForEach-Object { $_ }) -join ""
-            Write-Log "OK" "Conda 已就绪: $ver"
-            Complete-Step "`u{2714}`u{FE0F}" "Conda 已就绪: $ver"
+            Write-InstallLog "OK" "Conda 已就绪: $ver"
+            Complete-Step -Icon "`u{2714}`u{FE0F}" "Conda 已就绪: $ver"
             return
         } catch {
-            Write-Log "WARNING" "检测到 conda 但无法获取版本，继续安装 Miniforge"
+            Write-InstallLog "WARNING" "检测到 conda 但无法获取版本，继续安装 Miniforge"
         }
     }
 
-    Write-Log "ERROR" "未检测到 Conda"
+    Write-InstallLog "ERROR" "未检测到 Conda"
     Start-Step "正在安装 Miniforge..."
-    Write-Log "EXEC" "`u{25B6} winget install CondaForge.Miniforge3"
+    Write-InstallLog "EXEC" "`u{25B6} winget install CondaForge.Miniforge3"
 
     try {
         $proc = Start-Process -FilePath "winget" -ArgumentList "install","CondaForge.Miniforge3","--silent","--accept-package-agreements","--accept-source-agreements" -Wait -PassThru
         if ($proc.ExitCode -ne 0) {
             throw "winget 安装 Miniforge 失败 (exit $($proc.ExitCode))"
         }
-        Write-Log "OK" "`u{2713} Miniforge 安装完成"
+        Write-InstallLog "OK" "`u{2713} Miniforge 安装完成"
     } catch {
-        Complete-Step "`u{274C}" "Miniforge 安装错误，详情请阅读日志：$LogFile" "Red"
+        Complete-Step -Icon "`u{274C}" "Miniforge 安装错误，详情请阅读日志：$LogFile" "Red"
         throw
     }
 
@@ -332,13 +333,13 @@ function Install-Miniforge {
         $script:CondaBin = $foundConda
         try {
             $ver = (& $foundConda --version 2>$null | ForEach-Object { $_ }) -join ""
-            Complete-Step "`u{2714}`u{FE0F}" "Miniforge 已安装: $ver"
+            Complete-Step -Icon "`u{2714}`u{FE0F}" "Miniforge 已安装: $ver"
         } catch {
-            Complete-Step "`u{2714}`u{FE0F}" "Miniforge 已安装"
+            Complete-Step -Icon "`u{2714}`u{FE0F}" "Miniforge 已安装"
         }
     } else {
-        Write-Log "ERROR" "Miniforge 安装后未找到 conda 可执行文件"
-        Complete-Step "`u{274C}" "Miniforge 安装失败，请查看日志：$LogFile" "Red"
+        Write-InstallLog "ERROR" "Miniforge 安装后未找到 conda 可执行文件"
+        Complete-Step -Icon "`u{274C}" "Miniforge 安装失败，请查看日志：$LogFile" "Red"
         throw "Miniforge 安装后未找到 conda 可执行文件"
     }
 }
@@ -351,24 +352,24 @@ function Install-GitADB {
     if (-not (Get-Command adb -ErrorAction SilentlyContinue)) { $needsInstall += "Google.PlatformTools" }
 
     if ($needsInstall.Count -eq 0) {
-        Write-Log "OK" "Git: $(git --version)"
-        Write-Log "OK" "ADB: $(adb --version 2>$null | Select-Object -First 1)"
-        Complete-Step "`u{2714}`u{FE0F}" "依赖检查完成"
+        Write-InstallLog "OK" "Git: $(git --version)"
+        Write-InstallLog "OK" "ADB: $(adb --version 2>$null | Select-Object -First 1)"
+        Complete-Step -Icon "`u{2714}`u{FE0F}" "依赖检查完成"
         return
     }
 
     Start-Step "正在安装缺失的依赖: $($needsInstall -join ', ')..."
     foreach ($pkg in $needsInstall) {
-        Write-Log "EXEC" "`u{25B6} winget install $pkg"
+        Write-InstallLog "EXEC" "`u{25B6} winget install $pkg"
         try {
             $proc = Start-Process -FilePath "winget" -ArgumentList "install",$pkg,"--silent","--accept-package-agreements","--accept-source-agreements" -Wait -PassThru
             if ($proc.ExitCode -eq 0) {
-                Write-Log "OK" "`u{2713} $pkg 安装完成"
+                Write-InstallLog "OK" "`u{2713} $pkg 安装完成"
             } else {
-                Write-Log "WARNING" "winget 安装 $pkg 返回码: $($proc.ExitCode)"
+                Write-InstallLog "WARNING" "winget 安装 $pkg 返回码: $($proc.ExitCode)"
             }
         } catch {
-            Write-Log "WARNING" "winget 安装 $pkg 失败，请手动安装"
+            Write-InstallLog "WARNING" "winget 安装 $pkg 失败，请手动安装"
         }
     }
 
@@ -376,9 +377,9 @@ function Install-GitADB {
 
     $gitVer = git --version 2>$null
     $adbVer = adb --version 2>$null | Select-Object -First 1
-    Write-Log "OK" "Git: $gitVer"
-    Write-Log "OK" "ADB: $adbVer"
-    Complete-Step "`u{2714}`u{FE0F}" "依赖安装完成"
+    Write-InstallLog "OK" "Git: $gitVer"
+    Write-InstallLog "OK" "ADB: $adbVer"
+    Complete-Step -Icon "`u{2714}`u{FE0F}" "依赖安装完成"
 }
 
 function Sync-ALASRepo {
@@ -391,44 +392,44 @@ function Sync-ALASRepo {
         if (Test-Path "$WorkDir\.git") {
             try {
                 $originUrl = git -C "$WorkDir" remote get-url origin 2>$null
-            } catch {}
+            } catch { $null = $_ }
         }
 
         if ($originUrl -match 'github\.com[:/]+LmeSzinc/AzurLaneAutoScript(\.git)?$') {
-            Write-Log "OK" "git 远程 URL 验证通过: $originUrl"
-            Write-Log "WARNING" "ALAS 仓库已存在，跳过克隆: $WorkDir"
-            Complete-Step "`u{26A0}`u{FE0F}" "ALAS 仓库已存在，跳过克隆" "Yellow"
+            Write-InstallLog "OK" "git 远程 URL 验证通过: $originUrl"
+            Write-InstallLog "WARNING" "ALAS 仓库已存在，跳过克隆: $WorkDir"
+            Complete-Step -Icon "`u{26A0}`u{FE0F}" "ALAS 仓库已存在，跳过克隆" "Yellow"
             Set-Location $WorkDir
             $script:AlasDir = $WorkDir
             return
         }
 
         if (-not $originUrl) {
-            Write-Log "WARNING" "目录 $WorkDir 中无 .git 信息，可能是非完整 ALAS 安装，将覆盖安装"
-            Write-Log "EXEC" "`u{25B6} 删除旧目录: Remove-Item $WorkDir"
+            Write-InstallLog "WARNING" "目录 $WorkDir 中无 .git 信息，可能是非完整 ALAS 安装，将覆盖安装"
+            Write-InstallLog "EXEC" "`u{25B6} 删除旧目录: Remove-Item $WorkDir"
             Remove-Item $WorkDir -Recurse -Force -ErrorAction Stop
         } else {
-            Write-Log "ERROR" "安装目录已存在，但不是 AzurLaneAutoScript 仓库: $WorkDir (remote: $originUrl)"
-            Complete-Step "`u{274C}" "安装目录已存在且是其他 git 仓库 ($originUrl)，请使用 -d 参数指定目录" "Red"
+            Write-InstallLog "ERROR" "安装目录已存在，但不是 AzurLaneAutoScript 仓库: $WorkDir (remote: $originUrl)"
+            Complete-Step -Icon "`u{274C}" "安装目录已存在且是其他 git 仓库 ($originUrl)，请使用 -d 参数指定目录" "Red"
             exit 1
         }
     }
 
     $repoUrl = "https://github.com/LmeSzinc/AzurLaneAutoScript.git"
-    Write-Log "EXEC" "`u{25B6} git clone ${GHProxy}${repoUrl} $WorkDir"
+    Write-InstallLog "EXEC" "`u{25B6} git clone ${GHProxy}${repoUrl} $WorkDir"
 
     try {
-        Invoke-Native git clone "${GHProxy}${repoUrl}" "$WorkDir"
-        Write-Log "OK" "`u{2713} 仓库克隆完成"
+        Invoke-Native -FilePath git -Arguments clone,"${GHProxy}${repoUrl}","$WorkDir"
+        Write-InstallLog "OK" "`u{2713} 仓库克隆完成"
     } catch {
-        Complete-Step "`u{274C}" "仓库克隆错误，详情请阅读日志：$LogFile" "Red"
+        Complete-Step -Icon "`u{274C}" "仓库克隆错误，详情请阅读日志：$LogFile" "Red"
         throw
     }
 
     Set-Location $WorkDir
     $script:AlasDir = $WorkDir
-    Write-Log "OK" "ALAS 目录: $AlasDir"
-    Complete-Step "`u{2714}`u{FE0F}" "ALAS 仓库已克隆"
+    Write-InstallLog "OK" "ALAS 目录: $AlasDir"
+    Complete-Step -Icon "`u{2714}`u{FE0F}" "ALAS 仓库已克隆"
 }
 
 function Initialize-CondaEnv {
@@ -437,7 +438,7 @@ function Initialize-CondaEnv {
     Set-Location $AlasDir
 
     $envFile = Join-Path $AlasDir "environment.windows.generated.yml"
-    Write-Log "EXEC" "`u{25B6} 生成 $envFile"
+    Write-InstallLog "EXEC" "`u{25B6} 生成 $envFile"
 
     $envYml = @'
 name: alas
@@ -486,20 +487,20 @@ dependencies:
 '@
 
     Set-Content -Path $envFile -Value $envYml
-    Write-Log "OK" "`u{2713} $envFile 已生成"
+    Write-InstallLog "OK" "`u{2713} $envFile 已生成"
 
     if ($UseCNMirror) {
         $cernetConda = "https://mirrors.cernet.edu.cn/anaconda"
         $cernetPypi = "https://mirrors.cernet.edu.cn/pypi/web/simple"
 
-        Write-Log "EXEC" "`u{25B6} 配置国内镜像源 (cernet)"
+        Write-InstallLog "EXEC" "`u{25B6} 配置国内镜像源 (cernet)"
         & $CondaBin config --prepend channels "$cernetConda/cloud/conda-forge/" 2>&1 | Out-LogFile
         & $CondaBin config --prepend channels "$cernetConda/pkgs/main/" 2>&1 | Out-LogFile
 
         $env:PIP_INDEX_URL = $cernetPypi
         $env:PIP_TRUSTED_HOST = "mirrors.cernet.edu.cn"
         $env:PIP_TIMEOUT = "60"
-        Write-Log "OK" "`u{2713} 国内镜像源已配置"
+        Write-InstallLog "OK" "`u{2713} 国内镜像源已配置"
     }
 
     try {
@@ -510,14 +511,14 @@ dependencies:
         $alasExists = $envList -match "^alas "
     }
     if ($alasExists) {
-        Write-Log "WARNING" "检测到已有 alas 环境，正在移除..."
-        Write-Log "EXEC" "`u{25B6} conda clean -a -y"
+        Write-InstallLog "WARNING" "检测到已有 alas 环境，正在移除..."
+        Write-InstallLog "EXEC" "`u{25B6} conda clean -a -y"
         try {
             & $CondaBin clean -a -y 2>&1 | Out-LogFile
         } catch {
-            Write-Log "WARNING" "conda clean 失败，继续移除环境"
+            Write-InstallLog "WARNING" "conda clean 失败，继续移除环境"
         }
-        Write-Log "EXEC" "`u{25B6} conda env remove -n alas -y"
+        Write-InstallLog "EXEC" "`u{25B6} conda env remove -n alas -y"
         try {
             & $CondaBin env remove -n alas -y 2>&1 | Out-LogFile
         } catch {
@@ -526,7 +527,7 @@ dependencies:
                 Remove-Item "$envsPath\envs\alas" -Recurse -Force -ErrorAction SilentlyContinue
             }
         }
-        Write-Log "OK" "`u{2713} 旧环境已移除"
+        Write-InstallLog "OK" "`u{2713} 旧环境已移除"
     }
 
     $attempt = 1
@@ -534,13 +535,13 @@ dependencies:
     $installLog = "$env:TEMP\conda_install_$pid.log"
 
     while ($true) {
-        Write-Log "EXEC" "`u{25B6} conda env create -f $envFile (第 ${attempt} 次，这可能需要较长时间)"
+        Write-InstallLog "EXEC" "`u{25B6} conda env create -f $envFile (第 ${attempt} 次，这可能需要较长时间)"
         & $CondaBin env create -f $envFile 2>&1 | Tee-Object -FilePath $installLog | Out-LogFile
         $envCreateCode = $LASTEXITCODE
         $global:LASTEXITCODE = 0
 
         if ($envCreateCode -eq 0) {
-            Write-Log "OK" "`u{2713} conda env create 完成"
+            Write-InstallLog "OK" "`u{2713} conda env create 完成"
             Remove-Item $installLog -Force -ErrorAction SilentlyContinue
             break
         }
@@ -548,7 +549,7 @@ dependencies:
         $errContent = Get-Content $installLog -Raw -ErrorAction SilentlyContinue
 
         if ($UseCNMirror -and (-not $cnFallbackDone) -and ($errContent -match "403|403 Forbidden")) {
-            Write-Log "WARNING" "国内镜像源不可用（403 Forbidden），自动降级到官方源"
+            Write-InstallLog "WARNING" "国内镜像源不可用（403 Forbidden），自动降级到官方源"
             Remove-Item $installLog -Force -ErrorAction SilentlyContinue
             $cnFallbackDone = $true
             & $CondaBin config --remove channels "https://mirrors.cernet.edu.cn/anaconda/cloud/conda-forge/" 2>&1 | Out-LogFile
@@ -559,36 +560,36 @@ dependencies:
             continue
         }
 
-        Complete-Step "`u{274C}" "虚拟环境构建错误，详情请阅读日志：$LogFile" "Red"
+        Complete-Step -Icon "`u{274C}" "虚拟环境构建错误，详情请阅读日志：$LogFile" "Red"
         Remove-Item $installLog -Force -ErrorAction SilentlyContinue
         throw "conda env create failed with exit code $envCreateCode"
     }
 
     $env:PIP_INDEX_URL = $null
 
-    Write-Log "EXEC" "`u{25B6} 验证环境: python -c 'import alas_webapp'"
+    Write-InstallLog "EXEC" "`u{25B6} 验证环境: python -c 'import alas_webapp'"
     & $CondaBin run -n alas python -c "import alas_webapp,cv2,uiautomator2,adbutils,yaml" 2>&1 | Out-LogFile
     if ($LASTEXITCODE -ne 0) {
         $global:LASTEXITCODE = 0
-        Write-Log "WARNING" "`u{26A0} 依赖完整性检查未通过，尝试修复..."
+        Write-InstallLog "WARNING" "`u{26A0} 依赖完整性检查未通过，尝试修复..."
         & $CondaBin env update -n alas --file $envFile 2>&1 | Out-LogFile
         $global:LASTEXITCODE = 0
-        Write-Log "OK" "`u{2713} 依赖修复完成"
+        Write-InstallLog "OK" "`u{2713} 依赖修复完成"
 
-        Write-Log "EXEC" "`u{25B6} 二次验证: python -c 'import alas_webapp'"
+        Write-InstallLog "EXEC" "`u{25B6} 二次验证: python -c 'import alas_webapp'"
         & $CondaBin run -n alas python -c "import alas_webapp,cv2,uiautomator2,adbutils,yaml" 2>&1 | Out-LogFile
         if ($LASTEXITCODE -ne 0) {
-            Write-Log "ERROR" "二次验证仍失败，请查看日志"
-            Complete-Step "`u{274C}" "依赖修复后验证仍失败，请查看日志：$LogFile" "Red"
+            Write-InstallLog "ERROR" "二次验证仍失败，请查看日志"
+            Complete-Step -Icon "`u{274C}" "依赖修复后验证仍失败，请查看日志：$LogFile" "Red"
             throw "conda run import check failed after env update"
         }
         $global:LASTEXITCODE = 0
-        Write-Log "OK" "`u{2713} 二次验证通过"
+        Write-InstallLog "OK" "`u{2713} 二次验证通过"
     } else {
-        Write-Log "OK" "`u{2713} 依赖完整性检查通过"
+        Write-InstallLog "OK" "`u{2713} 依赖完整性检查通过"
     }
 
-    Complete-Step "`u{2714}`u{FE0F}" "虚拟环境已构建"
+    Complete-Step -Icon "`u{2714}`u{FE0F}" "虚拟环境已构建"
 }
 
 function Set-Deploy {
@@ -597,17 +598,17 @@ function Set-Deploy {
     Set-Location $AlasDir
 
     if (Test-Path config\deploy.yaml) {
-        Write-Log "EXEC" "`u{25B6} 备份已有 deploy.yaml"
+        Write-InstallLog "EXEC" "`u{25B6} 备份已有 deploy.yaml"
         Copy-Item config\deploy.yaml config\deploy.yaml.bak -Force
     }
 
     $template = $DeployTemplate
 
     if (Test-Path $template) {
-        Write-Log "EXEC" "`u{25B6} cp $template config\deploy.yaml"
+        Write-InstallLog "EXEC" "`u{25B6} cp $template config\deploy.yaml"
         Copy-Item $template config\deploy.yaml -Force
     } else {
-        Write-Log "WARNING" "模板文件 $template 不存在，生成默认 deploy.yaml"
+        Write-InstallLog "WARNING" "模板文件 $template 不存在，生成默认 deploy.yaml"
     }
 
     $pyPath = ""
@@ -633,13 +634,13 @@ function Set-Deploy {
     try {
         $gitCmd = Get-Command git -ErrorAction Stop
         $gitPath = $gitCmd.Source -replace '\\', '/'
-    } catch {}
+    } catch { $null = $_ }
 
     $adbPath = "adb"
     try {
         $adbCmd = Get-Command adb -ErrorAction Stop
         $adbPath = $adbCmd.Source -replace '\\', '/'
-    } catch {}
+    } catch { $null = $_ }
 
     if (-not (Test-Path config\deploy.yaml)) {
         $defaultDeploy = @"
@@ -649,7 +650,7 @@ Deploy:
   AdbExecutable: $adbPath
 "@
         Set-Content -Path config\deploy.yaml -Value $defaultDeploy
-        Write-Log "OK" "`u{2713} 已生成 config\deploy.yaml"
+        Write-InstallLog "OK" "`u{2713} 已生成 config\deploy.yaml"
     } else {
         $content = Get-Content config\deploy.yaml -Raw -Encoding UTF8
         $content = $content -replace 'PythonExecutable:\s*\.\/toolkit\/python\.exe', "PythonExecutable: $pyPath"
@@ -659,20 +660,20 @@ Deploy:
         $content = $content -replace 'AdbExecutable:\s*\.\/toolkit\/Lib\/site-packages\/adbutils\/binaries\/adb\.exe', "AdbExecutable: $adbPath"
         $content = $content -replace 'AdbExecutable:\s*\.\\toolkit\\Lib\\site-packages\\adbutils\\binaries\\adb\.exe', "AdbExecutable: $adbPath"
         Set-Content -Path config\deploy.yaml -Value $content -NoNewline
-        Write-Log "OK" "`u{2713} deploy.yaml 路径已替换"
+        Write-InstallLog "OK" "`u{2713} deploy.yaml 路径已替换"
     }
 
-    Write-Log "INFO" "  PythonExecutable: $pyPath"
-    Write-Log "INFO" "  GitExecutable: $gitPath"
-    Write-Log "INFO" "  AdbExecutable: $adbPath"
-    Complete-Step "`u{2714}`u{FE0F}" "deploy.yaml 已配置"
+    Write-InstallLog "INFO" "  PythonExecutable: $pyPath"
+    Write-InstallLog "INFO" "  GitExecutable: $gitPath"
+    Write-InstallLog "INFO" "  AdbExecutable: $adbPath"
+    Complete-Step -Icon "`u{2714}`u{FE0F}" "deploy.yaml 已配置"
 }
 
 function New-Launcher {
     Start-Step "正在生成启动脚本..."
 
-    Write-Log "INFO" "  Conda: $CondaBin"
-    Write-Log "INFO" "  ALAS 目录: $AlasDir"
+    Write-InstallLog "INFO" "  Conda: $CondaBin"
+    Write-InstallLog "INFO" "  ALAS 目录: $AlasDir"
 
     $runAlas = @"
 @echo off
@@ -691,8 +692,8 @@ start "" http://127.0.0.1:22267
     }
 
     Set-Content -Path "$targetDir\run_alas.bat" -Value $runAlas
-    Write-Log "OK" "`u{2713} 启动脚本已生成: $targetDir\run_alas.bat"
-    Complete-Step "`u{2714}`u{FE0F}" "启动脚本已生成: $targetDir\run_alas.bat"
+    Write-InstallLog "OK" "`u{2713} 启动脚本已生成: $targetDir\run_alas.bat"
+    Complete-Step -Icon "`u{2714}`u{FE0F}" "启动脚本已生成: $targetDir\run_alas.bat"
 }
 
 function Enable-ScheduledTask {
@@ -703,11 +704,11 @@ function Enable-ScheduledTask {
     $taskExists = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
 
     if ($taskExists) {
-        Write-Log "EXEC" "`u{25B6} 移除已有计划任务: $taskName"
+        Write-InstallLog "EXEC" "`u{25B6} 移除已有计划任务: $taskName"
         Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
     }
 
-    Write-Log "EXEC" "`u{25B6} Register-ScheduledTask $taskName"
+    Write-InstallLog "EXEC" "`u{25B6} Register-ScheduledTask $taskName"
     $action = New-ScheduledTaskAction -Execute $launcherPath -WorkingDirectory $ScriptOutDir
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
@@ -715,15 +716,15 @@ function Enable-ScheduledTask {
     try {
         Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings `
             -Description "Start AzurLaneAutoScript at logon" -Force -ErrorAction Stop | Out-Null
-        Write-Log "OK" "`u{2713} 计划任务 $taskName 已创建"
-        Complete-Step "`u{2714}`u{FE0F}" "计划任务已创建：用户登录时启动 ALAS"
+        Write-InstallLog "OK" "`u{2713} 计划任务 $taskName 已创建"
+        Complete-Step -Icon "`u{2714}`u{FE0F}" "计划任务已创建：用户登录时启动 ALAS"
     } catch {
-        Write-Log "WARNING" "计划任务创建失败: $_"
-        Complete-Step "`u{26A0}`u{FE0F}" "计划任务创建失败，请手动配置" "Yellow"
+        Write-InstallLog "WARNING" "计划任务创建失败: $_"
+        Complete-Step -Icon "`u{26A0}`u{FE0F}" "计划任务创建失败，请手动配置" "Yellow"
     }
 }
 
-function Stop-AlasProcesses {
+function Stop-AlasProcess {
     param([string]$AlasDir)
 
     Get-CimInstance Win32_Process | Where-Object {
@@ -733,9 +734,9 @@ function Stop-AlasProcesses {
     } | ForEach-Object {
         try {
             Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop
-            Write-Log "INFO" "已停止 ALAS 进程 PID=$($_.ProcessId)"
+            Write-InstallLog "INFO" "已停止 ALAS 进程 PID=$($_.ProcessId)"
         } catch {
-            Write-Log "WARNING" "无法停止 PID=$($_.ProcessId): $_"
+            Write-InstallLog "WARNING" "无法停止 PID=$($_.ProcessId): $_"
         }
     }
 }
@@ -761,39 +762,39 @@ function Invoke-Uninstall {
     Write-Host "  `u{1F4A1}  Git, ADB, Miniforge 及相关依赖不会被删除" -ForegroundColor Green
     Write-Host ""
 
-    Write-Log "WARNING" "等待确认卸载"
+    Write-InstallLog "WARNING" "等待确认卸载"
     if ($UninstallYes) {
-        Write-Log "INFO" "已通过 --yes 自动确认卸载"
+        Write-InstallLog "INFO" "已通过 --yes 自动确认卸载"
     } else {
         $confirm = Read-Host "  确认继续吗？ [yes/N]"
         if ($confirm -notmatch "^(yes|YES)$") {
-            Write-Log "INFO" "卸载取消"
+            Write-InstallLog "INFO" "卸载取消"
             Write-Host "  `u{1F4A1} 已取消卸载"
             exit 0
         }
-        Write-Log "INFO" "已确认卸载"
+        Write-InstallLog "INFO" "已确认卸载"
     }
     Write-Host ""
 
     Start-Step "正在停止 ALAS 进程..."
-    Stop-AlasProcesses -AlasDir $InstallDir
-    Complete-Step "`u{2714}`u{FE0F}" "ALAS 进程已停止"
+    Stop-AlasProcess -AlasDir $InstallDir
+    Complete-Step -Icon "`u{2714}`u{FE0F}" "ALAS 进程已停止"
 
     Start-Step "正在移除计划任务..."
     $task = Get-ScheduledTask -TaskName "ALAS" -ErrorAction SilentlyContinue
     if ($task) {
-        Write-Log "EXEC" "`u{25B6} Unregister-ScheduledTask ALAS"
+        Write-InstallLog "EXEC" "`u{25B6} Unregister-ScheduledTask ALAS"
         Unregister-ScheduledTask -TaskName "ALAS" -Confirm:$false -ErrorAction SilentlyContinue
-        Write-Log "OK" "`u{2713} 计划任务已移除"
-        Complete-Step "`u{2714}`u{FE0F}" "计划任务已移除"
+        Write-InstallLog "OK" "`u{2713} 计划任务已移除"
+        Complete-Step -Icon "`u{2714}`u{FE0F}" "计划任务已移除"
     } else {
-        Complete-Step "`u{1F4A1}" "未检测到计划任务，跳过" "Green"
+        Complete-Step -Icon "`u{1F4A1}" "未检测到计划任务，跳过" "Green"
     }
 
     Start-Step "正在清理 Conda 虚拟环境..."
     $foundConda = Find-CondaExe
     if ($foundConda) {
-        Write-Log "INFO" "使用 conda: $foundConda"
+        Write-InstallLog "INFO" "使用 conda: $foundConda"
 
         try {
             $envInfo = & $foundConda env list --json 2>$null | ConvertFrom-Json
@@ -804,13 +805,13 @@ function Invoke-Uninstall {
         }
 
         if ($alasExists) {
-            Write-Log "EXEC" "`u{25B6} conda clean -a -y"
+            Write-InstallLog "EXEC" "`u{25B6} conda clean -a -y"
             try {
                 & $foundConda clean -a -y 2>&1 | Out-LogFile
             } catch {
-                Write-Log "WARNING" "conda clean 失败，继续移除环境"
+                Write-InstallLog "WARNING" "conda clean 失败，继续移除环境"
             }
-            Write-Log "EXEC" "`u{25B6} conda env remove -n alas -y"
+            Write-InstallLog "EXEC" "`u{25B6} conda env remove -n alas -y"
             try {
                 & $foundConda env remove -n alas -y 2>&1 | Out-LogFile
             } catch {
@@ -819,22 +820,22 @@ function Invoke-Uninstall {
                     Remove-Item "$envsPath\envs\alas" -Recurse -Force -ErrorAction SilentlyContinue
                 }
             }
-            Write-Log "OK" "`u{2713} Conda 环境已移除"
+            Write-InstallLog "OK" "`u{2713} Conda 环境已移除"
         } else {
-            Write-Log "INFO" "未检测到 alas 环境，跳过"
+            Write-InstallLog "INFO" "未检测到 alas 环境，跳过"
         }
-        Complete-Step "`u{2714}`u{FE0F}" "虚拟环境已清理"
+        Complete-Step -Icon "`u{2714}`u{FE0F}" "虚拟环境已清理"
     } else {
-        Complete-Step "`u{1F4A1}" "未检测到 Conda，跳过虚拟环境清理" "Green"
+        Complete-Step -Icon "`u{1F4A1}" "未检测到 Conda，跳过虚拟环境清理" "Green"
     }
 
     Start-Step "正在删除启动脚本..."
     if (Test-Path "$ScriptOutDir\run_alas.bat") {
-        Write-Log "EXEC" "`u{25B6} Remove-Item $ScriptOutDir\run_alas.bat"
+        Write-InstallLog "EXEC" "`u{25B6} Remove-Item $ScriptOutDir\run_alas.bat"
         Remove-Item "$ScriptOutDir\run_alas.bat" -Force -ErrorAction SilentlyContinue
-        Complete-Step "`u{2714}`u{FE0F}" "启动脚本已删除"
+        Complete-Step -Icon "`u{2714}`u{FE0F}" "启动脚本已删除"
     } else {
-        Complete-Step "`u{1F4A1}" "启动脚本不存在，跳过" "Green"
+        Complete-Step -Icon "`u{1F4A1}" "启动脚本不存在，跳过" "Green"
     }
 
     Start-Step "正在删除 ALAS 目录..."
@@ -843,30 +844,30 @@ function Invoke-Uninstall {
         if (Test-Path "$InstallDir\.git") {
             try {
                 $originUrl = git -C "$InstallDir" remote get-url origin 2>$null
-            } catch {}
+            } catch { $null = $_ }
         }
 
         if ($originUrl -match 'github\.com[:/]+LmeSzinc/AzurLaneAutoScript(\.git)?$') {
-            Write-Log "OK" "git 远程 URL 验证通过: $originUrl"
+            Write-InstallLog "OK" "git 远程 URL 验证通过: $originUrl"
         } elseif (-not $originUrl) {
-            Write-Log "WARNING" "目录中没有 .git 信息，可能不是完整的 ALAS 仓库，但仍继续删除"
+            Write-InstallLog "WARNING" "目录中没有 .git 信息，可能不是完整的 ALAS 仓库，但仍继续删除"
         } else {
-            Complete-Step "`u{274C}" "目录 $InstallDir 是其他 git 仓库 ($originUrl)，为避免误删将终止卸载" "Red"
+            Complete-Step -Icon "`u{274C}" "目录 $InstallDir 是其他 git 仓库 ($originUrl)，为避免误删将终止卸载" "Red"
             exit 1
         }
 
-        Write-Log "EXEC" "`u{25B6} Remove-Item $InstallDir"
+        Write-InstallLog "EXEC" "`u{25B6} Remove-Item $InstallDir"
         Set-Location $env:USERPROFILE -ErrorAction SilentlyContinue
         Remove-Item $InstallDir -Recurse -Force -ErrorAction SilentlyContinue
-        Complete-Step "`u{2714}`u{FE0F}" "目录已删除"
+        Complete-Step -Icon "`u{2714}`u{FE0F}" "目录已删除"
     } else {
-        Complete-Step "`u{1F4A1}" "ALAS 目录已不存在，跳过" "Green"
+        Complete-Step -Icon "`u{1F4A1}" "ALAS 目录已不存在，跳过" "Green"
     }
 
     if (-not $KeepLog) {
         $logFiles = Get-ChildItem "$env:TEMP\alas_install_$pid*.log" -ErrorAction SilentlyContinue
         foreach ($f in $logFiles) {
-            Write-Log "INFO" "清理日志文件: $($f.FullName)"
+            Write-InstallLog "INFO" "清理日志文件: $($f.FullName)"
             Remove-Item $f.FullName -Force -ErrorAction SilentlyContinue
         }
     }
@@ -883,14 +884,14 @@ function Main {
     }
 
     if ($Uninstall) {
-        Test-Prerequisites
+        Test-Prerequisite
         Get-SystemInfo
         Show-Header
         Invoke-Uninstall
         exit 0
     }
 
-    Test-Prerequisites
+    Test-Prerequisite
     Get-SystemInfo
     Show-Header
 
@@ -909,11 +910,11 @@ function Main {
     if (-not $KeepLog) {
         $logFiles = Get-ChildItem "$env:TEMP\alas_install_$pid*.log" -ErrorAction SilentlyContinue
         foreach ($f in $logFiles) {
-            Write-Log "INFO" "安装完成，清理日志文件: $($f.FullName)"
+            Write-InstallLog "INFO" "安装完成，清理日志文件: $($f.FullName)"
             Remove-Item $f.FullName -Force -ErrorAction SilentlyContinue
         }
     } else {
-        Write-Log "INFO" "安装完成，日志已保存至: $LogFile"
+        Write-InstallLog "INFO" "安装完成，日志已保存至: $LogFile"
         Write-Host "  `u{1F4A1}  日志已保存至：$LogFile"
     }
     $global:LASTEXITCODE = 0
