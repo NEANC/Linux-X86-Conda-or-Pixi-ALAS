@@ -1,0 +1,37 @@
+services:
+  alas:
+    image: ghcr.io/neanc/alas-pixi-alpine:latest
+    container_name: alas
+    restart: unless-stopped
+
+    environment:
+      - ALAS_DIR=/alas
+      - DEPLOY_TEMPLATE=config/deploy.template-linux.yaml
+
+    volumes:
+      # 将宿主机上的 AzurLaneAutoScript 目录挂载到容器内
+      # 请将左侧路径替换为实际的 ALAS 仓库路径
+      - ./AzurLaneAutoScript:/alas
+
+      # 可选: 将 Pixi 虚拟环境分离到独立卷 (避免污染 ALAS 仓库)
+      # 取消下方注释并注释上面一行的 /alas 挂载中的 .pixi 部分
+      # - alas-pixi-env:/alas/.pixi
+
+    ports:
+      - "22267:22267"
+
+    # 可选: 传递 USB 设备以连接安卓模拟器/手机
+    # devices:
+    #   - /dev/bus/usb:/dev/bus/usb
+
+    # 可选: 使用 privileged 模式 (某些 ADB 场景需要)
+    # privileged: true
+
+    # 可选: 启用国内镜像源
+    # environment:
+    #   - DEPLOY_TEMPLATE=config/deploy.template-linux-cn.yaml
+
+# 可选: 分离的 Pixi 环境卷
+# volumes:
+#   alas-pixi-env:
+#     driver: local
