@@ -2,6 +2,23 @@ name: 自动测试
 
 on:
   workflow_dispatch:
+    inputs:
+      run_all:
+        description: '运行全部测试'
+        type: boolean
+        default: false
+      os_linux:
+        description: '运行 Linux 测试'
+        type: boolean
+        default: false
+      os_windows:
+        description: '运行 Windows 测试'
+        type: boolean
+        default: false
+      os_macos:
+        description: '运行 macOS 测试'
+        type: boolean
+        default: false
   push:
     branches: [ master ]
     paths:
@@ -15,26 +32,239 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: 检测提交内脚本变更
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      linux_matrix: ${{ steps.matrix.outputs.linux_matrix }}
+      windows_matrix: ${{ steps.matrix.outputs.windows_matrix }}
+      macos_matrix: ${{ steps.matrix.outputs.macos_matrix }}
+      linux_any: ${{ steps.matrix.outputs.linux_any }}
+      windows_any: ${{ steps.matrix.outputs.windows_any }}
+      macos_any: ${{ steps.matrix.outputs.macos_any }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: 获取本次提交/推送内变更文件
+        id: changed
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+            git fetch origin "$BASE"
+            git diff --name-only "$BASE" HEAD > changed_files.txt
+            echo "PR 变更范围: $BASE .. HEAD（整个 PR）"
+          elif [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            BEFORE="$(jq -r '.before // empty' "$GITHUB_EVENT_PATH")"
+            AFTER="$(jq -r '.after // empty' "$GITHUB_EVENT_PATH")"
+
+            if [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+              git diff --name-only "$BEFORE" "$AFTER" > changed_files.txt
+              echo "Push 变更范围: $BEFORE .. $AFTER"
+            else
+              git diff-tree --root --no-commit-id --name-only -r HEAD > changed_files.txt
+              echo "Push 变更范围: 初始提交 (root)"
+            fi
+          else
+            git diff-tree --root --no-commit-id --name-only -r HEAD > changed_files.txt
+            echo "变更范围: 当前 HEAD 提交"
+          fi
+
+          echo "Changed files:"
+          cat changed_files.txt
+
+      - name: 构建动态 Matrix
+        id: matrix
+        shell: bash
+        env:
+          RUN_ALL: ${{ github.event.inputs.run_all || 'false' }}
+          RUN_LINUX: ${{ github.event.inputs.os_linux || 'false' }}
+          RUN_WINDOWS: ${{ github.event.inputs.os_windows || 'false' }}
+          RUN_MACOS: ${{ github.event.inputs.os_macos || 'false' }}
+        run: |
+          set -euo pipefail
+
+          python3 <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          changed = set(Path("changed_files.txt").read_text().splitlines())
+          run_all = os.getenv("RUN_ALL") == "true"
+          run_linux = os.getenv("RUN_LINUX") == "true"
+          run_windows = os.getenv("RUN_WINDOWS") == "true"
+          run_macos = os.getenv("RUN_MACOS") == "true"
+
+          def enabled(path: str) -> bool:
+              return run_all or path in changed
+
+          linux = []
+          windows = []
+          macos = []
+
+          conda_linux_path = "Shell/conda_alas_install.sh"
+          pixi_linux_path = "Shell/pixi_alas_install.sh"
+          conda_windows_path = "Shell/win_conda_alas_install.ps1"
+          pixi_windows_path = "Shell/win_pixi_install.ps1"
+          conda_macos_path = "Shell/arm_mac_conda_alas_install.sh"
+          pixi_macos_path = "Shell/arm_mac_pixi_alas_install.sh"
+
+          if enabled(conda_linux_path) or run_linux:
+              linux.append({
+                  "name": "Conda Ubuntu",
+                  "script": "conda_alas_install.sh",
+                  "flags": "--debug",
+                  "verify": "environment.yml",
+                  "start": 'cd "$ALAS_DIR" && bash ./run_alas.sh'
+              })
+
+          if enabled(pixi_linux_path) or run_linux:
+              linux.append({
+                  "name": "Pixi Ubuntu",
+                  "script": "pixi_alas_install.sh",
+                  "flags": "--debug",
+                  "verify": "pixi.toml",
+                  "start": 'cd "$ALAS_DIR" && "$HOME/.pixi/bin/pixi" run python gui.py'
+              })
+
+          if enabled(conda_windows_path) or run_windows:
+              windows.append({
+                  "name": "Conda Windows",
+                  "script": "win_conda_alas_install.ps1",
+                  "flags": "--debug",
+                  "verify": "environment.windows.generated.yml",
+                  "uninstall_flags": "--debug --uninstall -y"
+              })
+
+          if enabled(pixi_windows_path) or run_windows:
+              windows.append({
+                  "name": "Pixi Windows",
+                  "script": "win_pixi_install.ps1",
+                  "flags": "--debug",
+                  "verify": "pixi.toml",
+                  "uninstall_flags": "--debug --uninstall -y"
+              })
+
+          if enabled(conda_macos_path) or run_macos:
+              macos.append({
+                  "name": "Conda macOS",
+                  "script": "arm_mac_conda_alas_install.sh",
+                  "flags": "--debug",
+                  "verify": "environment.yml"
+              })
+
+          if enabled(pixi_macos_path) or run_macos:
+              macos.append({
+                  "name": "Pixi macOS",
+                  "script": "arm_mac_pixi_alas_install.sh",
+                  "flags": "--debug",
+                  "verify": "pixi.toml"
+              })
+
+          SCRIPT_MAP = {
+              "Linux": {
+                  "Conda Ubuntu": conda_linux_path,
+                  "Pixi Ubuntu": pixi_linux_path,
+              },
+              "Windows": {
+                  "Conda Windows": conda_windows_path,
+                  "Pixi Windows": pixi_windows_path,
+              },
+              "macOS": {
+                  "Conda macOS": conda_macos_path,
+                  "Pixi macOS": pixi_macos_path,
+              },
+          }
+
+          OS_RUN_KEYS = {
+              "Linux": run_linux,
+              "Windows": run_windows,
+              "macOS": run_macos,
+          }
+
+          print("=" * 55)
+          print("Matrix 处理结果报告")
+          print("=" * 55)
+
+          if run_all:
+              print("触发模式: 手动触发 (run_all=true) - 忽略变更检测")
+
+          if not run_all and any(OS_RUN_KEYS.values()):
+              selected = [k for k, v in OS_RUN_KEYS.items() if v]
+              print(f"手动指定系统: {', '.join(selected)}")
+
+          if changed:
+              print(f"本次变更文件 ({len(changed)} 个):")
+              for f_path in sorted(changed):
+                  print(f"  - {f_path}")
+          else:
+              print("本次变更: 无 Shell 脚本变更")
+
+          print("-" * 55)
+
+          total_runs = 0
+          total_skips = 0
+          for os_name, scripts in SCRIPT_MAP.items():
+              print(f"[{os_name}]")
+              for script_name, script_path in scripts.items():
+                  reasons = []
+                  if run_all:
+                      reasons.append("run_all")
+                  if script_path in changed:
+                      reasons.append("文件变更")
+                  if OS_RUN_KEYS[os_name]:
+                      reasons.append(f"手动指定系统({os_name})")
+
+                  if reasons:
+                      print(f"  \u2713 {script_name} - 运行 ({', '.join(reasons)})")
+                      total_runs += 1
+                  else:
+                      print(f"  \u2717 {script_name} - 跳过 (无变更/未选中)")
+                      total_skips += 1
+
+          print("-" * 55)
+          print(f"总计: {total_runs} 个测试将运行, {total_skips} 个跳过")
+          print("=" * 55)
+
+          matrices = {
+              "linux": linux,
+              "windows": windows,
+              "macos": macos,
+          }
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              for key, value in matrices.items():
+                  matrix = {"include": value}
+                  f.write(f"{key}_matrix={json.dumps(matrix, separators=(',', ':'))}\n")
+                  f.write(f"{key}_any={'true' if value else 'false'}\n")
+          PY
+
   # Linux 部署测试
   deploy-linux:
     name: ${{ matrix.name }}
+    needs: changes
+    if: ${{ needs.changes.outputs.linux_any == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
       CONDA_PLUGINS_AUTO_ACCEPT_TOS: yes
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - { name: "Conda Ubuntu", script: conda_alas_install.sh, flags: "--debug", verify: environment.yml, start: 'cd "$ALAS_DIR" && bash ./run_alas.sh' }
-          - { name: "Pixi Ubuntu", script: pixi_alas_install.sh, flags: "--debug", verify: pixi.toml, start: 'cd "$ALAS_DIR" && "$HOME/.pixi/bin/pixi" run python gui.py' }
+      matrix: ${{ fromJson(needs.changes.outputs.linux_matrix) }}
 
     steps:
       - uses: actions/checkout@v6
       - name: Run deployment
         run: sudo -E bash Shell/${{ matrix.script }} ${{ matrix.flags }} 2>&1
       - name: Stop systemd & start ALAS manually (head 150)
-        if: always()
+        if: ${{ always() }}
         run: |
           echo "=== Stopping systemd service ==="
           sudo systemctl stop run_alas.service 2>&1 || true
@@ -80,28 +310,132 @@ jobs:
             echo "ERROR: ALAS directory not found at ${ALAS_DIR} (deploy may have failed)"
             exit 1
           fi
-
       - name: Uninstall
-        if: always()
+        if: ${{ always() }}
         run: sudo bash Shell/${{ matrix.script }} --debug --uninstall -y 2>&1
+
+  # Windows 部署测试
+  deploy-windows:
+    name: ${{ matrix.name }}
+    needs: changes
+    if: ${{ needs.changes.outputs.windows_any == 'true' }}
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      CONDA_PLUGINS_AUTO_ACCEPT_TOS: yes
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.changes.outputs.windows_matrix) }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run deployment
+        run: ./Shell/${{ matrix.script }} ${{ matrix.flags }} 2>&1
+      - name: Start ALAS manually (head 150)
+        if: ${{ always() }}
+        shell: pwsh
+        run: |
+          Write-Output "=== Starting ALAS via run_alas.bat ==="
+          $ALAS_DIR = "$env:USERPROFILE\AzurLaneAutoScript"
+          $launcher = Join-Path $ALAS_DIR "run_alas.bat"
+
+          if (-not ((Test-Path -LiteralPath $ALAS_DIR) -and (Test-Path -LiteralPath "$ALAS_DIR\${{ matrix.verify }}"))) {
+            Write-Output "ERROR: ALAS directory not found at $ALAS_DIR (deploy may have failed)"
+            exit 1
+          }
+
+          $proc = Start-Process -NoNewWindow -PassThru `
+            -RedirectStandardOutput "$env:TEMP\alas_run.log" `
+            -RedirectStandardError "$env:TEMP\alas_run_err.log" `
+            -FilePath "cmd.exe" `
+            -ArgumentList "/c", "`"$launcher`""
+          $ALAS_PID = $proc.Id
+          Write-Output "ALAS PID: $ALAS_PID ($ALAS_DIR)"
+
+          Start-Sleep -Seconds 40
+
+          $exitCode = $null
+          if (-not $proc.HasExited) {
+            Write-Output "ALAS is still running after 40s"
+            try {
+              $resp = Invoke-WebRequest -Uri "http://127.0.0.1:22267" -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
+              Write-Output "WebUI health check: HTTP $($resp.StatusCode) - OK"
+            } catch {
+              Write-Output "WARNING: WebUI health check failed: $_"
+            }
+            Write-Output "Stopping test process..."
+            Stop-Process -Id $ALAS_PID -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 2
+            $exitCode = 0
+          } else {
+            $exitCode = $proc.ExitCode
+            Write-Output "ALAS exited early. Exit code: $exitCode"
+          }
+
+          Write-Output "=== ALAS output (first 150 lines) ==="
+          $logContent = ""
+          if (Test-Path "$env:TEMP\alas_run.log") {
+            Get-Content "$env:TEMP\alas_run.log" -TotalCount 150 | Write-Output
+            $logContent = Get-Content "$env:TEMP\alas_run.log" -Raw -ErrorAction SilentlyContinue
+          } else {
+            Write-Output "(stdout is empty)"
+          }
+          if (Test-Path "$env:TEMP\alas_run_err.log") {
+            $errContent = Get-Content "$env:TEMP\alas_run_err.log" -Raw -ErrorAction SilentlyContinue
+            if ($errContent) {
+              Write-Output "=== ALAS stderr ==="
+              Get-Content "$env:TEMP\alas_run_err.log" -TotalCount 50 | Write-Output
+              $logContent = "$logContent`n$errContent"
+            }
+          }
+
+          if ($logContent -match "(?i)(can't open file|No such file or directory|Traceback|ModuleNotFoundError|ImportError)") {
+            Write-Output "ERROR: ALAS startup log contains fatal error"
+            exit 1
+          }
+
+          if ($null -ne $exitCode -and $exitCode -ne 0) {
+            Write-Output "ERROR: ALAS exited early with non-zero status $exitCode"
+            exit $exitCode
+          }
+
+          Remove-Item "$env:TEMP\alas_run.log" -Force -ErrorAction SilentlyContinue
+          Remove-Item "$env:TEMP\alas_run_err.log" -Force -ErrorAction SilentlyContinue
+      - name: Uninstall
+        if: ${{ always() }}
+        shell: pwsh
+        run: ./Shell/${{ matrix.script }} ${{ matrix.uninstall_flags }} 2>&1
+      - name: Upload logs on failure
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}-logs
+          path: |
+            ${{ runner.temp }}/alas_install*.log
+            ${{ runner.temp }}/alas_run*.log
+            ~/AzurLaneAutoScript/environment.yml
+            ~/AzurLaneAutoScript/pixi.toml
+            ~/AzurLaneAutoScript/environment.windows.generated.yml
+            ~/AzurLaneAutoScript/config/deploy.yaml
 
   # macOS 部署测试
   deploy-macos:
     name: ${{ matrix.name }}
+    needs: changes
+    if: ${{ needs.changes.outputs.macos_any == 'true' }}
     runs-on: macos-latest
     timeout-minutes: 15
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - { name: "Conda macOS",  script: arm_mac_conda_alas_install.sh,  flags: "--debug",  verify: environment.yml }
-          - { name: "Pixi macOS",   script: arm_mac_pixi_alas_install.sh,   flags: "--debug",  verify: pixi.toml }
+      matrix: ${{ fromJson(needs.changes.outputs.macos_matrix) }}
     steps:
       - uses: actions/checkout@v6
       - name: Run deployment
         run: bash Shell/${{ matrix.script }} ${{ matrix.flags }} 2>&1
       - name: Stop launchctl & start ALAS manually (head 150)
-        if: always()
+        if: ${{ always() }}
         run: |
           echo "=== Stopping launchctl service ==="
           launchctl stop com.alas.run 2>&1 || true
@@ -123,5 +457,5 @@ jobs:
             exit 1
           fi
       - name: Uninstall
-        if: always()
+        if: ${{ always() }}
         run: bash Shell/${{ matrix.script }} --debug --uninstall -y 2>&1
