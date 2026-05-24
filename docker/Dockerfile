@@ -16,7 +16,7 @@ RUN chmod +x /tmp/builder-proxy.sh
 
 # 步骤1：安装系统依赖（启用 community 仓库以支持 gcompat）
 RUN set -eu; \
-    /tmp/builder-proxy.sh; \
+    . /tmp/builder-proxy.sh; \
     echo "https://dl-cdn.alpinelinux.org/alpine/v$(cut -d. -f1,2 /etc/alpine-release)/community" >> /etc/apk/repositories; \
     apk update; \
     apk add --no-cache \
@@ -30,12 +30,12 @@ RUN set -eu; \
 
 # 步骤2：安装 gcompat（glibc 兼容层）
 RUN set -eu; \
-    /tmp/builder-proxy.sh; \
+    . /tmp/builder-proxy.sh; \
     apk add --no-cache gcompat
 
 # 步骤3：安装 sgerrand glibc（conda linux-64 Python 运行时依赖）
 RUN set -eu; \
-    /tmp/builder-proxy.sh; \
+    . /tmp/builder-proxy.sh; \
     mkdir -p /etc/apk/keys /lib64 /tmp/glibc; \
     curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 180 \
         -o /etc/apk/keys/sgerrand.rsa.pub \
@@ -55,7 +55,7 @@ RUN set -eu; \
 
 # 步骤4：安装 Pixi
 RUN set -eu; \
-    /tmp/builder-proxy.sh; \
+    . /tmp/builder-proxy.sh; \
     curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 180 \
         -o /tmp/pixi-install.sh \
         https://pixi.sh/install.sh; \
@@ -69,7 +69,7 @@ RUN mkdir -p /opt/alas-pixi-env
 COPY Pixi/pixi.toml /opt/alas-pixi-env/pixi.toml
 
 RUN set -eu; \
-    /tmp/builder-proxy.sh; \
+    . /tmp/builder-proxy.sh; \
     cd /opt/alas-pixi-env; \
     pixi install --manifest-path pixi.toml; \
     ./.pixi/envs/default/bin/python -V
@@ -90,7 +90,7 @@ ARG NO_PROXY
 ENV LANG=C.UTF-8 \
     PATH="/root/.pixi/bin:${PATH}" \
     CONDA_OVERRIDE_GLIBC="2.28" \
-    ALAS_DIR="/alas" \
+    ALAS_DIR="/AzurLaneAutoScript" \
     ALAS_PIXI_PREBUILT="/opt/alas-pixi-env"
 
 COPY --from=builder /usr/glibc-compat /usr/glibc-compat
@@ -102,7 +102,7 @@ COPY docker/builder-proxy.sh /tmp/builder-proxy.sh
 RUN chmod +x /tmp/builder-proxy.sh
 
 RUN set -eu; \
-    /tmp/builder-proxy.sh; \
+    . /tmp/builder-proxy.sh; \
     echo "https://dl-cdn.alpinelinux.org/alpine/v$(cut -d. -f1,2 /etc/alpine-release)/community" >> /etc/apk/repositories; \
     apk update; \
     apk add --no-cache \
@@ -120,7 +120,7 @@ RUN set -eu; \
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
-WORKDIR /alas
+WORKDIR /AzurLaneAutoScript
 
 EXPOSE 22267
 

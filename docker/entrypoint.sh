@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-ALAS_DIR="${ALAS_DIR:-/alas}"
+ALAS_DIR="${ALAS_DIR:-/AzurLaneAutoScript}"
 DEPLOY_TEMPLATE="${DEPLOY_TEMPLATE:-config/deploy.template-linux.yaml}"
 
 log()     { printf '%b\n' "  [INFO]  $1"; }
@@ -9,13 +9,19 @@ log_ok()  { printf '%b\n' "  [OK]    $1"; }
 log_warn(){ printf '%b\n' "  [WARN]  $1"; }
 log_err() { printf '%b\n' "  [ERROR] $1"; }
 
-generate_pixi_toml() {
-    _gp_template="${ALAS_PIXI_PREBUILT:-/opt/alas-pixi-env}/pixi.toml"
-    if [ ! -f "${_gp_template}" ]; then
-        log_err "pixi.toml 模板不存在: ${_gp_template}"
-        exit 1
-    fi
-    log "正在生成 pixi.toml ..."
+_pixi_toml_valid() {
+    _pv_file="$1"
+    [ -f "${_pv_file}" ] || return 1
+    grep -qE '^\[workspace\]'     "${_pv_file}" || return 1
+    grep -qE '^\[dependencies\]'  "${_pv_file}" || return 1
+    grep -qE '^\[pypi-dependencies\]' "${_pv_file}" || return 1
+    grep -qE '^\[tasks\]'         "${_pv_file}" || return 1
+    grep -qE '^\s*start\s*='      "${_pv_file}" || return 1
+    return 0
+}
+
+_generate_pixi_toml_fallback() {
+    log "使用内置后备模板生成 pixi.toml"
     cat > "${ALAS_DIR}/pixi.toml" << 'PIXI_EOF'
 [workspace]
 channels = ["conda-forge"]
@@ -73,6 +79,25 @@ pywebio = "==1.6.2"
 zerorpc = "==0.6.3"
 alas-webapp = "==0.3.7"
 PIXI_EOF
+}
+
+generate_pixi_toml() {
+    _gp_template="${ALAS_PIXI_PREBUILT:-/opt/alas-pixi-env}/pixi.toml"
+
+    if _pixi_toml_valid "${_gp_template}"; then
+        log "正在从预构建模板复制 pixi.toml ..."
+        cp "${_gp_template}" "${ALAS_DIR}/pixi.toml"
+        log_ok "pixi.toml 已生成"
+        return 0
+    fi
+
+    if [ -f "${_gp_template}" ]; then
+        log_warn "预构建 pixi.toml 模板损坏，回退到内置后备模板"
+    else
+        log_warn "预构建 pixi.toml 模板不存在，回退到内置后备模板"
+    fi
+
+    _generate_pixi_toml_fallback
     log_ok "pixi.toml 已生成"
 }
 
@@ -106,7 +131,7 @@ use_prebuilt_pixi_env() {
     cp "${_up_prebuilt}/pixi.lock" pixi.lock
 
     if [ -x .pixi/envs/default/bin/python ] && .pixi/envs/default/bin/python -V >/dev/null 2>&1; then
-        log_ok "预构建环境部署成功（秒级就绪）"
+        log_ok "预构建环境部署成功"
         return 0
     fi
 

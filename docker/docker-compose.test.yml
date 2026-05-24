@@ -4,11 +4,11 @@ services:
     container_name: alas-test
 
     environment:
-      - ALAS_DIR=/alas
+      - ALAS_DIR=/AzurLaneAutoScript
       - DEPLOY_TEMPLATE=config/deploy.template-linux.yaml
 
     volumes:
-      - ${ALAS_REPO_PATH:-./AzurLaneAutoScript}:/alas
+      - ${ALAS_REPO_PATH:-./AzurLaneAutoScript}:/AzurLaneAutoScript
 
     ports:
       - "22267:22267"
