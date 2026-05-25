@@ -113,8 +113,8 @@ $Uninstall = $false
 $UninstallYes = $false
 $KeepLog = $false
 $Debug = $false
-$SkipService = $true
-$CreateService = $false
+$SkipService = $false
+$CreateService = $true
 
 function Show-Usage {
     @"
@@ -127,8 +127,7 @@ function Show-Usage {
   --uninstall [--yes]     反向安装：停止并删除 ALAS、虚拟环境
   -l, --log               保留安装日志，不自动删除
   --debug                 调试模式，日志将实时输出至终端
-  --service               创建当前用户登录时启动的计划任务
-  -S, --skip-service      跳过自启配置 (默认)
+  -S, --setup-service     创建当前用户登录时启动的计划任务
   -h, --help              显示帮助信息
 "@
 }
@@ -184,9 +183,8 @@ for ($i = 0; $i -lt $args.Count; $i++) {
         "--log"    { $KeepLog = $true; break }
         "--debug"  { $Debug = $true; break }
         "-debug"   { $Debug = $true; break }
-        "--service"      { $CreateService = $true; $SkipService = $false; break }
-        "-S"             { $SkipService = $true; break }
-        "--skip-service" { $SkipService = $true; break }
+        "--setup-service"      { $CreateService = $true; $SkipService = $false; break }
+        "-S"             { $CreateService = $true; $SkipService = $false; break }
         "-h"     { Show-Usage; exit 0 }
         "--help" { Show-Usage; exit 0 }
         default  { Write-ErrorMsg "未知参数: $($args[$i])"; Show-Usage; exit 1 }
