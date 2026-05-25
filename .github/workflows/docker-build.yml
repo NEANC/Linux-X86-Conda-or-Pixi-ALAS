@@ -3,7 +3,7 @@ name: Docker 构建与发布
 on:
   push:
     tags:
-      - "v*"
+      - "v*.*.*"
   pull_request:
     paths:
       - "Docker/**"
@@ -44,7 +44,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: 压扁镜像为单层
+      - name: 转换镜像为单层
         run: |
           set -eu
 
@@ -58,7 +58,7 @@ jobs:
           echo "rootfs tar 大小: ${_size_human}"
 
           echo ""
-          echo "========== 导入为压扁镜像 =========="
+          echo "========== 导入为单层镜像 =========="
           docker import /tmp/alas-rootfs.tar alas-pixi-alpine:flat-rootfs
           rm -f /tmp/alas-rootfs.tar
 
@@ -76,7 +76,7 @@ jobs:
       - name: 导出镜像为产物
         run: |
           set -eu
-          echo "========== 导出压扁镜像 =========="
+          echo "========== 导出单层镜像 =========="
           docker save ${{ env.IMAGE_TAG }} | gzip > "${{ env.ARTIFACT_NAME }}"
 
           _size_gz=$(stat -c '%s' "${{ env.ARTIFACT_NAME }}" 2>/dev/null || echo "?")
@@ -178,9 +178,8 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=ref,event=tag
+            type=semver,pattern={{raw}}
             type=sha,prefix=,format=short
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/') }}
             type=raw,value=pr-${{ github.event.number }},enable=${{ github.event_name == 'pull_request' }}
 
       - name: 下载镜像产物
@@ -198,11 +197,10 @@ jobs:
         run: |
           set -eu
 
-          echo "========== 推送压扁镜像 =========="
-          IFS=',' read -ra TAGS <<< "${{ steps.meta.outputs.tags }}"
-          for tag in "${TAGS[@]}"; do
-            _tag=$(echo "${tag}" | xargs)
-            echo "  打标签并推送: ${_tag}"
-            docker tag ${{ env.IMAGE_TAG }} "${_tag}"
-            docker push "${_tag}"
-          done
+          echo "========== 推送单层镜像 =========="
+          while IFS= read -r tag; do
+            [ -n "$tag" ] || continue
+            echo "打标签并推送: ${tag}"
+            docker tag ${{ env.IMAGE_TAG }} "${tag}"
+            docker push "${tag}"
+          done <<< "${{ steps.meta.outputs.tags }}"
