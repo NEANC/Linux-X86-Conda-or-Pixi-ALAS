@@ -3,11 +3,13 @@ name: Static Analysis
 on:
   push:
     paths:
-      - "Shell/**"
+      - "**.sh"
+      - "**.ps1"
       - ".github/workflows/static-analysis.yml"
   pull_request:
     paths:
-      - "Shell/**"
+      - "**.sh"
+      - "**.ps1"
       - ".github/workflows/static-analysis.yml"
   workflow_dispatch:
 
@@ -18,12 +20,14 @@ concurrency:
 jobs:
   changes:
     name: 检测变更脚本
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: read
     outputs:
-      any_changed: ${{ steps.changed.outputs.any_changed }}
+      shell_any: ${{ steps.changed.outputs.shell_any }}
+      ps1_any: ${{ steps.changed.outputs.ps1_any }}
       shell_files: ${{ steps.changed.outputs.shell_files }}
       ps1_files: ${{ steps.changed.outputs.ps1_files }}
     steps:
@@ -45,39 +49,42 @@ jobs:
             BEFORE="$(jq -r '.before // empty' "$GITHUB_EVENT_PATH")"
             AFTER="$(jq -r '.after // empty' "$GITHUB_EVENT_PATH")"
             if [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
-              git diff --name-only "$BEFORE" "$AFTER" > changed_files.txt
+              git fetch origin "$BEFORE" 2>/dev/null || true
+              if git cat-file -e "$BEFORE" 2>/dev/null; then
+                git diff --name-only "$BEFORE" "$AFTER" > changed_files.txt
+              else
+                git diff-tree --root --no-commit-id --name-only -r HEAD > changed_files.txt
+              fi
             else
               git diff-tree --root --no-commit-id --name-only -r HEAD > changed_files.txt
             fi
-          else
-            echo "Manual trigger — 检查所有 Shell/ 脚本" >> "$GITHUB_STEP_SUMMARY"
           fi
 
-          if [ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ]; then
-            _shell_files=$(grep '^Shell/.*\.sh$' changed_files.txt 2>/dev/null | tr '\n' ' ' | xargs || true)
-            _ps1_files=$(grep '^Shell/.*\.ps1$' changed_files.txt 2>/dev/null | tr '\n' ' ' | xargs || true)
+          _shell_files=$(grep '\.sh$' changed_files.txt 2>/dev/null | tr '\n' ' ' | xargs || true)
+          _ps1_files=$(grep '\.ps1$' changed_files.txt 2>/dev/null | tr '\n' ' ' | xargs || true)
 
-            echo "变更的 .sh 文件: ${_shell_files:-（无）}" >> "$GITHUB_STEP_SUMMARY"
-            echo "变更的 .ps1 文件: ${_ps1_files:-（无）}" >> "$GITHUB_STEP_SUMMARY"
+          echo "变更的 .sh 文件: ${_shell_files:-（无）}" >> "$GITHUB_STEP_SUMMARY"
+          echo "变更的 .ps1 文件: ${_ps1_files:-（无）}" >> "$GITHUB_STEP_SUMMARY"
 
-            if [ -z "${_shell_files}" ] && [ -z "${_ps1_files}" ]; then
-              echo "any_changed=false" >> "$GITHUB_OUTPUT"
-            else
-              echo "any_changed=true" >> "$GITHUB_OUTPUT"
-            fi
-
-            echo "shell_files=${_shell_files}" >> "$GITHUB_OUTPUT"
-            echo "ps1_files=${_ps1_files}" >> "$GITHUB_OUTPUT"
+          if [ -z "${_shell_files}" ]; then
+            echo "shell_any=false" >> "$GITHUB_OUTPUT"
           else
-            echo "any_changed=true" >> "$GITHUB_OUTPUT"
-            echo "shell_files=" >> "$GITHUB_OUTPUT"
-            echo "ps1_files=" >> "$GITHUB_OUTPUT"
+            echo "shell_any=true" >> "$GITHUB_OUTPUT"
           fi
+
+          if [ -z "${_ps1_files}" ]; then
+            echo "ps1_any=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ps1_any=true" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "shell_files=${_shell_files}" >> "$GITHUB_OUTPUT"
+          echo "ps1_files=${_ps1_files}" >> "$GITHUB_OUTPUT"
 
   shellcheck:
     name: ShellCheck
     needs: changes
-    if: needs.changes.outputs.any_changed == 'true'
+    if: always() && (github.event_name == 'workflow_dispatch' || needs.changes.outputs.shell_any == 'true')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -91,7 +98,8 @@ jobs:
           if [ -n "${SHELL_FILES}" ]; then
             _files="${SHELL_FILES}"
           else
-            _files=$(find Shell -maxdepth 1 -name '*.sh' -type f | tr '\n' ' ')
+            echo "全仓递归扫描 .sh 脚本..."
+            _files=$(find . -name '*.sh' -type f -not -path './.git/*' | tr '\n' ' ')
           fi
 
           if [ -z "${_files}" ]; then
@@ -107,7 +115,7 @@ jobs:
   bash-syntax:
     name: Bash Syntax
     needs: changes
-    if: needs.changes.outputs.any_changed == 'true'
+    if: always() && (github.event_name == 'workflow_dispatch' || needs.changes.outputs.shell_any == 'true')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -121,7 +129,8 @@ jobs:
           if [ -n "${SHELL_FILES}" ]; then
             _files="${SHELL_FILES}"
           else
-            _files=$(find Shell -maxdepth 1 -name '*.sh' -type f | tr '\n' ' ')
+            echo "全仓递归扫描 .sh 脚本..."
+            _files=$(find . -name '*.sh' -type f -not -path './.git/*' | tr '\n' ' ')
           fi
 
           if [ -z "${_files}" ]; then
@@ -140,7 +149,7 @@ jobs:
   psanalyzer:
     name: PSScriptAnalyzer
     needs: changes
-    if: needs.changes.outputs.any_changed == 'true'
+    if: always() && (github.event_name == 'workflow_dispatch' || needs.changes.outputs.ps1_any == 'true')
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
@@ -162,9 +171,10 @@ jobs:
           PS1_FILES: ${{ needs.changes.outputs.ps1_files }}
         run: |
           if ($env:PS1_FILES) {
-            $files = $env:PS1_FILES -split '\s+' | Where-Object { $_ }
+            $files = $env:PS1_FILES -split '\s+' | Where-Object { $_ } | ForEach-Object { $_.Trim() }
           } else {
-            $files = Get-ChildItem -Path Shell\ -Filter *.ps1 | ForEach-Object { $_.FullName }
+            Write-Host "全仓递归扫描 .ps1 脚本..."
+            $files = @(Get-ChildItem -Recurse -Filter *.ps1 | Where-Object { $_.FullName -notmatch '\\.git\\' } | ForEach-Object { $_.FullName })
           }
 
           if (-not $files) {
@@ -175,7 +185,7 @@ jobs:
           Write-Host "检查以下文件:"
           $files | ForEach-Object { Write-Host "  $_" }
 
-          $results = Invoke-ScriptAnalyzer -Path $files -Settings .psanalyzer.psd1
+          $results = $files | Invoke-ScriptAnalyzer -Settings .psanalyzer.psd1
           if ($results) {
             $results | Format-Table -AutoSize
             Write-Host "::error::PSScriptAnalyzer found issues"
