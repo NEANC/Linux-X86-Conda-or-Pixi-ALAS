@@ -1,9 +1,5 @@
 # Linux-X86-Conda-or-Pixi-ALAS
 
-> [!IMPORTANT]
-> 本文测试环境为 PVE 下的 LXC Debian 13 X86_64，其他版本的 Linux 可能会有些许差异，但整体步骤基本相同；  
-> 由于 Linux 发行版众多，无法保证每个发行版都能完全适用，若遇到问题请提交 Issues
-
 > [!TIP]
 > 现提供 Shell 脚本，请前往 [Shell 脚本库](./Shell/README.md) 查看详细说明  
 > 现提供 Docker 镜像，请前往 [Docker 镜像库](./Docker/README.md) 查看详细说明
