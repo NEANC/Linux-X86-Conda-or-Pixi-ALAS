@@ -72,7 +72,15 @@ RUN set -eu; \
     . /tmp/builder-proxy.sh; \
     cd /opt/alas-pixi-env; \
     pixi install --manifest-path pixi.toml; \
-    ./.pixi/envs/default/bin/python -V
+    ./.pixi/envs/default/bin/python -V; \
+    _pe=".pixi/envs/default"; \
+    find "${_pe}" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true; \
+    find "${_pe}" -type d -name tests -exec rm -rf {} + 2>/dev/null || true; \
+    find "${_pe}" -type d -name test -exec rm -rf {} + 2>/dev/null || true; \
+    rm -rf "${_pe}/share" "${_pe}/include" 2>/dev/null || true; \
+    find "${_pe}" -name '*.a' -delete 2>/dev/null || true; \
+    find "${_pe}" -name '*.la' -delete 2>/dev/null || true; \
+    rm -rf /root/.cache/pip /root/.cache/pixi 2>/dev/null || true
 
 
 # 运行阶段：仅保留运行时必需的文件
