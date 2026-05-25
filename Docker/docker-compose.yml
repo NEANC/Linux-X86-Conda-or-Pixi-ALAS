@@ -1,0 +1,35 @@
+services:
+  alas:
+    image: ghcr.io/neanc/alas-pixi-alpine:latest
+    container_name: alas
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Shanghai
+      - DEPLOY_TEMPLATE=config/deploy.template-linux.yaml
+
+      # 代理配置，不配置则直连
+      # - HTTP_PROXY=http://proxy:8080
+      # - HTTPS_PROXY=http://proxy:8080
+      # - NO_PROXY=localhost,127.0.0.1
+
+    volumes:
+      # 将宿主机上的 AzurLaneAutoScript 目录挂载到容器内
+      - ./AzurLaneAutoScript:/AzurLaneAutoScript
+
+      # 分离 Pixi 虚拟环境到独立卷（避免 pixi 虚拟环境写入 ALAS 仓库）
+      - alas-pixi-env:/AzurLaneAutoScript/.pixi
+    networks:
+      - alas-network
+    ports:
+      - "22267:22267"
+
+# 分离的 Pixi 环境卷
+volumes:
+  alas-pixi-env:
+   driver: local
+
+# 网络配置
+networks:
+  alas-network:
+    driver: bridge
+    name: alas-network

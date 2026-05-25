@@ -5,7 +5,8 @@
 > 由于 Linux 发行版众多，无法保证每个发行版都能完全适用，若遇到问题请提交 Issues
 
 > [!TIP]
-> 现提供一键安装 Shell 脚本，请前往 [Shell 脚本库](./Shell/README.md) 查看详细说明
+> 现提供 Shell 脚本，请前往 [Shell 脚本库](./Shell/README.md) 查看详细说明  
+> 现提供 Docker 镜像，请前往 [Docker 镜像库](./Docker/README.md) 查看详细说明
 
 在 X86_64 Linux 中使用 Conda 或 Pixi 安装与配置 [AzurLaneAutoScript](https://github.com/LmeSzinc/AzurLaneAutoScript) 的指南
 
@@ -20,6 +21,7 @@
 1. [Pixi 版本](./Pixi/README.md)
 2. [Conda 版本](./Conda/README.md)
 3. [Shell 脚本](./Shell/README.md)
+4. [Docker 镜像](./Docker/README.md)
 
 ---
 

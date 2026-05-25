@@ -113,9 +113,8 @@ curl -fsSL https://raw.githubusercontent.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/
 ## Windows
 
 > [!IMPORTANT]
-> 请以 **管理员身份** 打开 PowerShell 运行以下命令
->
-> > 已通过 GitHub Actions 的 Windows-latest 环境测试，若遇到问题请提交 Issues
+> 请以 **管理员身份** 打开 PowerShell 运行以下命令  
+> 已通过 GitHub Actions 的 Windows-latest 环境测试，若遇到问题请提交 Issues
 
 ### Pixi 版部署脚本 via PowerShell
 

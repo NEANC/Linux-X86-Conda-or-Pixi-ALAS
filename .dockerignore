@@ -1,0 +1,12 @@
+*
+!Docker/
+!Pixi/
+
+Docker/*
+!Docker/builder-proxy.sh
+!Docker/entrypoint.sh
+!Docker/Dockerfile
+!Docker/Dockerfile.flat
+
+Pixi/*
+!Pixi/pixi.toml
