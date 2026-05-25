@@ -11,7 +11,7 @@ ARG ALPINE_GLIBC_VERSION=2.35-r1
 ENV PATH="/root/.pixi/bin:${PATH}" \
     CONDA_OVERRIDE_GLIBC="2.28"
 
-COPY docker/builder-proxy.sh /tmp/builder-proxy.sh
+COPY Docker/builder-proxy.sh /tmp/builder-proxy.sh
 RUN chmod +x /tmp/builder-proxy.sh
 
 # 步骤1：安装系统依赖（启用 community 仓库以支持 gcompat）
@@ -106,7 +106,7 @@ COPY --from=builder /lib64/ld-linux-x86-64.so.2 /lib64/ld-linux-x86-64.so.2
 COPY --from=builder /root/.pixi /root/.pixi
 COPY --from=builder /opt/alas-pixi-env /opt/alas-pixi-env
 
-COPY docker/builder-proxy.sh /tmp/builder-proxy.sh
+COPY Docker/builder-proxy.sh /tmp/builder-proxy.sh
 RUN chmod +x /tmp/builder-proxy.sh
 
 RUN set -eu; \
@@ -125,7 +125,7 @@ RUN set -eu; \
     update-ca-certificates || true; \
     rm -rf /var/cache/apk/*
 
-COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY Docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
 WORKDIR /AzurLaneAutoScript
