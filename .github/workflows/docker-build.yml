@@ -2,11 +2,6 @@ name: Docker 构建与发布
 
 on:
   push:
-    branches: [master]
-    paths:
-      - "docker/**"
-      - "Pixi/pixi.toml"
-      - ".github/workflows/docker-build.yml"
     tags:
       - "v*"
   pull_request:
@@ -14,6 +9,7 @@ on:
       - "docker/**"
       - "Pixi/pixi.toml"
       - ".github/workflows/docker-build.yml"
+      - "!Docker/*.md"
   workflow_dispatch:
 
 concurrency:
@@ -89,7 +85,7 @@ jobs:
 
           echo ""
           echo "========== 注入容器元数据 =========="
-          docker build -f docker/Dockerfile.flat \
+          docker build -f Docker/Dockerfile.flat \
             --build-arg FLAT_BASE=alas-pixi-alpine:flat-rootfs \
             -t alas-pixi-alpine:ci-test .
 
@@ -112,7 +108,7 @@ jobs:
           set -eu
 
           echo "========== 启动测试容器 =========="
-          docker compose -f docker/docker-compose.test.yml up -d
+          docker compose -f Docker/docker-compose.test.yml up -d
 
           echo ""
           echo "等待 Pixi 环境部署与 ALAS 启动..."
@@ -138,7 +134,7 @@ jobs:
       - name: 清理测试资源
         if: always()
         run: |
-          docker compose -f docker/docker-compose.test.yml down -v 2>/dev/null || true
+          docker compose -f Docker/docker-compose.test.yml down -v 2>/dev/null || true
           docker rm -f alas-test 2>/dev/null || true
 
       - name: 保存压扁镜像为 gzip 产物
