@@ -24,7 +24,7 @@ env:
 
 jobs:
   build-and-test:
-    name: 构建 Docker 镜像并测试
+    name: 构建、压扁、测试并发布
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -63,9 +63,37 @@ jobs:
           file: docker/Dockerfile
           platforms: linux/amd64
           load: true
-          tags: alas-pixi-alpine:ci-test
+          tags: alas-pixi-alpine:ci-build
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: 压扁镜像为单层
+        run: |
+          set -eu
+
+          echo "========== 导出镜像 rootfs =========="
+          docker create --name flat-tmp alas-pixi-alpine:ci-build
+          docker export flat-tmp -o /tmp/alas-rootfs.tar
+          docker rm flat-tmp
+
+          _size_raw=$(stat -c '%s' /tmp/alas-rootfs.tar 2>/dev/null || echo "?")
+          echo "rootfs tar 大小: ${_size_raw} bytes"
+
+          echo ""
+          echo "========== 导入为压扁镜像 =========="
+          docker import /tmp/alas-rootfs.tar alas-pixi-alpine:flat-rootfs
+          rm -f /tmp/alas-rootfs.tar
+
+          echo ""
+          echo "========== 注入容器元数据 =========="
+          docker build -f docker/Dockerfile.flat \
+            --build-arg FLAT_BASE=alas-pixi-alpine:flat-rootfs \
+            -t alas-pixi-alpine:ci-test .
+
+          echo ""
+          echo "========== 镜像对比 =========="
+          docker images --filter reference='alas-pixi-alpine:*' \
+            --format "table {{.Repository}}:{{.Tag}}\t{{.Size}}\t{{.CreatedAt}}"
 
       - name: 克隆 ALAS 仓库
         uses: actions/checkout@v6
@@ -94,7 +122,7 @@ jobs:
 
           echo ""
           echo "========== 容器日志 =========="
-          docker logs alas-test
+          docker logs alas-test 2>&1
 
           echo ""
           if docker ps --filter name=alas-test --format '{{.Names}}' | grep -q alas-test; then
@@ -110,15 +138,40 @@ jobs:
           docker compose -f docker/docker-compose.test.yml down -v 2>/dev/null || true
           docker rm -f alas-test 2>/dev/null || true
 
-      - name: 推送镜像
+      - name: 保存压扁镜像为 gzip 产物
         if: github.event_name != 'pull_request'
-        uses: docker/build-push-action@v6
+        run: |
+          set -eu
+
+          _short_sha=$(git rev-parse --short HEAD)
+          _artifact="alas-pixi-alpine-${_short_sha}.tar.gz"
+
+          echo "========== 导出压扁镜像 → ${_artifact} =========="
+          docker save alas-pixi-alpine:ci-test | gzip > "${_artifact}"
+
+          _size_gz=$(stat -c '%s' "${_artifact}" 2>/dev/null || echo "?")
+          echo "gzip 产物大小: ${_size_gz} bytes"
+
+          echo "artifact_path=${_artifact}" >> $GITHUB_ENV
+
+      - name: 上传 Gzip 产物
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
         with:
-          context: .
-          file: docker/Dockerfile
-          platforms: linux/amd64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          name: alas-pixi-alpine-flat
+          path: ${{ env.artifact_path }}
+          retention-days: 7
+
+      - name: 推送压扁镜像到 Registry
+        if: github.event_name != 'pull_request'
+        run: |
+          set -eu
+
+          echo "========== 推送压扁镜像 =========="
+          IFS=',' read -ra TAGS <<< "${{ steps.meta.outputs.tags }}"
+          for tag in "${TAGS[@]}"; do
+            _tag=$(echo "${tag}" | xargs)
+            echo "  打标签并推送: ${_tag}"
+            docker tag alas-pixi-alpine:ci-test "${_tag}"
+            docker push "${_tag}"
+          done
