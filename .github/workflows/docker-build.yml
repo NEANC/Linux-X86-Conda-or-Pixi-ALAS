@@ -68,8 +68,10 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: 克隆 ALAS 仓库
-        run: |
-          git clone https://github.com/LmeSzinc/AzurLaneAutoScript.git AzurLaneAutoScript
+        uses: actions/checkout@v6
+        with:
+          repository: LmeSzinc/AzurLaneAutoScript
+          path: AzurLaneAutoScript
 
       - name: 启动容器并运行测试
         env:
