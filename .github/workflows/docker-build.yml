@@ -7,6 +7,8 @@ on:
       - "docker/**"
       - "Pixi/pixi.toml"
       - ".github/workflows/docker-build.yml"
+    tags:
+      - "v*"
   pull_request:
     paths:
       - "docker/**"
@@ -53,6 +55,7 @@ jobs:
           tags: |
             type=ref,event=branch
             type=ref,event=pr
+            type=ref,event=tag
             type=sha,prefix=,format=short
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/master' }}
 
