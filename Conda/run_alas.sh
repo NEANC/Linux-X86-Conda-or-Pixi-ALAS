@@ -10,7 +10,7 @@ eval "$(~/miniforge3/bin/conda shell.bash hook)"
 conda activate alas
 
 # 切换到 ALAS 目录
-cd AzurLaneAutoScript
+cd AzurLaneAutoScript || exit
 # 手动修改该行中的路径为 ALAS 目录，使用 `find / -name "AzurLaneAutoScript" -type d 2>/dev/null` 查询，例：/home/neanc/AzurLaneAutoScript 或 /root/AzurLaneAutoScript
 
 # 运行 gui.py
