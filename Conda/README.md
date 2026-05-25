@@ -5,6 +5,9 @@
 > 本文默认读者能正常访问 Github 与各官方库；  
 > 如遇下载问题，请自行设置国内源或终端代理后再试。
 
+> [!IMPORTANT]
+> 本文测试环境为 PVE 下的 LXC Debian 13 X86_64
+
 在 X86_64 Linux 中使用 Conda 安装与配置 [AzurLaneAutoScript](https://github.com/LmeSzinc/AzurLaneAutoScript) 的指南
 
 ---
