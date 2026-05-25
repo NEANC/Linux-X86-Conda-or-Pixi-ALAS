@@ -192,17 +192,23 @@ for ($i = 0; $i -lt $args.Count; $i++) {
 }
 
 function Test-Prerequisite {
+    if ($IsLinux -or $IsMacOS) {
+        Write-ErrorMsg "此脚本仅支持 Windows 系统，检测到当前系统不是 Windows"
+        Write-ErrorMsg "请使用 Linux/macOS 对应的 Shell 脚本，参见：https://github.com/NEANC/Linux-X86-Conda-or-Pixi-ALAS/tree/master/Shell"
+        exit 1
+    }
+
     $os = Get-CimInstance Win32_OperatingSystem
     $verMajor = [int]$os.Version.Split('.')[0]
     if ($verMajor -lt 10) {
         Write-ErrorMsg "需要 Windows 10 或更高版本，当前版本: $($os.Caption)"
-        Write-ErrorMsg "请使用 ALAS 官方安装器: https://alas.azurlane.cloud/"
+        Write-ErrorMsg "请使用 ALAS 官方安装包: https://alas.azurlane.cloud/"
         exit 1
     }
 
     if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
         Write-ErrorMsg "未检测到 winget 包管理器"
-        Write-ErrorMsg "请先安装 App Installer 或使用 ALAS 官方安装器: https://alas.azurlane.cloud/"
+        Write-ErrorMsg "请先安装 App Installer 或使用 ALAS 官方安装包: https://alas.azurlane.cloud/"
         exit 1
     }
 }
