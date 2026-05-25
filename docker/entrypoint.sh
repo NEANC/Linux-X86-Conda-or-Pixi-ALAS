@@ -101,18 +101,56 @@ generate_pixi_toml() {
     log_ok "pixi.toml 已生成"
 }
 
-configure_deploy() {
-    if [ -f "${ALAS_DIR}/config/deploy.yaml" ]; then
-        log "config/deploy.yaml 已存在，跳过配置"
+_deploy_config_expected_keys() {
+    _dek_file="$1"
+    _dek_label="$2"
+    _dek_mismatch=""
+
+    _dek_check() {
+        _dek_name="$1"
+        _dek_pattern="$2"
+        if grep -qE "${_dek_pattern}" "${_dek_file}"; then
+            return 0
+        fi
+        _dek_val=$(grep -E "^[[:space:]]*${_dek_name}[[:space:]]*:" "${_dek_file}" 2>/dev/null | head -1 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' || echo '(未找到)')
+        _dek_mismatch="${_dek_mismatch}  ${_dek_name}: 当前值 ${_dek_val:-'(缺失)'}"'
+'
+    }
+
+    _dek_check "GitExecutable"      '^[[:space:]]*GitExecutable[[:space:]]*:[[:space:]]*/usr/bin/git[[:space:]]*$'
+    _dek_check "PythonExecutable"   '^[[:space:]]*PythonExecutable[[:space:]]*:[[:space:]]*python[[:space:]]*$'
+    _dek_check "RequirementsFile"   '^[[:space:]]*RequirementsFile[[:space:]]*:[[:space:]]*\./deploy/headless/requirements\.txt[[:space:]]*$'
+    _dek_check "AdbExecutable"      '^[[:space:]]*AdbExecutable[[:space:]]*:[[:space:]]*/usr/bin/adb[[:space:]]*$'
+
+    if [ -z "${_dek_mismatch}" ]; then
+        log "deploy.yaml 配置校验通过 (${_dek_label})"
         return 0
     fi
-    if [ -f "${ALAS_DIR}/${DEPLOY_TEMPLATE}" ]; then
-        log "从模板复制 deploy.yaml: ${DEPLOY_TEMPLATE}"
-        cp "${ALAS_DIR}/${DEPLOY_TEMPLATE}" "${ALAS_DIR}/config/deploy.yaml"
-        log_ok "deploy.yaml 已配置"
-    else
-        log_warn "模板 ${DEPLOY_TEMPLATE} 不存在，请手动配置 config/deploy.yaml"
+
+    log_warn "deploy.yaml 配置不匹配容器环境，以下项不符合预期 (${_dek_label}):"
+    printf '%s\n' "${_dek_mismatch}" | while IFS= read -r line; do
+        [ -n "${line}" ] && log_warn "${line}"
+    done
+    return 1
+}
+
+configure_deploy() {
+    if [ -f "${ALAS_DIR}/config/deploy.yaml" ] && _deploy_config_expected_keys "${ALAS_DIR}/config/deploy.yaml" "存量文件"; then
+        return 0
     fi
+
+    if [ ! -f "${ALAS_DIR}/${DEPLOY_TEMPLATE}" ]; then
+        log_warn "模板 ${DEPLOY_TEMPLATE} 不存在，请手动配置 config/deploy.yaml"
+        return 0
+    fi
+
+    if [ -f "${ALAS_DIR}/config/deploy.yaml" ]; then
+        log "config/deploy.yaml 配置不匹配容器环境，用模板覆盖"
+    fi
+
+    log "从模板复制 deploy.yaml: ${DEPLOY_TEMPLATE}"
+    cp "${ALAS_DIR}/${DEPLOY_TEMPLATE}" "${ALAS_DIR}/config/deploy.yaml"
+    log_ok "deploy.yaml 已配置"
 }
 
 use_prebuilt_pixi_env() {
@@ -212,6 +250,11 @@ main() {
 
     configure_deploy
     setup_pixi_env
+
+    if [ -d "${ALAS_DIR}/.git" ]; then
+        log "注册 Git 安全目录: ${ALAS_DIR}"
+        git config --global --add safe.directory "${ALAS_DIR}"
+    fi
 
     log "启动 ALAS: pixi run ${*:-start}"
     exec pixi run "$@"
