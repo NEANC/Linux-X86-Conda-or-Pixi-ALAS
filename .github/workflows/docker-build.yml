@@ -153,7 +153,8 @@ jobs:
           docker save alas-pixi-alpine:ci-test | gzip > "${_artifact}"
 
           _size_gz=$(stat -c '%s' "${_artifact}" 2>/dev/null || echo "?")
-          echo "gzip 产物大小: ${_size_gz} bytes"
+          _size_human=$(numfmt --to=iec --suffix=B "${_size_gz}" 2>/dev/null || echo "${_size_gz} bytes")
+          echo "gzip 产物大小: ${_size_human}"
 
           echo "artifact_path=${_artifact}" >> $GITHUB_ENV
 
