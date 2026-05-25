@@ -1,0 +1,15 @@
+ARG FLAT_BASE=alas-pixi-alpine:flat-rootfs
+FROM ${FLAT_BASE}
+
+ENV LANG=C.UTF-8 \
+    PATH="/root/.pixi/bin:${PATH}" \
+    CONDA_OVERRIDE_GLIBC="2.28" \
+    ALAS_DIR="/AzurLaneAutoScript" \
+    ALAS_PIXI_PREBUILT="/opt/alas-pixi-env"
+
+WORKDIR /AzurLaneAutoScript
+
+EXPOSE 22267
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD ["start"]

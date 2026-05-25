@@ -1,0 +1,14 @@
+services:
+  alas:
+    image: ${ALAS_TEST_IMAGE:-ghcr.io/neanc/alas-pixi-alpine:latest}
+    container_name: alas-test
+
+    environment:
+      - ALAS_DIR=/AzurLaneAutoScript
+      - DEPLOY_TEMPLATE=config/deploy.template-linux.yaml
+
+    volumes:
+      - ${ALAS_REPO_PATH:-./AzurLaneAutoScript}:/AzurLaneAutoScript
+
+    ports:
+      - "22267:22267"
