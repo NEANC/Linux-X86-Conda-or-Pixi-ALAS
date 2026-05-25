@@ -3,11 +3,13 @@ name: Static Analysis
 on:
   push:
     paths:
-      - "Shell/**"
+      - "**.sh"
+      - "**.ps1"
       - ".github/workflows/static-analysis.yml"
   pull_request:
     paths:
-      - "Shell/**"
+      - "**.sh"
+      - "**.ps1"
       - ".github/workflows/static-analysis.yml"
   workflow_dispatch:
 
@@ -16,50 +18,174 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: 检测变更脚本
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      shell_any: ${{ steps.changed.outputs.shell_any }}
+      ps1_any: ${{ steps.changed.outputs.ps1_any }}
+      shell_files: ${{ steps.changed.outputs.shell_files }}
+      ps1_files: ${{ steps.changed.outputs.ps1_files }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: 获取变更文件
+        id: changed
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+            git fetch origin "$BASE"
+            git diff --name-only "$BASE" HEAD > changed_files.txt
+          elif [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            BEFORE="$(jq -r '.before // empty' "$GITHUB_EVENT_PATH")"
+            AFTER="$(jq -r '.after // empty' "$GITHUB_EVENT_PATH")"
+            if [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+              git fetch origin "$BEFORE" 2>/dev/null || true
+              if git cat-file -e "$BEFORE" 2>/dev/null; then
+                git diff --name-only "$BEFORE" "$AFTER" > changed_files.txt
+              else
+                git diff-tree --root --no-commit-id --name-only -r HEAD > changed_files.txt
+              fi
+            else
+              git diff-tree --root --no-commit-id --name-only -r HEAD > changed_files.txt
+            fi
+          fi
+
+          _shell_files=$(grep '\.sh$' changed_files.txt 2>/dev/null | tr '\n' ' ' | xargs || true)
+          _ps1_files=$(grep '\.ps1$' changed_files.txt 2>/dev/null | tr '\n' ' ' | xargs || true)
+
+          echo "变更的 .sh 文件: ${_shell_files:-（无）}" >> "$GITHUB_STEP_SUMMARY"
+          echo "变更的 .ps1 文件: ${_ps1_files:-（无）}" >> "$GITHUB_STEP_SUMMARY"
+
+          if [ -z "${_shell_files}" ]; then
+            echo "shell_any=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "shell_any=true" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ -z "${_ps1_files}" ]; then
+            echo "ps1_any=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ps1_any=true" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "shell_files=${_shell_files}" >> "$GITHUB_OUTPUT"
+          echo "ps1_files=${_ps1_files}" >> "$GITHUB_OUTPUT"
+
   shellcheck:
     name: ShellCheck
+    needs: changes
+    if: always() && (github.event_name == 'workflow_dispatch' || needs.changes.outputs.shell_any == 'true')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+
       - name: Run ShellCheck
-        uses: ludeeus/action-shellcheck@master
         env:
-          SHELLCHECK_OPTS: --severity=warning
-        with:
-          scandir: "./Shell"
+          SHELL_FILES: ${{ needs.changes.outputs.shell_files }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "${SHELL_FILES}" ]; then
+            _files="${SHELL_FILES}"
+          else
+            echo "全仓递归扫描 .sh 脚本..."
+            _files=$(find . -name '*.sh' -type f -not -path './.git/*' | tr '\n' ' ')
+          fi
+
+          if [ -z "${_files}" ]; then
+            echo "没有需要检查的 .sh 文件，跳过"
+            exit 0
+          fi
+
+          echo "检查以下文件:"
+          printf '  %s\n' ${_files}
+
+          shellcheck --severity=warning ${_files}
 
   bash-syntax:
     name: Bash Syntax
+    needs: changes
+    if: always() && (github.event_name == 'workflow_dispatch' || needs.changes.outputs.shell_any == 'true')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+
       - name: Check bash syntax
+        env:
+          SHELL_FILES: ${{ needs.changes.outputs.shell_files }}
         run: |
-          shopt -s nullglob
-          for f in Shell/*.sh; do
+          set -euo pipefail
+
+          if [ -n "${SHELL_FILES}" ]; then
+            _files="${SHELL_FILES}"
+          else
+            echo "全仓递归扫描 .sh 脚本..."
+            _files=$(find . -name '*.sh' -type f -not -path './.git/*' | tr '\n' ' ')
+          fi
+
+          if [ -z "${_files}" ]; then
+            echo "没有需要检查的 .sh 文件，跳过"
+            exit 0
+          fi
+
+          _failed=0
+          for f in ${_files}; do
             echo ">>> Checking: $f"
-            bash -n "$f" || { echo "ERROR: $f has syntax errors"; exit 1; }
+            bash -n "$f" || { echo "ERROR: $f has syntax errors"; _failed=1; }
             echo "  OK"
           done
+          exit $_failed
 
   psanalyzer:
     name: PSScriptAnalyzer
+    needs: changes
+    if: always() && (github.event_name == 'workflow_dispatch' || needs.changes.outputs.ps1_any == 'true')
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
+
       - name: Cache PSScriptAnalyzer
         id: cache-psanalyzer
         uses: actions/cache@v5
         with:
           path: ~\Documents\PowerShell\Modules\PSScriptAnalyzer
           key: ${{ runner.os }}-psanalyzer-1
+
       - name: Install PSScriptAnalyzer
         if: steps.cache-psanalyzer.outputs.cache-hit != 'true'
         run: Install-Module -Name PSScriptAnalyzer -Force -SkipPublisherCheck -Scope CurrentUser
         shell: pwsh
+
       - name: Run PSScriptAnalyzer
+        env:
+          PS1_FILES: ${{ needs.changes.outputs.ps1_files }}
         run: |
-          $results = Invoke-ScriptAnalyzer -Path Shell\ -Recurse -Settings .psanalyzer.psd1
+          if ($env:PS1_FILES) {
+            $files = $env:PS1_FILES -split '\s+' | Where-Object { $_ } | ForEach-Object { $_.Trim() }
+          } else {
+            Write-Host "全仓递归扫描 .ps1 脚本..."
+            $files = @(Get-ChildItem -Recurse -Filter *.ps1 | Where-Object { $_.FullName -notmatch '\\.git\\' } | ForEach-Object { $_.FullName })
+          }
+
+          if (-not $files) {
+            Write-Host "没有需要检查的 .ps1 文件，跳过"
+            exit 0
+          }
+
+          Write-Host "检查以下文件:"
+          $files | ForEach-Object { Write-Host "  $_" }
+
+          $results = $files | Invoke-ScriptAnalyzer -Settings .psanalyzer.psd1
           if ($results) {
             $results | Format-Table -AutoSize
             Write-Host "::error::PSScriptAnalyzer found issues"
