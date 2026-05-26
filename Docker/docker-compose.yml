@@ -5,7 +5,8 @@ services:
     restart: unless-stopped
     environment:
       - TZ=Asia/Shanghai
-      - DEPLOY_TEMPLATE=config/deploy.template-linux.yaml
+      # 使用国内源配置模板
+      # - DEPLOY_TEMPLATE=config/deploy.template-linux-cn.yaml
 
       # 代理配置，不配置则直连
       # - HTTP_PROXY=http://proxy:8080

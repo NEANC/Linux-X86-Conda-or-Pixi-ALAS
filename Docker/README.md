@@ -18,9 +18,21 @@ docker run -d --name AzurLaneAutoScript\
            -v ${PWD}:/AzurLaneAutoScript \
            -p 22267:22267 \
            -e TZ=Asia/Shanghai \
-           -e DEPLOY_TEMPLATE=config/deploy.template-linux.yaml \
+           -e DEPLOY_TEMPLATE=config/deploy.template-linux-cn.yaml \
            --restart unless-stopped \
            ghcr.io/neanc/alas-pixi-alpine:latest
+
+# 使用 Github 源以及代理
+docker run -d --name AzurLaneAutoScript\
+           -v ${PWD}:/AzurLaneAutoScript \
+           -p 22267:22267 \
+           -e TZ=Asia/Shanghai \
+           -e HTTP_PROXY=http://proxy:8080 \
+           -e HTTPS_PROXY=http://proxy:8080 \
+           -e NO_PROXY=localhost,127.0.0.1 \
+           --restart unless-stopped \
+           ghcr.io/neanc/alas-pixi-alpine:latest
+
 ```
 
 ### 使用 docker compose
@@ -61,19 +73,19 @@ docker run -d --name AzurLaneAutoScript \
 
 ### 运行时的环境变量
 
-| 变量              | 默认值                              | 说明                                                                |
-| ----------------- | ----------------------------------- | ------------------------------------------------------------------- |
-| `DEPLOY_TEMPLATE` | `config/deploy.template-linux.yaml` | deploy 模板，国内镜像用 `config/deploy.template-linux.yaml-cn.yaml` |
-| `HTTP_PROXY`      | (空)                                | 运行时 HTTP 代理                                                    |
-| `HTTPS_PROXY`     | (空)                                | 运行时 HTTPS 代理，不设则沿用 HTTP_PROXY                            |
-| `NO_PROXY`        | (空)                                | 不走代理的地址列表，例：`localhost,127.0.0.1`                       |
+| 变量              | 默认值                              | 说明                                                                                                                  |
+| ----------------- | ----------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `DEPLOY_TEMPLATE` | `config/deploy.template-linux.yaml` | deploy 模板，若手动在ALAS中替换可不设置，如不想设置可手动指定；国内镜像用 `config/deploy.template-linux.yaml-cn.yaml` |
+| `HTTP_PROXY`      | (空)                                | 运行时 HTTP 代理，例：`http://proxy:8080`                                                                             |
+| `HTTPS_PROXY`     | (空)                                | 运行时 HTTPS 代理，例：`http://proxy:8080`，不设则沿用 HTTP_PROXY                                                     |
+| `NO_PROXY`        | (空)                                | 不走代理的地址列表，例：`localhost,127.0.0.1`                                                                         |
 
 ### 构建参数 (--build-arg)
 
 | 参数                   | 默认值    | 说明                                            |
 | ---------------------- | --------- | ----------------------------------------------- |
-| `HTTP_PROXY`           | (空)      | 构建阶段 HTTP 代理                              |
-| `HTTPS_PROXY`          | (空)      | 构建阶段 HTTPS 代理                             |
+| `HTTP_PROXY`           | (空)      | 构建阶段 HTTP 代理，例：`http://proxy:8080`     |
+| `HTTPS_PROXY`          | (空)      | 构建阶段 HTTPS 代理，例：`http://proxy:8080`    |
 | `NO_PROXY`             | (空)      | 构建阶段不走代理列表，例：`localhost,127.0.0.1` |
 | `ALPINE_GLIBC_VERSION` | `2.35-r1` | sgerrand glibc 版本                             |
 | `ALPINE_VERSION`       | `3.21`    | Alpine 基础镜像版本                             |
