@@ -116,11 +116,9 @@ RUN set -eu; \
     apk add --no-cache \
         git \
         android-tools \
-        curl \
         ca-certificates \
         libstdc++ \
         libgcc \
-        iproute2 \
         bash; \
     update-ca-certificates || true; \
     rm -rf /var/cache/apk/*
