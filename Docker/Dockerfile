@@ -73,14 +73,50 @@ RUN set -eu; \
     cd /opt/alas-pixi-env; \
     pixi install --manifest-path pixi.toml; \
     ./.pixi/envs/default/bin/python -V; \
-    _pe=".pixi/envs/default"; \
-    find "${_pe}" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true; \
-    find "${_pe}" -type d -name tests -exec rm -rf {} + 2>/dev/null || true; \
-    find "${_pe}" -type d -name test -exec rm -rf {} + 2>/dev/null || true; \
-    rm -rf "${_pe}/share" "${_pe}/include" 2>/dev/null || true; \
-    find "${_pe}" -name '*.a' -delete 2>/dev/null || true; \
-    find "${_pe}" -name '*.la' -delete 2>/dev/null || true; \
-    rm -rf /root/.cache/pip /root/.cache/pixi 2>/dev/null || true
+    _pe="/opt/alas-pixi-env/.pixi/envs/default"; \
+    echo "=== 清理前体积 ==="; \
+    du -sh "$_pe" 2>/dev/null || true; \
+    find "$_pe" -type d \( \
+        -name __pycache__ -o \
+        -name tests -o \
+        -name test -o \
+        -name testing -o \
+        -name benchmarks -o \
+        -name benchmark \
+    \) -prune -exec rm -rf {} + 2>/dev/null || true; \
+    find "$_pe" -type f \( \
+        -name "*.pyc" -o \
+        -name "*.pyo" -o \
+        -name "*.a" -o \
+        -name "*.la" \
+    \) -delete 2>/dev/null || true; \
+    rm -rf \
+        "$_pe/include" \
+        "$_pe/share/doc" \
+        "$_pe/share/man" \
+        "$_pe/share/info" \
+        "$_pe/share/gtk-doc" \
+        "$_pe/share/gir-1.0" \
+        "$_pe/share/locale" \
+        "$_pe/share/opencv4" \
+        "$_pe/share/qt" \
+        "$_pe/translations" \
+        "$_pe/qml" \
+        "$_pe/mkspecs" \
+        "$_pe/doc" \
+        "$_pe/resources" \
+        "$_pe/lib/cmake" \
+        "$_pe/lib/pkgconfig" \
+        "$_pe/lib/libQt5WebEngine*" \
+        "$_pe/lib/python3.7/ensurepip" \
+        /root/.cache \
+        /root/.rattler \
+        /tmp/* \
+        /var/tmp/* \
+        2>/dev/null || true; \
+    pixi clean cache --yes 2>/dev/null || true; \
+    echo "=== 清理后体积 ==="; \
+    du -sh "$_pe" 2>/dev/null || true
 
 
 # 运行阶段：仅保留运行时必需的文件
@@ -114,16 +150,14 @@ RUN set -eu; \
     echo "https://dl-cdn.alpinelinux.org/alpine/v$(cut -d. -f1,2 /etc/alpine-release)/community" >> /etc/apk/repositories; \
     apk update; \
     apk add --no-cache \
+        bash \
         git \
         android-tools \
-        curl \
         ca-certificates \
         libstdc++ \
-        libgcc \
-        iproute2 \
-        bash; \
+        libgcc; \
     update-ca-certificates || true; \
-    rm -rf /var/cache/apk/*
+    rm -rf /tmp/builder-proxy.sh /var/cache/apk/* /tmp/* /var/tmp/*
 
 COPY Docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh

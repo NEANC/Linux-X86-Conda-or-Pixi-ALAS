@@ -43,6 +43,7 @@ jobs:
           tags: ${{ env.IMAGE_TAG }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          outputs: type=docker,compression=gzip,compression-level=9
 
       - name: 转换镜像为单层
         run: |
@@ -58,15 +59,16 @@ jobs:
           echo "rootfs tar 大小: ${_size_human}"
 
           echo ""
-          echo "========== 导入为单层镜像 =========="
-          docker import /tmp/alas-rootfs.tar alas-pixi-alpine:flat-rootfs
+          echo "========== 构建单层镜像 (FROM scratch, gzip -9) =========="
+          mkdir -p /tmp/flat-ctx
+          cp /tmp/alas-rootfs.tar /tmp/flat-ctx/alas-rootfs.tar
           rm -f /tmp/alas-rootfs.tar
-
-          echo ""
-          echo "========== 注入容器元数据 =========="
-          docker build -f Docker/Dockerfile.flat \
-            --build-arg FLAT_BASE=alas-pixi-alpine:flat-rootfs \
-            -t ${{ env.IMAGE_TAG }} .
+          cp Docker/Dockerfile.flat /tmp/flat-ctx/Dockerfile
+          docker buildx build \
+            --output "type=docker,compression=gzip,compression-level=9" \
+            -t ${{ env.IMAGE_TAG }} \
+            /tmp/flat-ctx
+          rm -rf /tmp/flat-ctx
 
           echo ""
           echo "========== 镜像对比 =========="
@@ -78,11 +80,34 @@ jobs:
           echo "FLAT_SIZE=${_orig_human}" >> $GITHUB_ENV
           echo "FLAT_SIZE_BYTES=${_orig_size}" >> $GITHUB_ENV
 
+      - name: 分析镜像体积
+        run: |
+          set -eu
+          docker run --rm --entrypoint sh ${{ env.IMAGE_TAG }} -c '
+            echo "===== 根目录体积 ====="
+            du -xh -d1 / 2>/dev/null | sort -h
+
+            echo ""
+            echo "===== Pixi 环境体积 ====="
+            du -xh -d2 /opt/alas-pixi-env/.pixi/envs/default 2>/dev/null | sort -h | tail -80
+
+            echo ""
+            echo "===== site-packages 一级目录体积 ====="
+            du -xh -d1 /opt/alas-pixi-env/.pixi/envs/default/lib/python3.7/site-packages 2>/dev/null | sort -h | tail -80
+
+            echo ""
+            echo "===== lib 目录最大 .so 文件 Top 80 ====="
+            find /opt/alas-pixi-env/.pixi/envs/default/lib -type f -name "*.so*" 2>/dev/null \
+              | xargs -r du -h \
+              | sort -h \
+              | tail -80
+          '
+
       - name: 导出镜像为产物
         run: |
           set -eu
           echo "========== 导出单层镜像 =========="
-          docker save ${{ env.IMAGE_TAG }} | gzip > "${{ env.ARTIFACT_NAME }}"
+          docker save ${{ env.IMAGE_TAG }} | gzip -9 > "${{ env.ARTIFACT_NAME }}"
 
           _size_gz=$(stat -c '%s' "${{ env.ARTIFACT_NAME }}" 2>/dev/null || echo "?")
           _size_human=$(numfmt --to=iec --suffix=B "${_size_gz}" 2>/dev/null || echo "${_size_gz} bytes")
@@ -102,6 +127,7 @@ jobs:
           name: alas-pixi-image
           path: ${{ env.ARTIFACT_NAME }}
           retention-days: 1
+          compression-level: 0
 
   test:
     name: 镜像测试
@@ -140,7 +166,7 @@ jobs:
 
           echo ""
           echo "等待 Pixi 环境部署与 ALAS 启动..."
-          sleep 45
+          sleep 90
 
           echo ""
           echo "========== 容器状态 =========="
@@ -189,14 +215,20 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: 设置 Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
       - name: 提取 Docker 元数据
         id: meta
         uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          flavor: |
+            latest=false
           tags: |
             type=semver,pattern={{raw}}
             type=sha,prefix=,format=short
+            type=raw,value=latest,enable=${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-') }}
             type=raw,value=pr-${{ github.event.number }},enable=${{ github.event_name == 'pull_request' }}
 
       - name: 下载镜像产物
@@ -204,20 +236,61 @@ jobs:
         with:
           name: alas-pixi-image
 
-      - name: 加载镜像
+      - name: 重建并推送 (gzip -9)
         run: |
           set -eu
+
+          echo "========== 加载镜像 =========="
           gunzip -c "${{ env.ARTIFACT_NAME }}" | docker load
-          docker images --filter reference='alas-pixi-alpine:*'
 
-      - name: 推送镜像到 Registry
+          echo "========== 提取 rootfs =========="
+          mkdir -p /tmp/pub-ctx
+          docker create --name pub-flat ${{ env.IMAGE_TAG }}
+          docker export pub-flat -o /tmp/pub-ctx/alas-rootfs.tar
+          docker rm pub-flat
+          cp Docker/Dockerfile.flat /tmp/pub-ctx/Dockerfile
+
+          echo "========== 构建标签列表 =========="
+          _tag_args=""
+          while IFS= read -r tag; do
+            [ -n "${tag}" ] || continue
+            echo "  标签: ${tag}"
+            _tag_args="${_tag_args} --tag ${tag}"
+          done <<< "${{ steps.meta.outputs.tags }}"
+
+          echo "========== 构建并推送 (gzip -9) =========="
+          docker buildx build \
+            --output "type=image,push=true,compression=gzip,compression-level=9,force-compression=true" \
+            ${_tag_args} \
+            /tmp/pub-ctx
+
+          rm -rf /tmp/pub-ctx
+
+      - name: 检出推送镜像大小
         run: |
           set -eu
 
-          echo "========== 推送单层镜像 =========="
-          while IFS= read -r tag; do
-            [ -n "$tag" ] || continue
-            echo "打标签并推送: ${tag}"
-            docker tag ${{ env.IMAGE_TAG }} "${tag}"
-            docker push "${tag}"
-          done <<< "${{ steps.meta.outputs.tags }}"
+          _first_tag=$(echo "${{ steps.meta.outputs.tags }}" | head -1)
+          echo "检视镜像: ${_first_tag}"
+
+          echo ""
+          echo "========== Registry 层信息 =========="
+          _manifest=$(docker buildx imagetools inspect --raw "${_first_tag}" 2>/dev/null)
+          if echo "${_manifest}" | jq -e '.manifests' >/dev/null 2>&1; then
+            _digest=$(echo "${_manifest}" | jq -r '.manifests[0].digest')
+            _manifest=$(docker buildx imagetools inspect --raw "${_first_tag}@${_digest}")
+          fi
+
+          _total=$(echo "${_manifest}" | jq '[.layers[].size] | add')
+          echo "Registry 总大小: $(numfmt --to=iec --suffix=B "${_total}")"
+
+          echo "${_manifest}" | jq -r '.layers | to_entries[] | "  Layer \(.key): \(.value.size | tostring | . + " bytes")  \(.value.mediaType)"' \
+            | while IFS= read -r line; do
+              _sz=$(echo "${line}" | grep -oP '\d+(?= bytes)')
+              if [ -n "${_sz}" ]; then
+                _h=$(numfmt --to=iec --suffix=B "${_sz}" 2>/dev/null || echo "${_sz} bytes")
+                echo "${line}" | sed "s/[0-9]* bytes/${_h}/"
+              else
+                echo "${line}"
+              fi
+            done
