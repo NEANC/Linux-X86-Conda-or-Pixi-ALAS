@@ -73,6 +73,11 @@ jobs:
           docker images --filter reference='alas-pixi-alpine:*' \
             --format "table {{.Repository}}:{{.Tag}}\t{{.Size}}\t{{.CreatedAt}}"
 
+          _orig_size=$(docker image inspect -f '{{.Size}}' ${{ env.IMAGE_TAG }} 2>/dev/null || echo "0")
+          _orig_human=$(numfmt --to=iec --suffix=B "${_orig_size}" 2>/dev/null || echo "${_orig_size} bytes")
+          echo "FLAT_SIZE=${_orig_human}" >> $GITHUB_ENV
+          echo "FLAT_SIZE_BYTES=${_orig_size}" >> $GITHUB_ENV
+
       - name: 导出镜像为产物
         run: |
           set -eu
@@ -82,6 +87,14 @@ jobs:
           _size_gz=$(stat -c '%s' "${{ env.ARTIFACT_NAME }}" 2>/dev/null || echo "?")
           _size_human=$(numfmt --to=iec --suffix=B "${_size_gz}" 2>/dev/null || echo "${_size_gz} bytes")
           echo "gzip 产物大小: ${_size_human}"
+
+          _ratio="0"
+          if [ "${_size_gz}" != "?" ] && [ -n "${FLAT_SIZE_BYTES:-}" ] && [ "${FLAT_SIZE_BYTES}" != "0" ]; then
+            _ratio=$(awk "BEGIN {printf \"%.1f\", ${_size_gz} * 100 / ${FLAT_SIZE_BYTES}}")
+            echo "压缩率: ${_ratio}% (镜像 ${FLAT_SIZE:-?} → gzip ${_size_human})"
+          else
+            echo "镜像盘上大小: ${FLAT_SIZE:-?}"
+          fi
 
       - name: 上传镜像产物
         uses: actions/upload-artifact@v7
@@ -149,6 +162,10 @@ jobs:
       - name: 清理测试资源
         if: always()
         run: |
+          echo "========== 测试镜像占用 =========="
+          docker images --filter reference='${{ env.IMAGE_TAG }}' \
+            --format "table {{.Repository}}:{{.Tag}}\t{{.Size}}"
+          echo ""
           docker compose -f Docker/docker-compose.test.yml down -v 2>/dev/null || true
           docker rm -f alas-test 2>/dev/null || true
 
