@@ -24,8 +24,7 @@ RUN set -eu; \
         curl \
         ca-certificates \
         tar \
-        xz \
-        bash; \
+        xz; \
     update-ca-certificates || true
 
 # 步骤2：安装 gcompat（glibc 兼容层）
@@ -118,8 +117,7 @@ RUN set -eu; \
         android-tools \
         ca-certificates \
         libstdc++ \
-        libgcc \
-        bash; \
+        libgcc; \
     update-ca-certificates || true; \
     rm -rf /var/cache/apk/*
 
