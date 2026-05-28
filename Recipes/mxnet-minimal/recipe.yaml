@@ -18,6 +18,9 @@ build:
     echo "===== patch python/setup.py for binary wheel ====="
     printf 'from pathlib import Path\np = Path("python/setup.py")\ns = p.read_text()\nif "class BinaryDistribution" not in s:\n    s = s.replace(\n        "from setuptools import find_packages",\n        "from setuptools import find_packages\\n""from setuptools.dist import Distribution\\n\\n""class BinaryDistribution(Distribution):\\n""    def has_ext_modules(self):\\n""        return True\\n""    def is_pure(self):\\n""        return False\\n"\n    )\ns = s.replace(\n    "data_files=[(\\047mxnet\\047, [LIB_PATH[0]])],",\n    "package_data={\\047mxnet\\047: [os.path.basename(LIB_PATH[0])]},"\n)\nif "distclass=BinaryDistribution" not in s:\n    s = s.replace(\n        "**kwargs)",\n        "distclass=BinaryDistribution,\\n      **kwargs)"\n    )\np.write_text(s)\n' > /tmp/patch_setup.py && $PYTHON /tmp/patch_setup.py && rm -f /tmp/patch_setup.py
 
+    echo "===== patch MXNet elemwise template undefined symbols ====="
+    printf 'from pathlib import Path\nfiles = [\n    Path("src/operator/tensor/elemwise_binary_broadcast_op_basic.cc"),\n    Path("src/operator/tensor/elemwise_binary_broadcast_op_basic.cu"),\n]\nfor p in files:\n    if not p.exists():\n        continue\n    s = p.read_text()\n    old = \047#include "./elemwise_binary_op.h"\047\n    new = \047#include "./elemwise_binary_op-inl.h"\047\n    if old in s:\n        s = s.replace(old, new)\n        p.write_text(s)\n        print(f"patched: {p}")\n    elif new in s:\n        print(f"already patched: {p}")\n    else:\n        print(f"WARNING: include pattern not found in {p}")\n' > /tmp/patch_elemwise.py && $PYTHON /tmp/patch_elemwise.py && rm -f /tmp/patch_elemwise.py
+
     echo "===== configure MXNet with CMake ====="
     cmake -S . -B build -G Ninja \
       ${CMAKE_ARGS} \
@@ -40,6 +43,7 @@ build:
       -D USE_HDFS=OFF \
       -D USE_S3=OFF \
       -D USE_CPP_PACKAGE=OFF \
+      -D USE_TVM_OP=OFF \
       -D USE_PROFILER=OFF \
       -D USE_SIGNAL_HANDLER=OFF \
       -D USE_GPERFTOOLS=OFF \
@@ -68,6 +72,15 @@ build:
       exit 1
     fi
     echo "libmxnet: $LIBMXNET"
+
+    echo "===== check unresolved symbols in libmxnet ====="
+    if ldd -r "$LIBMXNET" 2>&1 | grep -q "undefined symbol"; then
+      echo "ERROR: libmxnet.so has unresolved symbols"
+      ldd -r "$LIBMXNET" | grep -i "undefined"
+      nm -D -u "$LIBMXNET" 2>/dev/null | c++filt | grep -E 'DnsCsr|ElemwiseBinary' || true
+      exit 1
+    fi
+    echo "libmxnet symbol check passed"
 
     echo "===== strip libmxnet ====="
     strip --strip-unneeded "$LIBMXNET" || true
