@@ -9,93 +9,141 @@ source:
   url: https://archive.apache.org/dist/incubator/mxnet/${{ version }}/apache-mxnet-src-${{ version }}-incubating.tar.gz
 
 build:
-  number: 0
+  number: 1
   script: |
     set -eux
 
     SP_DIR="$($PYTHON -c 'import sysconfig; print(sysconfig.get_paths()["platlib"])')"
 
-    echo "===== 查找 cblas.h ====="
-    find "$PREFIX/include" -name 'cblas*.h' -print || true
+    echo "===== patch python/setup.py for binary wheel ====="
+    $PYTHON - <<'PY'
+from pathlib import Path
 
-    BLAS_INC=""
-    for d in \
-      "$PREFIX/include" \
-      "$PREFIX/include/openblas" \
-      "$PREFIX/include/x86_64-conda-linux-gnu"
-    do
-      if [ -f "$d/cblas.h" ]; then
-        BLAS_INC="$d"
-        break
-      fi
-    done
+p = Path("python/setup.py")
+s = p.read_text()
 
-    if [ -z "$BLAS_INC" ]; then
-      echo "ERROR: cblas.h not found in PREFIX include dirs"
-      find "$PREFIX/include" -maxdepth 3 -type f | sort | head -200
+if "class BinaryDistribution" not in s:
+    s = s.replace(
+        "from setuptools import find_packages",
+        "from setuptools import find_packages\n"
+        "from setuptools.dist import Distribution\n\n"
+        "class BinaryDistribution(Distribution):\n"
+        "    def has_ext_modules(self):\n"
+        "        return True\n"
+        "    def is_pure(self):\n"
+        "        return False\n"
+    )
+
+s = s.replace(
+    "data_files=[('mxnet', [LIB_PATH[0]])],",
+    "package_data={'mxnet': [os.path.basename(LIB_PATH[0])]},"
+)
+
+if "distclass=BinaryDistribution" not in s:
+    s = s.replace(
+        "**kwargs)",
+        "distclass=BinaryDistribution,\n      **kwargs)"
+    )
+
+p.write_text(s)
+PY
+
+    echo "===== configure MXNet with CMake ====="
+    cmake -S . -B build -G Ninja \
+      ${CMAKE_ARGS} \
+      -D CMAKE_BUILD_TYPE=Release \
+      -D CMAKE_INSTALL_PREFIX="$PREFIX" \
+      -D CMAKE_INSTALL_LIBDIR=lib \
+      -D CMAKE_CXX_STANDARD=14 \
+      -D CMAKE_CXX_STANDARD_REQUIRED=ON \
+      -D USE_CUDA=OFF \
+      -D USE_CUDNN=OFF \
+      -D USE_NCCL=OFF \
+      -D USE_NVTX=OFF \
+      -D USE_OPENCV=OFF \
+      -D USE_OPENMP=OFF \
+      -D USE_MKLDNN=OFF \
+      -D USE_MKL_IF_AVAILABLE=OFF \
+      -D USE_BLAS=open \
+      -D USE_LAPACK=OFF \
+      -D USE_DIST_KVSTORE=OFF \
+      -D USE_HDFS=OFF \
+      -D USE_S3=OFF \
+      -D USE_CPP_PACKAGE=OFF \
+      -D USE_PROFILER=OFF \
+      -D USE_SIGNAL_HANDLER=OFF \
+      -D USE_GPERFTOOLS=OFF \
+      -D USE_JEMALLOC=OFF \
+      -D USE_F16C=OFF \
+      -D OpenBLAS_HOME="$PREFIX" \
+      -D OpenBLAS_ROOT="$PREFIX" \
+      -D OpenBLAS_INCLUDE_DIR="$PREFIX/include" \
+      -D OpenBLAS_LIB="$PREFIX/lib/libopenblas.so" \
+      -D CMAKE_CXX_FLAGS="-Wno-maybe-uninitialized -Wno-template-id-cdtor"
+
+    echo "===== build libmxnet ====="
+    cmake --build build --parallel "${CPU_COUNT:-2}"
+
+    echo "===== install libmxnet ====="
+    cmake --install build
+
+    echo "===== locate libmxnet ====="
+    LIBMXNET="$(find "$PREFIX" build -name 'libmxnet.so' -type f | head -n 1)"
+    if [ -z "$LIBMXNET" ]; then
+      echo "ERROR: libmxnet.so not found"
+      find build "$PREFIX" -name '*mxnet*' -print | head -200
       exit 1
     fi
+    echo "libmxnet: $LIBMXNET"
 
-    echo "Using BLAS_INC=$BLAS_INC"
+    echo "===== strip libmxnet ====="
+    strip --strip-unneeded "$LIBMXNET" || true
 
-    cat > config.mk <<MXCONF
-    CC = ${CC}
-    CXX = ${CXX}
-    PYTHON = ${PYTHON}
+    echo "===== build python wheel ====="
+    cp "$LIBMXNET" python/mxnet/libmxnet.so
 
-    USE_CUDA = 0
-    USE_CUDNN = 0
-    ENABLE_CUDA_RTC = 0
-    USE_NCCL = 0
-    USE_NVTX = 0
-    MSHADOW_USE_CUDA = 0
-    MSHADOW_USE_CUDNN = 0
+    find python/mxnet -type d \( \
+      -name __pycache__ -o \
+      -name tests -o \
+      -name test -o \
+      -name examples -o \
+      -name docs \
+    \) -prune -exec rm -rf {} + 2>/dev/null || true
 
-    USE_OPENCV = 0
-    USE_OPENMP = 1
+    find python/mxnet -type f \( \
+      -name "*.pyc" -o \
+      -name "*.pyo" -o \
+      -name "*.a" -o \
+      -name "*.la" \
+    \) -delete 2>/dev/null || true
 
-    USE_MKLDNN = 0
-    USE_BLAS = openblas
-    USE_LAPACK = 0
+    mkdir -p /tmp/mxnet-wheel
+    $PYTHON -m pip wheel ./python \
+      --no-deps \
+      --no-build-isolation \
+      -w /tmp/mxnet-wheel
 
-    USE_DIST_KVSTORE = 0
-    USE_HDFS = 0
-    USE_S3 = 0
-    USE_CPP_PACKAGE = 0
-    USE_GPERFTOOLS = 0
-    USE_JEMALLOC = 0
-    USE_OPERATOR_TUNING = 0
-    USE_SIGNAL_HANDLER = 0
+    echo "===== install wheel into conda prefix ====="
+    $PYTHON -m pip install /tmp/mxnet-wheel/mxnet-*.whl \
+      --no-deps \
+      --no-build-isolation \
+      -vv
 
-    USE_F16C = 0
-    USE_SSE = 1
-    WERROR = 0
+    echo "===== cleanup installed mxnet ====="
+    find "$SP_DIR/mxnet" -type d \( \
+      -name __pycache__ -o \
+      -name tests -o \
+      -name test -o \
+      -name examples -o \
+      -name docs \
+    \) -prune -exec rm -rf {} + 2>/dev/null || true
 
-    BLAS_ROOT = ${PREFIX}
-    ADD_CFLAGS = ${CFLAGS} -I${BLAS_INC}
-    ADD_LDFLAGS = ${LDFLAGS} -L${PREFIX}/lib -lopenblas
-    MXCONF
-
-    echo "===== config.mk ====="
-    cat config.mk
-
-    make -j2
-
-    cp -f lib/libmxnet.so python/mxnet/libmxnet.so
-
-    cd python
-    "$PYTHON" -m pip install . --no-deps --no-build-isolation -vv
-
-    rm -rf \
-      "$SP_DIR/mxnet/tests" \
-      "$SP_DIR/mxnet/test_utils.py" \
-      "$SP_DIR/mxnet/scala" \
-      "$SP_DIR/mxnet/r" \
-      "$SP_DIR/mxnet/julia" \
-      2>/dev/null || true
-
-    find "$SP_DIR/mxnet" -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true
-    find "$SP_DIR/mxnet" -type f \( -name "*.pyc" -o -name "*.pyo" -o -name "*.a" \) -delete 2>/dev/null || true
+    find "$SP_DIR/mxnet" -type f \( \
+      -name "*.pyc" -o \
+      -name "*.pyo" -o \
+      -name "*.a" -o \
+      -name "*.la" \
+    \) -delete 2>/dev/null || true
 
     if find "$SP_DIR/mxnet" -type f \( -name "libmklml_intel.so*" -o -name "libmkldnn.so*" \) | grep -q .; then
       echo "ERROR: MKL/MKLDNN libraries are still packaged"
@@ -105,16 +153,19 @@ build:
 
     strip --strip-unneeded "$SP_DIR/mxnet/libmxnet.so" || true
 
+    echo "===== mxnet package size ====="
+    du -sh "$SP_DIR/mxnet"
+    find "$SP_DIR/mxnet" -maxdepth 2 -type f -name "*.so*" -exec ls -lh {} \;
+
 requirements:
   build:
     - ${{ compiler('c') }}
     - ${{ compiler('cxx') }}
     - sysroot_linux-64 ==2.28
-    - make
     - cmake
-    - pkg-config
-    - perl
+    - ninja
     - patch
+    - pkg-config
   host:
     - python ==3.7.6
     - pip
@@ -125,17 +176,15 @@ requirements:
     - openblas
     - libopenblas
     - libcblas
-    - libpng
     - zlib
   run:
     - python >=3.7,<3.8
     - numpy >=1.21,<2
     - requests
-    - graphviz
     - libopenblas
+    - libcblas
     - libgcc-ng
     - libstdcxx-ng
-    - libgomp
     - zlib
 
 tests:
@@ -147,5 +196,5 @@ tests:
         b = a + 1
         assert b.asnumpy().tolist() == [2.0, 3.0, 4.0]
         from mxnet import gluon
-        print("mxnet minimal OK")
+        print("mxnet cmake wheel OK")
         PY

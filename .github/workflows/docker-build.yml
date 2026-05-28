@@ -140,9 +140,9 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: local-channel
-          key: mxnet-build-v4-${{ hashFiles('Recipes/mxnet-minimal/recipe.yaml', 'Recipes/mxnet-minimal/variants.yaml') }}
+          key: mxnet-build-v5-${{ hashFiles('Recipes/mxnet-minimal/recipe.yaml', 'Recipes/mxnet-minimal/variants.yaml') }}
           restore-keys: |
-            mxnet-build-v4-
+            mxnet-build-v5-
 
       - name: 安装 rattler-build
         if: steps.cache.outputs.cache-hit != 'true'
@@ -227,7 +227,7 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: local-channel
-          key: mxnet-build-v4-${{ hashFiles('Recipes/mxnet-minimal/recipe.yaml', 'Recipes/mxnet-minimal/variants.yaml') }}
+          key: mxnet-build-v5-${{ hashFiles('Recipes/mxnet-minimal/recipe.yaml', 'Recipes/mxnet-minimal/variants.yaml') }}
 
   cnocr:
     name: 构建 CnOCR legacy
