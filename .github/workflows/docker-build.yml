@@ -237,7 +237,7 @@ jobs:
 
   cnocr:
     name: 构建 CnOCR legacy
-    needs: [opencv, mxnet]
+    needs: opencv
     runs-on: ubuntu-latest
     steps:
       - name: 检出仓库
@@ -257,13 +257,12 @@ jobs:
           path: local-channel
           key: cnocr-build-v2-${{ hashFiles('Recipes/cnocr-legacy/recipe.yaml') }}
 
-      - name: 下载 OpenCV + MXNet 产物
+      - name: 下载 OpenCV 产物
         if: steps.cache.outputs.cache-hit != 'true'
         uses: actions/download-artifact@v8
         with:
-          pattern: "{opencv,mxnet}-conda"
+          name: opencv-conda
           path: local-channel/linux-64
-          merge-multiple: true
 
       - name: 安装 rattler-build
         if: steps.cache.outputs.cache-hit != 'true'
