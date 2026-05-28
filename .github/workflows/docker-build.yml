@@ -115,6 +115,7 @@ jobs:
           compression-level: 0
 
       - name: 保存 OpenCV 缓存
+        if: steps.cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5
         with:
           path: local-channel
@@ -230,6 +231,7 @@ jobs:
           compression-level: 0
 
       - name: 保存 MXNet 缓存
+        if: steps.cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5
         with:
           path: local-channel
@@ -290,6 +292,7 @@ jobs:
           compression-level: 0
 
       - name: 保存 CnOCR 缓存
+        if: steps.cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5
         with:
           path: local-channel
