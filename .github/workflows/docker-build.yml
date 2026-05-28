@@ -123,7 +123,6 @@ jobs:
 
   mxnet:
     name: 构建 MXNet-mini
-    needs: opencv
     runs-on: ubuntu-latest
     steps:
       - name: 检出仓库
@@ -141,16 +140,9 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: local-channel
-          key: mxnet-build-v3-${{ hashFiles('Recipes/mxnet-minimal/recipe.yaml', 'Recipes/mxnet-minimal/variants.yaml') }}
+          key: mxnet-build-v4-${{ hashFiles('Recipes/mxnet-minimal/recipe.yaml', 'Recipes/mxnet-minimal/variants.yaml') }}
           restore-keys: |
-            mxnet-build-v3-
-
-      - name: 下载 OpenCV 产物
-        if: steps.cache.outputs.cache-hit != 'true'
-        uses: actions/download-artifact@v8
-        with:
-          name: opencv-conda
-          path: local-channel/linux-64
+            mxnet-build-v4-
 
       - name: 安装 rattler-build
         if: steps.cache.outputs.cache-hit != 'true'
@@ -159,15 +151,13 @@ jobs:
       - name: 编译 MXNet-mini
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
-          pixi global install rattler-index
-          rattler-index fs ./local-channel --target-platform linux-64
           rattler-build build \
             -r Recipes/mxnet-minimal/recipe.yaml \
             -m Recipes/mxnet-minimal/variants.yaml \
-            -c file://${PWD}/local-channel \
             -c conda-forge \
             --target-platform linux-64 \
             --output-dir ./local-channel
+          pixi global install rattler-index
           rattler-index fs ./local-channel --target-platform linux-64
 
       - name: 检查 MXNet glibc + MKL
@@ -237,7 +227,7 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: local-channel
-          key: mxnet-build-v3-${{ hashFiles('Recipes/mxnet-minimal/recipe.yaml', 'Recipes/mxnet-minimal/variants.yaml') }}
+          key: mxnet-build-v4-${{ hashFiles('Recipes/mxnet-minimal/recipe.yaml', 'Recipes/mxnet-minimal/variants.yaml') }}
 
   cnocr:
     name: 构建 CnOCR legacy

@@ -15,6 +15,29 @@ build:
 
     SP_DIR="$($PYTHON -c 'import sysconfig; print(sysconfig.get_paths()["platlib"])')"
 
+    echo "===== 查找 cblas.h ====="
+    find "$PREFIX/include" -name 'cblas*.h' -print || true
+
+    BLAS_INC=""
+    for d in \
+      "$PREFIX/include" \
+      "$PREFIX/include/openblas" \
+      "$PREFIX/include/x86_64-conda-linux-gnu"
+    do
+      if [ -f "$d/cblas.h" ]; then
+        BLAS_INC="$d"
+        break
+      fi
+    done
+
+    if [ -z "$BLAS_INC" ]; then
+      echo "ERROR: cblas.h not found in PREFIX include dirs"
+      find "$PREFIX/include" -maxdepth 3 -type f | sort | head -200
+      exit 1
+    fi
+
+    echo "Using BLAS_INC=$BLAS_INC"
+
     cat > config.mk <<MXCONF
     CC = ${CC}
     CXX = ${CXX}
@@ -33,7 +56,7 @@ build:
 
     USE_MKLDNN = 0
     USE_BLAS = openblas
-    USE_LAPACK = 1
+    USE_LAPACK = 0
 
     USE_DIST_KVSTORE = 0
     USE_HDFS = 0
@@ -48,16 +71,10 @@ build:
     USE_SSE = 1
     WERROR = 0
 
-    ADD_CFLAGS = ${CFLAGS}
-    ADD_LDFLAGS = ${LDFLAGS}
+    BLAS_ROOT = ${PREFIX}
+    ADD_CFLAGS = ${CFLAGS} -I${BLAS_INC}
+    ADD_LDFLAGS = ${LDFLAGS} -L${PREFIX}/lib -lopenblas
     MXCONF
-
-    BLAS_INCLUDE="$(pkg-config --cflags-only-I openblas 2>/dev/null || echo "-I${PREFIX}/include/openblas")"
-    BLAS_LIB="$(pkg-config --libs-only-L openblas 2>/dev/null || echo "-L${PREFIX}/lib")"
-    cat >> config.mk <<MXBLAS
-    ADD_CFLAGS += ${BLAS_INCLUDE}
-    ADD_LDFLAGS += ${BLAS_LIB} -lopenblas
-    MXBLAS
 
     echo "===== config.mk ====="
     cat config.mk
@@ -105,7 +122,9 @@ requirements:
     - wheel
     - cython
     - numpy ==1.21.6
+    - openblas
     - libopenblas
+    - libcblas
     - libpng
     - zlib
   run:
