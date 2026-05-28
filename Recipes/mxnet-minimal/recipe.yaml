@@ -51,11 +51,11 @@ build:
       -D OpenBLAS_LIB="$PREFIX/lib/libopenblas.so" \
       -D CMAKE_CXX_FLAGS="-Wno-maybe-uninitialized -Wno-template-id-cdtor" \
       -D CMAKE_POLICY_VERSION_MINIMUM=3.5 \
-      -D BUILD_TESTS=OFF \
-      -D BUILD_CPP_EXAMPLES=OFF
+      -D BUILD_TESTING=OFF \
+      -D INSTALL_GTEST=OFF
 
     echo "===== build libmxnet ====="
-    cmake --build build --parallel "${CPU_COUNT:-2}"
+    cmake --build build --target mxnet --parallel "${CPU_COUNT:-2}"
 
     echo "===== install libmxnet ====="
     cmake --install build
