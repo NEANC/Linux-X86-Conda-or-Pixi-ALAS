@@ -141,7 +141,9 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: local-channel
-          key: mxnet-build-v2-${{ hashFiles('Recipes/mxnet-minimal/recipe.yaml', 'Recipes/mxnet-minimal/variants.yaml') }}
+          key: mxnet-build-v3-${{ hashFiles('Recipes/mxnet-minimal/recipe.yaml', 'Recipes/mxnet-minimal/variants.yaml') }}
+          restore-keys: |
+            mxnet-build-v3-
 
       - name: 下载 OpenCV 产物
         if: steps.cache.outputs.cache-hit != 'true'
@@ -235,7 +237,7 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: local-channel
-          key: mxnet-build-v2-${{ hashFiles('Recipes/mxnet-minimal/recipe.yaml', 'Recipes/mxnet-minimal/variants.yaml') }}
+          key: mxnet-build-v3-${{ hashFiles('Recipes/mxnet-minimal/recipe.yaml', 'Recipes/mxnet-minimal/variants.yaml') }}
 
   cnocr:
     name: 构建 CnOCR legacy

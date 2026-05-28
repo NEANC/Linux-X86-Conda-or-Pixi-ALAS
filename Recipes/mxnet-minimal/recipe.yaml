@@ -25,6 +25,8 @@ build:
     ENABLE_CUDA_RTC = 0
     USE_NCCL = 0
     USE_NVTX = 0
+    MSHADOW_USE_CUDA = 0
+    MSHADOW_USE_CUDNN = 0
 
     USE_OPENCV = 0
     USE_OPENMP = 1
@@ -49,6 +51,13 @@ build:
     ADD_CFLAGS = ${CFLAGS}
     ADD_LDFLAGS = ${LDFLAGS}
     MXCONF
+
+    BLAS_INCLUDE="$(pkg-config --cflags-only-I openblas 2>/dev/null || echo "-I${PREFIX}/include/openblas")"
+    BLAS_LIB="$(pkg-config --libs-only-L openblas 2>/dev/null || echo "-L${PREFIX}/lib")"
+    cat >> config.mk <<MXBLAS
+    ADD_CFLAGS += ${BLAS_INCLUDE}
+    ADD_LDFLAGS += ${BLAS_LIB} -lopenblas
+    MXBLAS
 
     echo "===== config.mk ====="
     cat config.mk
