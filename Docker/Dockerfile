@@ -86,7 +86,7 @@ RUN set -eu; \
         sed '/^\[pypi-dependencies\]/i\mxnet = "==1.6.0"' pixi.toml > pixi.toml.tmp && mv pixi.toml.tmp pixi.toml; \
         sed '/^mxnet = /a\cnocr = "==1.2.3.1"' pixi.toml > pixi.toml.tmp && mv pixi.toml.tmp pixi.toml; \
         sed '/^jellyfish = /i\gluoncv = ">=0.3,<0.7"' pixi.toml > pixi.toml.tmp && mv pixi.toml.tmp pixi.toml; \
-        echo "已迁移 mxnet/cnocr → dependencies，注入 gluoncv"
+        echo "已迁移 mxnet/cnocr → dependencies，注入 gluoncv"; \
     fi; \
     pixi install --manifest-path pixi.toml; \
     "$_pe/bin/python" -V; \
