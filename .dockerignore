@@ -1,6 +1,14 @@
 *
+!local-channel/
 !Docker/
 !Pixi/
+
+local-channel/*
+!local-channel/.gitkeep
+!local-channel/noarch/
+!local-channel/linux-64/
+!local-channel/noarch/**
+!local-channel/linux-64/**
 
 Docker/*
 !Docker/builder-proxy.sh

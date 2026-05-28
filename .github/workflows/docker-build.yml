@@ -9,6 +9,7 @@ on:
       - "Docker/**"
       - "Pixi/pixi.toml"
       - ".github/workflows/docker-build.yml"
+      - "Recipes/opencv-minimal/**"
       - "!Docker/*.md"
   workflow_dispatch:
 
@@ -23,12 +24,189 @@ env:
   IMAGE_TAG: alas-pixi-alpine:ci-test
 
 jobs:
-  build:
-    name: 构建镜像
+  opencv:
+    name: 构建 OpenCV-mini
     runs-on: ubuntu-latest
     steps:
       - name: 检出仓库
         uses: actions/checkout@v6
+
+      - name: 安装 Pixi
+        uses: prefix-dev/setup-pixi@v0.9.6
+        with:
+          pixi-version: latest
+          cache: false
+          run-install: false
+
+      - name: 恢复编译缓存
+        id: cache
+        uses: actions/cache/restore@v5
+        with:
+          path: local-channel
+          key: opencv-minimal-v3-${{ hashFiles('Recipes/opencv-minimal/recipe.yaml', 'Recipes/opencv-minimal/variants.yaml', 'Pixi/pixi.toml') }}
+
+      - name: 安装 rattler-build
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: pixi global install rattler-build
+
+      - name: 编译 OpenCV
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          rattler-build build \
+            -r Recipes/opencv-minimal/recipe.yaml \
+            -m Recipes/opencv-minimal/variants.yaml \
+            -c conda-forge \
+            --target-platform linux-64 \
+            --output-dir ./local-channel
+
+      - name: 索引本地 Channel
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          pixi global install rattler-index
+          rattler-index fs ./local-channel --target-platform linux-64
+
+      - name: 输出产物信息
+        run: |
+          _size=$(du -sh local-channel | cut -f1)
+          echo "Channel 大小: ${_size}" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "=== .conda 包 ===" | tee -a "$GITHUB_STEP_SUMMARY"
+          find local-channel -name '*.conda' -exec ls -lh {} \; | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "=== .so 文件大小 ===" | tee -a "$GITHUB_STEP_SUMMARY"
+          python3 - "$GITHUB_STEP_SUMMARY" <<'PY'
+          import zipfile, pathlib, subprocess, shutil, os, sys
+          summary = sys.argv[1]
+          def out(msg):
+              print(msg)
+              with open(summary, 'a') as f:
+                  f.write(msg + '\n')
+          local = pathlib.Path('local-channel')
+          pkg = next(local.rglob('opencv-*.conda'), None)
+          if not pkg:
+              out('  (未找到 .conda 包)')
+          else:
+              tmp = pathlib.Path('/tmp/so-list')
+              if tmp.exists():
+                  shutil.rmtree(tmp)
+              tmp.mkdir(parents=True)
+              try:
+                  with zipfile.ZipFile(pkg) as z:
+                      z.extractall(tmp)
+                  for tar_path in sorted(tmp.glob('pkg-*.tar.zst')):
+                      subprocess.run(['tar', '--zstd', '-xf', str(tar_path), '-C', str(tmp)], check=True)
+                  sos = sorted(tmp.rglob('*.so*'), key=lambda p: p.stat().st_size)
+                  if sos:
+                      for so in sos:
+                          out(f'  {so.stat().st_size:>12,d}  {so.name}')
+                  else:
+                      out('  (未找到 .so 文件)')
+              finally:
+                  shutil.rmtree(tmp, ignore_errors=True)
+          PY
+
+      - name: 检查 OpenCV glibc 符号版本
+        run: |
+          set -eu
+          python3 - <<'PY'
+          import os, sys, zipfile, subprocess, pathlib, tempfile, tarfile, shutil
+
+          pkg = next(pathlib.Path("local-channel/linux-64").glob("opencv-*.conda"), None)
+          if not pkg:
+              print("SKIP: 未找到 opencv .conda 包，跳过符号检查")
+              sys.exit(0)
+
+          print(f"检查包: {pkg}")
+
+          tmp = pathlib.Path("/tmp/opencv-conda")
+          if tmp.exists():
+              shutil.rmtree(tmp)
+          tmp.mkdir(parents=True, exist_ok=True)
+
+          with zipfile.ZipFile(pkg) as z:
+              z.extractall(tmp)
+
+          for tar_path in tmp.glob("pkg-*.tar.zst"):
+              subprocess.run(["tar", "--zstd", "-xf", str(tar_path), "-C", str(tmp)], check=True)
+
+          sos = sorted(tmp.rglob("*.so*"), key=lambda p: p.stat().st_size)
+          if not sos:
+              print("WARN: 未找到任何 .so 文件")
+              sys.exit(1)
+
+          bad = []
+          for so in sos:
+              proc = subprocess.run(["strings", str(so)], text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+              for line in proc.stdout.splitlines():
+                  if line.startswith("GLIBC_"):
+                      ver = line.removeprefix("GLIBC_")
+                      try:
+                          parts = tuple(map(int, ver.split(".")[:2]))
+                      except Exception:
+                          continue
+                      if parts > (2, 35):
+                          bad.append((str(so), line))
+
+          if bad:
+              print("ERROR: OpenCV 包需要过新的 glibc：")
+              for so, sym in sorted(set(bad)):
+                  print(f"  {sym}  {so}")
+              sys.exit(1)
+
+          print("OK: OpenCV 包没有超过 GLIBC_2.35 的符号")
+          print("")
+          print("=== .so 文件大小 ===")
+          for so in sos:
+              print(f"  {so.stat().st_size:>12,d}  {so.name}")
+          PY
+
+      - name: 生成 runtime channel
+        run: |
+          set -eux
+          rm -rf local-channel-runtime
+          mkdir -p local-channel-runtime/linux-64 local-channel-runtime/noarch
+          cp local-channel/linux-64/*.conda local-channel-runtime/linux-64/ || true
+          pixi global install rattler-index
+          rattler-index fs ./local-channel-runtime --target-platform linux-64
+          echo "=== local-channel (full) ==="
+          du -sh local-channel || true
+          echo "=== local-channel-runtime ==="
+          du -sh local-channel-runtime || true
+          find local-channel-runtime -maxdepth 3 -type f -exec ls -lh {} \;
+
+      - name: 保存编译缓存 (runtime channel)
+        uses: actions/cache/save@v5
+        with:
+          path: local-channel-runtime
+          key: opencv-runtime-v2-${{ hashFiles('Recipes/opencv-minimal/recipe.yaml', 'Recipes/opencv-minimal/variants.yaml', 'Pixi/pixi.toml') }}
+
+  build:
+    name: 构建镜像
+    needs: opencv
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v6
+
+      - name: 恢复 OpenCV runtime channel
+        uses: actions/cache/restore@v5
+        with:
+          path: local-channel-runtime
+          key: opencv-runtime-v2-${{ hashFiles('Recipes/opencv-minimal/recipe.yaml', 'Recipes/opencv-minimal/variants.yaml', 'Pixi/pixi.toml') }}
+          restore-keys: |
+            opencv-runtime-v2-
+          fail-on-cache-miss: false
+
+      - name: 合并为 Docker context
+        run: |
+          if [ -d local-channel-runtime/noarch ] || [ -d local-channel-runtime/linux-64 ]; then
+            rm -rf local-channel
+            cp -a local-channel-runtime local-channel
+            echo "使用 runtime channel (cache hit)"
+          else
+            mkdir -p local-channel
+            echo "无 runtime channel，fallback conda-forge"
+          fi
 
       - name: 设置 Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -41,8 +219,8 @@ jobs:
           platforms: linux/amd64
           load: true
           tags: ${{ env.IMAGE_TAG }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=alas-pixi
+          cache-to: type=gha,scope=alas-pixi,mode=max,ignore-error=true
           outputs: type=docker,compression=gzip,compression-level=9
 
       - name: 转换镜像为单层
@@ -83,29 +261,7 @@ jobs:
       - name: 分析镜像体积
         run: |
           set -eu
-          docker run --rm --entrypoint sh ${{ env.IMAGE_TAG }} -c '
-            echo "===== 根目录体积 ====="
-            du -xh -d1 / 2>/dev/null | sort -h
-
-            echo ""
-            echo "===== /root 目录体积 ====="
-            du -xh -d2 /root 2>/dev/null | sort -h | tail -30
-
-            echo ""
-            echo "===== Pixi 环境体积 ====="
-            du -xh -d2 /opt/alas-pixi-env/.pixi/envs/default 2>/dev/null | sort -h | tail -80
-
-            echo ""
-            echo "===== site-packages 一级目录体积 ====="
-            du -xh -d1 /opt/alas-pixi-env/.pixi/envs/default/lib/python3.7/site-packages 2>/dev/null | sort -h | tail -80
-
-            echo ""
-            echo "===== lib 目录最大 .so 文件 Top 80 ====="
-            find /opt/alas-pixi-env/.pixi/envs/default/lib -type f -name "*.so*" 2>/dev/null \
-              | xargs -r du -h \
-              | sort -h \
-              | tail -80
-          '
+          docker run -i --rm --entrypoint sh ${{ env.IMAGE_TAG }} < Docker/analyze-image.sh
 
       - name: 导出镜像为产物
         run: |

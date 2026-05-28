@@ -66,14 +66,28 @@ RUN set -eu; \
 # 步骤5：预构建 Pixi 虚拟环境
 RUN mkdir -p /opt/alas-pixi-env
 
+COPY local-channel /opt/local-channel
 COPY Pixi/pixi.toml /opt/alas-pixi-env/pixi.toml
 
 RUN set -eu; \
     . /tmp/builder-proxy.sh; \
     cd /opt/alas-pixi-env; \
-    pixi install --manifest-path pixi.toml; \
-    ./.pixi/envs/default/bin/python -V; \
     _pe="/opt/alas-pixi-env/.pixi/envs/default"; \
+    if [ -d /opt/local-channel/linux-64 ] || [ -d /opt/local-channel/noarch ]; then \
+        sed 's|channels = \["conda-forge"\]|channels = ["file:///opt/local-channel", "conda-forge"]|' pixi.toml > pixi.toml.tmp && mv pixi.toml.tmp pixi.toml; \
+        sed 's|opencv = "\*"|opencv = "==4.5.5"|' pixi.toml > pixi.toml.tmp && mv pixi.toml.tmp pixi.toml; \
+        mkdir -p /opt/local-channel/noarch; \
+        if [ ! -f /opt/local-channel/noarch/repodata.json ]; then \
+            printf '{"info":{"subdir":"noarch"},"packages":{}}\n' > /opt/local-channel/noarch/repodata.json; \
+        fi; \
+        echo "已强制锁定 OpenCV-mini channel 和版本"; \
+    fi; \
+    pixi install --manifest-path pixi.toml; \
+    "$_pe/bin/python" -V; \
+    echo "=== cv2 import 检查 ==="; \
+    printf 'import cv2\nprint("cv2 path:", cv2.__file__)\ninfo = cv2.getBuildInformation()\nfor key in ["To be built", "PNG", "JPEG", "FFMPEG", "GStreamer", "GUI"]:\n    for line in info.splitlines():\n        if key in line:\n            print(line)\n' > /tmp/check_cv2.py; \
+    "$_pe/bin/python" /tmp/check_cv2.py; \
+    rm -f /tmp/check_cv2.py; \
     echo "=== 清理前体积 ==="; \
     du -sh "$_pe" 2>/dev/null || true; \
     find "$_pe" -type d \( \
@@ -125,7 +139,27 @@ RUN set -eu; \
         2>/dev/null || true; \
     pixi clean cache --yes 2>/dev/null || true; \
     echo "=== 清理后体积 ==="; \
-    du -sh "$_pe" 2>/dev/null || true
+    du -sh "$_pe" 2>/dev/null || true; \
+    echo "=== OpenCV 完整性检查 ==="; \
+    pixi list --manifest-path pixi.toml | grep -Ei 'opencv|libopencv|py-opencv' || true; \
+    if find "$_pe/lib" -maxdepth 1 -type f \( \
+        -name 'libopencv_calib3d.so*' -o \
+        -name 'libopencv_features2d.so*' -o \
+        -name 'libopencv_flann.so*' -o \
+        -name 'libopencv_highgui.so*' -o \
+        -name 'libopencv_videoio.so*' -o \
+        -name 'libopencv_objdetect.so*' -o \
+        -name 'libopencv_photo.so*' -o \
+        -name 'libopencv_stitching.so*' -o \
+        -name 'libopencv_tracking.so*' -o \
+        -name 'libopencv_xfeatures2d.so*' -o \
+        -name 'libopencv_cvv.so*' \
+    \) | grep -q .; then \
+        echo "ERROR: full OpenCV libraries were installed; expected OpenCV-mini only"; \
+        find "$_pe/lib" -maxdepth 1 -type f -name 'libopencv*.so*' -exec ls -lh {} \; ; \
+        exit 1; \
+    fi; \
+    echo "OpenCV-mini 验证通过"
 
 
 # 运行阶段：仅保留运行时必需的文件
