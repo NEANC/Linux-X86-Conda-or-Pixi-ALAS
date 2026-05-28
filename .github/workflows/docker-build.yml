@@ -278,7 +278,8 @@ jobs:
             -c file://${PWD}/local-channel \
             -c conda-forge \
             --target-platform linux-64 \
-            --output-dir ./local-channel
+            --output-dir ./local-channel \
+            --no-test
           rattler-index fs ./local-channel --target-platform linux-64
 
       - name: 上传 CnOCR 产物
