@@ -26,8 +26,8 @@ env:
   IMAGE_TAG: alas-pixi-alpine:ci-test
 
 jobs:
-  native-packages:
-    name: 构建 opencv + mxnet + cnocr
+  opencv:
+    name: 构建 OpenCV-mini
     runs-on: ubuntu-latest
     steps:
       - name: 检出仓库
@@ -40,22 +40,16 @@ jobs:
           cache: false
           run-install: false
 
-      - name: 恢复编译缓存
+      - name: 恢复 OpenCV 缓存
         id: cache
         uses: actions/cache/restore@v5
         with:
           path: local-channel
-          key: native-mini-v2-${{ hashFiles('Recipes/opencv-minimal/**', 'Recipes/mxnet-minimal/**', 'Recipes/cnocr-legacy/**', 'Pixi/pixi.toml') }}
-          restore-keys: |
-            native-mini-v2-
+          key: opencv-build-v4-${{ hashFiles('Recipes/opencv-minimal/recipe.yaml', 'Recipes/opencv-minimal/variants.yaml') }}
 
       - name: 安装 rattler-build
         if: steps.cache.outputs.cache-hit != 'true'
         run: pixi global install rattler-build
-
-      - name: 安装 rattler-index
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: pixi global install rattler-index
 
       - name: 编译 OpenCV-mini
         if: steps.cache.outputs.cache-hit != 'true'
@@ -66,11 +60,104 @@ jobs:
             -c conda-forge \
             --target-platform linux-64 \
             --output-dir ./local-channel
+          pixi global install rattler-index
           rattler-index fs ./local-channel --target-platform linux-64
+
+      - name: 检查 OpenCV glibc 符号版本
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -eu
+          python3 - <<'PY'
+          import sys, zipfile, subprocess, pathlib, shutil
+          pkg = next(pathlib.Path("local-channel/linux-64").glob("opencv-*.conda"), None)
+          if not pkg:
+              print("SKIP: 未找到 opencv .conda")
+              sys.exit(0)
+          tmp = pathlib.Path("/tmp/opencv-check")
+          if tmp.exists():
+              shutil.rmtree(tmp)
+          tmp.mkdir(parents=True)
+          try:
+              with zipfile.ZipFile(pkg) as z:
+                  z.extractall(tmp)
+              for t in sorted(tmp.glob("pkg-*.tar.zst")):
+                  subprocess.run(["tar", "--zstd", "-xf", str(t), "-C", str(tmp)], check=True)
+              bad = []
+              for so in tmp.rglob("*.so*"):
+                  proc = subprocess.run(["strings", str(so)], text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                  for line in proc.stdout.splitlines():
+                      if line.startswith("GLIBC_"):
+                          ver = line.removeprefix("GLIBC_")
+                          try:
+                              parts = tuple(map(int, ver.split(".")[:2]))
+                          except Exception:
+                              continue
+                          if parts > (2, 35):
+                              bad.append((so.name, line))
+              if bad:
+                  print("ERROR: OpenCV 包需要过新的 glibc：")
+                  for n, sym in sorted(set(bad)):
+                      print(f"  {sym}  {n}")
+                  sys.exit(1)
+              print("OK: OpenCV 包没有超过 GLIBC_2.35 的符号")
+              sos = sorted(tmp.rglob("*.so*"), key=lambda p: p.stat().st_size)
+              for so in sos:
+                  print(f"  {so.stat().st_size:>10,d}  {so.name}")
+          finally:
+              shutil.rmtree(tmp, ignore_errors=True)
+          PY
+
+      - name: 上传 OpenCV 产物
+        uses: actions/upload-artifact@v7
+        with:
+          name: opencv-conda
+          path: local-channel/linux-64/opencv-*.conda
+          compression-level: 0
+
+      - name: 保存 OpenCV 缓存
+        uses: actions/cache/save@v5
+        with:
+          path: local-channel
+          key: opencv-build-v4-${{ hashFiles('Recipes/opencv-minimal/recipe.yaml', 'Recipes/opencv-minimal/variants.yaml') }}
+
+  mxnet:
+    name: 构建 MXNet-mini
+    needs: opencv
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v6
+
+      - name: 安装 Pixi
+        uses: prefix-dev/setup-pixi@v0.9.6
+        with:
+          pixi-version: latest
+          cache: false
+          run-install: false
+
+      - name: 恢复 MXNet 缓存
+        id: cache
+        uses: actions/cache/restore@v5
+        with:
+          path: local-channel
+          key: mxnet-build-v2-${{ hashFiles('Recipes/mxnet-minimal/recipe.yaml', 'Recipes/mxnet-minimal/variants.yaml') }}
+
+      - name: 下载 OpenCV 产物
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/download-artifact@v8
+        with:
+          name: opencv-conda
+          path: local-channel/linux-64
+
+      - name: 安装 rattler-build
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: pixi global install rattler-build
 
       - name: 编译 MXNet-mini
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
+          pixi global install rattler-index
+          rattler-index fs ./local-channel --target-platform linux-64
           rattler-build build \
             -r Recipes/mxnet-minimal/recipe.yaml \
             -m Recipes/mxnet-minimal/variants.yaml \
@@ -80,15 +167,159 @@ jobs:
             --output-dir ./local-channel
           rattler-index fs ./local-channel --target-platform linux-64
 
+      - name: 检查 MXNet glibc + MKL
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -eu
+          python3 - <<'PY'
+          import sys, zipfile, subprocess, pathlib, shutil
+          pkg = next(pathlib.Path("local-channel/linux-64").glob("mxnet-*.conda"), None)
+          if not pkg:
+              print("SKIP: 未找到 mxnet .conda")
+              sys.exit(0)
+          tmp = pathlib.Path("/tmp/mxnet-check")
+          if tmp.exists():
+              shutil.rmtree(tmp)
+          tmp.mkdir(parents=True)
+          err = 0
+          try:
+              with zipfile.ZipFile(pkg) as z:
+                  z.extractall(tmp)
+              for t in sorted(tmp.glob("pkg-*.tar.zst")):
+                  subprocess.run(["tar", "--zstd", "-xf", str(t), "-C", str(tmp)], check=True)
+              bad_glibc = []
+              for so in tmp.rglob("*.so*"):
+                  proc = subprocess.run(["strings", str(so)], text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                  for line in proc.stdout.splitlines():
+                      if line.startswith("GLIBC_"):
+                          ver = line.removeprefix("GLIBC_")
+                          try:
+                              parts = tuple(map(int, ver.split(".")[:2]))
+                          except Exception:
+                              continue
+                          if parts > (2, 35):
+                              bad_glibc.append((so.name, line))
+              if bad_glibc:
+                  print("ERROR: MXNet 包需要过新的 glibc：")
+                  for n, sym in sorted(set(bad_glibc)):
+                      print(f"  {sym}  {n}")
+                  err = 1
+              else:
+                  print("OK: MXNet 包没有超过 GLIBC_2.35 的符号")
+              mkl = list(tmp.rglob("libmklml_intel.so*")) + list(tmp.rglob("libmkldnn.so*"))
+              if mkl:
+                  print("ERROR: MXNet 包包含 MKL/MKLDNN 库：")
+                  for f in mkl:
+                      print(f"  {f.name}")
+                  err = 1
+              else:
+                  print("OK: MXNet 包不含 MKL/MKLDNN")
+              sos = sorted(tmp.rglob("*.so*"), key=lambda p: p.stat().st_size)
+              for so in sos:
+                  print(f"  {so.stat().st_size:>10,d}  {so.name}")
+              sys.exit(err)
+          finally:
+              shutil.rmtree(tmp, ignore_errors=True)
+          PY
+
+      - name: 上传 MXNet 产物
+        uses: actions/upload-artifact@v7
+        with:
+          name: mxnet-conda
+          path: local-channel/linux-64/mxnet-*.conda
+          compression-level: 0
+
+      - name: 保存 MXNet 缓存
+        uses: actions/cache/save@v5
+        with:
+          path: local-channel
+          key: mxnet-build-v2-${{ hashFiles('Recipes/mxnet-minimal/recipe.yaml', 'Recipes/mxnet-minimal/variants.yaml') }}
+
+  cnocr:
+    name: 构建 CnOCR legacy
+    needs: [opencv, mxnet]
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v6
+
+      - name: 安装 Pixi
+        uses: prefix-dev/setup-pixi@v0.9.6
+        with:
+          pixi-version: latest
+          cache: false
+          run-install: false
+
+      - name: 恢复 CnOCR 缓存
+        id: cache
+        uses: actions/cache/restore@v5
+        with:
+          path: local-channel
+          key: cnocr-build-v2-${{ hashFiles('Recipes/cnocr-legacy/recipe.yaml') }}
+
+      - name: 下载 OpenCV + MXNet 产物
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/download-artifact@v8
+        with:
+          pattern: "{opencv,mxnet}-conda"
+          path: local-channel/linux-64
+          merge-multiple: true
+
+      - name: 安装 rattler-build
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: pixi global install rattler-build
+
       - name: 编译 CnOCR legacy
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
+          pixi global install rattler-index
+          rattler-index fs ./local-channel --target-platform linux-64
           rattler-build build \
             -r Recipes/cnocr-legacy/recipe.yaml \
             -c file://${PWD}/local-channel \
             -c conda-forge \
             --target-platform linux-64 \
             --output-dir ./local-channel
+          rattler-index fs ./local-channel --target-platform linux-64
+
+      - name: 上传 CnOCR 产物
+        uses: actions/upload-artifact@v7
+        with:
+          name: cnocr-conda
+          path: local-channel/linux-64/cnocr-*.conda
+          compression-level: 0
+
+      - name: 保存 CnOCR 缓存
+        uses: actions/cache/save@v5
+        with:
+          path: local-channel
+          key: cnocr-build-v2-${{ hashFiles('Recipes/cnocr-legacy/recipe.yaml') }}
+
+  assemble-native:
+    name: 组装本机包
+    needs: [opencv, mxnet, cnocr]
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v6
+
+      - name: 安装 Pixi
+        uses: prefix-dev/setup-pixi@v0.9.6
+        with:
+          pixi-version: latest
+          cache: false
+          run-install: false
+
+      - name: 下载所有产物
+        uses: actions/download-artifact@v8
+        with:
+          pattern: "{opencv,mxnet,cnocr}-conda"
+          path: local-channel/linux-64
+          merge-multiple: true
+
+      - name: 索引本地 Channel
+        run: |
+          pixi global install rattler-index
           rattler-index fs ./local-channel --target-platform linux-64
 
       - name: 输出产物信息
@@ -135,20 +366,27 @@ jobs:
       - name: 检查产物 glibc 符号版本
         run: |
           set -eu
-          python3 - <<'PY'
-          import os, sys, zipfile, subprocess, pathlib, tempfile, tarfile, shutil
+          python3 - "$GITHUB_STEP_SUMMARY" <<'PY'
+          import sys, zipfile, subprocess, pathlib, shutil
+
+          summary = sys.argv[1]
+          def out(msg):
+              print(msg)
+              with open(summary, 'a') as f:
+                  f.write(msg + '\n')
 
           GLIBC_MAX = (2, 35)
           exit_code = 0
           pkgs = sorted(pathlib.Path("local-channel/linux-64").glob("*.conda"))
           if not pkgs:
-              print("SKIP: 未找到任何 .conda 包，跳过检查")
+              out("SKIP: 未找到任何 .conda 包，跳过检查")
               sys.exit(0)
 
+          out("")
+          out("===== 产物质量检查 =====")
+          out("")
           for pkg in pkgs:
-              print(f"")
-              print(f"===== 检查: {pkg.name} =====")
-              print(f"路径: {pkg}")
+              out(f"--- {pkg.name} ---")
               tmp = pathlib.Path("/tmp/pkg-check")
               if tmp.exists():
                   shutil.rmtree(tmp)
@@ -160,7 +398,7 @@ jobs:
                       subprocess.run(["tar", "--zstd", "-xf", str(tar_path), "-C", str(tmp)], check=True)
                   sos = sorted(tmp.rglob("*.so*"), key=lambda p: p.stat().st_size)
                   if not sos:
-                      print("  无 .so 文件，跳过 glibc 检查")
+                      out("  无 .so 文件，跳过 glibc 检查")
                       continue
                   bad = []
                   for so in sos:
@@ -173,29 +411,28 @@ jobs:
                               except Exception:
                                   continue
                               if parts > GLIBC_MAX:
-                                  bad.append((str(so), line))
+                                  bad.append((so.name, line))
                   if bad:
-                      print(f"ERROR: {pkg.name} 需要过新的 glibc：")
-                      for so, sym in sorted(set(bad)):
-                          print(f"  {sym}  {so}")
+                      out(f"  ❌ glibc 过高：")
+                      for n, sym in sorted(set(bad)):
+                          out(f"    {sym}  {n}")
                       exit_code = 1
                   else:
-                      print(f"OK: {pkg.name} 没有超过 GLIBC_2.35 的符号")
+                      out(f"  ✅ glibc OK")
 
-                  print("")
-                  print("  .so 文件大小:")
+                  out("  .so 文件:")
                   for so in sos:
-                      print(f"    {so.stat().st_size:>10,d}  {so.name}")
+                      out(f"    {so.stat().st_size:>10,d}  {so.name}")
 
                   if "mxnet" in pkg.name:
                       mkl = list(tmp.rglob("libmklml_intel.so*")) + list(tmp.rglob("libmkldnn.so*"))
                       if mkl:
-                          print(f"ERROR: MXNet 包包含 MKL/MKLDNN 库：")
+                          out(f"  ❌ MKL/MKLDNN 残留：")
                           for f in mkl:
-                              print(f"  {f}")
+                              out(f"    {f.name}")
                           exit_code = 1
                       else:
-                          print("OK: MXNet 包不含 MKL/MKLDNN")
+                          out(f"  ✅ 无 MKL/MKLDNN")
               finally:
                   shutil.rmtree(tmp, ignore_errors=True)
 
@@ -224,7 +461,7 @@ jobs:
 
   build:
     name: 构建镜像
-    needs: native-packages
+    needs: assemble-native
     runs-on: ubuntu-latest
     steps:
       - name: 检出仓库
@@ -274,8 +511,10 @@ jobs:
           docker export flat-tmp -o /tmp/alas-rootfs.tar
           docker rm flat-tmp
 
-          _size_raw=$(stat -c '%s' /tmp/alas-rootfs.tar 2>/dev/null || echo "?")
+          _size_raw=$(stat -c '%s' /tmp/alas-rootfs.tar 2>/dev/null || echo "0")
           _size_human=$(numfmt --to=iec --suffix=B "${_size_raw}" 2>/dev/null || echo "${_size_raw} bytes")
+          echo "ROOTFS_RAW=${_size_raw}" >> $GITHUB_ENV
+          echo "ROOTFS_HUMAN=${_size_human}" >> $GITHUB_ENV
           echo "rootfs tar 大小: ${_size_human}"
 
           echo ""
@@ -311,17 +550,42 @@ jobs:
           echo "========== 导出单层镜像 =========="
           docker save ${{ env.IMAGE_TAG }} | gzip -9 > "${{ env.ARTIFACT_NAME }}"
 
-          _size_gz=$(stat -c '%s' "${{ env.ARTIFACT_NAME }}" 2>/dev/null || echo "?")
+          _size_gz=$(stat -c '%s' "${{ env.ARTIFACT_NAME }}" 2>/dev/null || echo "0")
           _size_human=$(numfmt --to=iec --suffix=B "${_size_gz}" 2>/dev/null || echo "${_size_gz} bytes")
+          echo "SAVE_SIZE_BYTES=${_size_gz}" >> $GITHUB_ENV
+          echo "SAVE_SIZE_HUMAN=${_size_human}" >> $GITHUB_ENV
           echo "gzip 产物大小: ${_size_human}"
 
           _ratio="0"
-          if [ "${_size_gz}" != "?" ] && [ -n "${FLAT_SIZE_BYTES:-}" ] && [ "${FLAT_SIZE_BYTES}" != "0" ]; then
+          if [ "${_size_gz}" != "0" ] && [ -n "${FLAT_SIZE_BYTES:-}" ] && [ "${FLAT_SIZE_BYTES}" != "0" ]; then
             _ratio=$(awk "BEGIN {printf \"%.1f\", ${_size_gz} * 100 / ${FLAT_SIZE_BYTES}}")
             echo "压缩率: ${_ratio}% (镜像 ${FLAT_SIZE:-?} → gzip ${_size_human})"
+            echo "COMPRESS_RATIO=${_ratio}" >> $GITHUB_ENV
           else
             echo "镜像盘上大小: ${FLAT_SIZE:-?}"
           fi
+
+      - name: 汇报镜像体积
+        run: |
+          {
+            echo
+            echo "===== 镜像体积报告 ====="
+            echo ""
+            echo "| 指标 | 大小 |"
+            echo "|---|---|"
+            echo "| rootfs (tar) | ${ROOTFS_HUMAN:-?} |"
+            echo "| 单层镜像 (gzip -9) | ${FLAT_SIZE:-?} |"
+            echo "| docker save + gzip -9 | ${SAVE_SIZE_HUMAN:-?} |"
+            if [ -n "${COMPRESS_RATIO:-}" ]; then
+              echo "| 压缩率 (save vs 镜像) | ${COMPRESS_RATIO}% |"
+            fi
+            echo ""
+            if [ -n "${ROOTFS_RAW:-}" ] && [ "${ROOTFS_RAW}" != "0" ] && [ -n "${FLAT_SIZE_BYTES:-}" ] && [ "${FLAT_SIZE_BYTES}" != "0" ]; then
+              _overhead=$((FLAT_SIZE_BYTES - ROOTFS_RAW))
+              _overhead_human=$(numfmt --to=iec --suffix=B "${_overhead#-}" 2>/dev/null || echo "${_overhead} bytes")
+              echo "| 镜像 overhead (meta/layer) | ${_overhead_human} |"
+            fi
+          } | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: 上传镜像产物
         uses: actions/upload-artifact@v7
