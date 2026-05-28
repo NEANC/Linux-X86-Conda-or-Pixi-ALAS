@@ -153,6 +153,22 @@ configure_deploy() {
     log_ok "deploy.yaml 已配置"
 }
 
+configure_git_proxy() {
+    _cgp_proxy="${http_proxy:-${HTTP_PROXY:-${https_proxy:-${HTTPS_PROXY:-}}}}"
+    if [ -z "${_cgp_proxy}" ]; then
+        return 0
+    fi
+
+    if [ ! -f "${ALAS_DIR}/config/deploy.yaml" ]; then
+        return 0
+    fi
+
+    if grep -qE '^[[:space:]]*GitProxy:[[:space:]]*null[[:space:]]*$' "${ALAS_DIR}/config/deploy.yaml"; then
+        sed -i "s|^\([[:space:]]*GitProxy:\).*|\1 ${_cgp_proxy}|" "${ALAS_DIR}/config/deploy.yaml"
+        log "GitProxy 已设置为 ${_cgp_proxy}"
+    fi
+}
+
 use_prebuilt_pixi_env() {
     _up_prebuilt="${ALAS_PIXI_PREBUILT:-/opt/alas-pixi-env}"
     if [ ! -d "${_up_prebuilt}/.pixi" ] || [ ! -f "${_up_prebuilt}/pixi.lock" ]; then
@@ -249,6 +265,7 @@ main() {
     fi
 
     configure_deploy
+    configure_git_proxy
     setup_pixi_env
 
     if [ -d "${ALAS_DIR}/.git" ]; then
