@@ -351,7 +351,7 @@ jobs:
                       sos = sorted(tmp.rglob('*.so*'), key=lambda p: p.stat().st_size)
                       if sos:
                           for so in sos:
-                              out(f'    {so.stat().st_size:>10,d}  {so.name}')
+                              out(f'    {so.stat().st_size:>10,d}  {so.relative_to(tmp)}')
                       else:
                           out('    (无 .so 文件)')
                   finally:
@@ -406,7 +406,7 @@ jobs:
                               except Exception:
                                   continue
                               if parts > GLIBC_MAX:
-                                  bad.append((so.name, line))
+                                  bad.append((str(so.relative_to(tmp)), line))
                   if bad:
                       out(f"  ❌ glibc 过高：")
                       for n, sym in sorted(set(bad)):
@@ -417,7 +417,7 @@ jobs:
 
                   out("  .so 文件:")
                   for so in sos:
-                      out(f"    {so.stat().st_size:>10,d}  {so.name}")
+                      out(f"    {so.stat().st_size:>10,d}  {so.relative_to(tmp)}")
 
                   if "mxnet" in pkg.name:
                       mkl = list(tmp.rglob("libmklml_intel.so*")) + list(tmp.rglob("libmkldnn.so*"))

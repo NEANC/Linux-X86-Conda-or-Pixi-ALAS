@@ -162,8 +162,8 @@ requirements:
     - wheel
     - cython
     - numpy ==1.21.6
-    - openblas
-    - libopenblas
+    - openblas >=0.3.25,<0.3.26
+    - libopenblas >=0.3.25,<0.3.26
     - libcblas
     - zlib
   run:
