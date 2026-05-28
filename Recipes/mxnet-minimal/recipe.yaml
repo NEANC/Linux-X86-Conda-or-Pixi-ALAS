@@ -162,12 +162,4 @@ requirements:
 
 tests:
   - script:
-      - python - <<'PY'
-        import mxnet as mx
-        print("mxnet:", mx.__version__)
-        a = mx.nd.array([1, 2, 3])
-        b = a + 1
-        assert b.asnumpy().tolist() == [2.0, 3.0, 4.0]
-        from mxnet import gluon
-        print("mxnet cmake wheel OK")
-        PY
+      - printf 'import mxnet as mx\nprint("mxnet:", mx.__version__)\na = mx.nd.array([1, 2, 3])\nb = a + 1\nassert b.asnumpy().tolist() == [2.0, 3.0, 4.0]\nfrom mxnet import gluon\nprint("mxnet cmake wheel OK")\n' > /tmp/test_mxnet.py && python /tmp/test_mxnet.py && rm -f /tmp/test_mxnet.py
