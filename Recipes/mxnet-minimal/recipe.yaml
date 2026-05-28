@@ -50,7 +50,9 @@ build:
       -D OpenBLAS_INCLUDE_DIR="$PREFIX/include" \
       -D OpenBLAS_LIB="$PREFIX/lib/libopenblas.so" \
       -D CMAKE_CXX_FLAGS="-Wno-maybe-uninitialized -Wno-template-id-cdtor" \
-      -D CMAKE_POLICY_VERSION_MINIMUM=3.5
+      -D CMAKE_POLICY_VERSION_MINIMUM=3.5 \
+      -D BUILD_TESTS=OFF \
+      -D BUILD_CPP_EXAMPLES=OFF
 
     echo "===== build libmxnet ====="
     cmake --build build --parallel "${CPU_COUNT:-2}"
