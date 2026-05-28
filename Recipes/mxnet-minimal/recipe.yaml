@@ -139,6 +139,9 @@ build:
 
     strip --strip-unneeded "$SP_DIR/mxnet/libmxnet.so" || true
 
+    echo "===== libmxnet.so locations in conda prefix ====="
+    find "$PREFIX" -name 'libmxnet.so' -type f -exec ls -lh {} \;
+
     echo "===== mxnet package size ====="
     du -sh "$SP_DIR/mxnet"
     find "$SP_DIR/mxnet" -maxdepth 2 -type f -name "*.so*" -exec ls -lh {} \;
@@ -167,7 +170,6 @@ requirements:
     - python >=3.7,<3.8
     - numpy >=1.21,<2
     - requests
-    - libopenblas
     - libcblas
     - libgcc-ng
     - libstdcxx-ng
