@@ -45,9 +45,9 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: local-channel
-          key: native-mini-v1-${{ hashFiles('Recipes/opencv-minimal/**', 'Recipes/mxnet-minimal/**', 'Recipes/cnocr-legacy/**', 'Pixi/pixi.toml') }}
+          key: native-mini-v2-${{ hashFiles('Recipes/opencv-minimal/**', 'Recipes/mxnet-minimal/**', 'Recipes/cnocr-legacy/**', 'Pixi/pixi.toml') }}
           restore-keys: |
-            native-mini-v1-
+            native-mini-v2-
 
       - name: 安装 rattler-build
         if: steps.cache.outputs.cache-hit != 'true'
@@ -220,7 +220,7 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: local-channel-runtime
-          key: native-runtime-v1-${{ hashFiles('Recipes/opencv-minimal/**', 'Recipes/mxnet-minimal/**', 'Recipes/cnocr-legacy/**', 'Pixi/pixi.toml') }}
+          key: native-runtime-v2-${{ hashFiles('Recipes/opencv-minimal/**', 'Recipes/mxnet-minimal/**', 'Recipes/cnocr-legacy/**', 'Pixi/pixi.toml') }}
 
   build:
     name: 构建镜像
@@ -234,9 +234,9 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: local-channel-runtime
-          key: native-runtime-v1-${{ hashFiles('Recipes/opencv-minimal/**', 'Recipes/mxnet-minimal/**', 'Recipes/cnocr-legacy/**', 'Pixi/pixi.toml') }}
+          key: native-runtime-v2-${{ hashFiles('Recipes/opencv-minimal/**', 'Recipes/mxnet-minimal/**', 'Recipes/cnocr-legacy/**', 'Pixi/pixi.toml') }}
           restore-keys: |
-            native-runtime-v1-
+            native-runtime-v2-
           fail-on-cache-miss: false
 
       - name: 合并为 Docker context

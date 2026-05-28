@@ -15,7 +15,7 @@ build:
 
     SP_DIR="$($PYTHON -c 'import sysconfig; print(sysconfig.get_paths()["platlib"])')"
 
-    cat > config.mk <<'MXCONF'
+    cat > config.mk <<MXCONF
     CC = ${CC}
     CXX = ${CXX}
     PYTHON = ${PYTHON}
@@ -27,7 +27,6 @@ build:
     USE_NVTX = 0
 
     USE_OPENCV = 0
-
     USE_OPENMP = 1
 
     USE_MKLDNN = 0
@@ -42,16 +41,19 @@ build:
     USE_JEMALLOC = 0
     USE_OPERATOR_TUNING = 0
     USE_SIGNAL_HANDLER = 0
+
     USE_F16C = 0
     USE_SSE = 1
-
     WERROR = 0
 
     ADD_CFLAGS = ${CFLAGS}
     ADD_LDFLAGS = ${LDFLAGS}
     MXCONF
 
-    make -j"${CPU_COUNT:-2}"
+    echo "===== config.mk ====="
+    cat config.mk
+
+    make -j2
 
     cp -f lib/libmxnet.so python/mxnet/libmxnet.so
 
