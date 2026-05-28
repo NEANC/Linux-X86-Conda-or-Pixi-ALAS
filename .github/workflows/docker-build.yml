@@ -10,6 +10,8 @@ on:
       - "Pixi/pixi.toml"
       - ".github/workflows/docker-build.yml"
       - "Recipes/opencv-minimal/**"
+      - "Recipes/mxnet-minimal/**"
+      - "Recipes/cnocr-legacy/**"
       - "!Docker/*.md"
   workflow_dispatch:
 
@@ -24,8 +26,8 @@ env:
   IMAGE_TAG: alas-pixi-alpine:ci-test
 
 jobs:
-  opencv:
-    name: 构建 OpenCV-mini
+  native-packages:
+    name: 构建 opencv + mxnet + cnocr
     runs-on: ubuntu-latest
     steps:
       - name: 检出仓库
@@ -43,13 +45,19 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: local-channel
-          key: opencv-minimal-v3-${{ hashFiles('Recipes/opencv-minimal/recipe.yaml', 'Recipes/opencv-minimal/variants.yaml', 'Pixi/pixi.toml') }}
+          key: native-mini-v1-${{ hashFiles('Recipes/opencv-minimal/**', 'Recipes/mxnet-minimal/**', 'Recipes/cnocr-legacy/**', 'Pixi/pixi.toml') }}
+          restore-keys: |
+            native-mini-v1-
 
       - name: 安装 rattler-build
         if: steps.cache.outputs.cache-hit != 'true'
         run: pixi global install rattler-build
 
-      - name: 编译 OpenCV
+      - name: 安装 rattler-index
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: pixi global install rattler-index
+
+      - name: 编译 OpenCV-mini
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
           rattler-build build \
@@ -58,11 +66,29 @@ jobs:
             -c conda-forge \
             --target-platform linux-64 \
             --output-dir ./local-channel
+          rattler-index fs ./local-channel --target-platform linux-64
 
-      - name: 索引本地 Channel
+      - name: 编译 MXNet-mini
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
-          pixi global install rattler-index
+          rattler-build build \
+            -r Recipes/mxnet-minimal/recipe.yaml \
+            -m Recipes/mxnet-minimal/variants.yaml \
+            -c file://${PWD}/local-channel \
+            -c conda-forge \
+            --target-platform linux-64 \
+            --output-dir ./local-channel
+          rattler-index fs ./local-channel --target-platform linux-64
+
+      - name: 编译 CnOCR legacy
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          rattler-build build \
+            -r Recipes/cnocr-legacy/recipe.yaml \
+            -c file://${PWD}/local-channel \
+            -c conda-forge \
+            --target-platform linux-64 \
+            --output-dir ./local-channel
           rattler-index fs ./local-channel --target-platform linux-64
 
       - name: 输出产物信息
@@ -81,83 +107,99 @@ jobs:
               print(msg)
               with open(summary, 'a') as f:
                   f.write(msg + '\n')
-          local = pathlib.Path('local-channel')
-          pkg = next(local.rglob('opencv-*.conda'), None)
-          if not pkg:
-              out('  (未找到 .conda 包)')
+          pkgs = sorted(pathlib.Path('local-channel/linux-64').glob('*.conda'))
+          if not pkgs:
+              out('  (未找到任何 .conda 包)')
           else:
-              tmp = pathlib.Path('/tmp/so-list')
-              if tmp.exists():
-                  shutil.rmtree(tmp)
-              tmp.mkdir(parents=True)
-              try:
-                  with zipfile.ZipFile(pkg) as z:
-                      z.extractall(tmp)
-                  for tar_path in sorted(tmp.glob('pkg-*.tar.zst')):
-                      subprocess.run(['tar', '--zstd', '-xf', str(tar_path), '-C', str(tmp)], check=True)
-                  sos = sorted(tmp.rglob('*.so*'), key=lambda p: p.stat().st_size)
-                  if sos:
-                      for so in sos:
-                          out(f'  {so.stat().st_size:>12,d}  {so.name}')
-                  else:
-                      out('  (未找到 .so 文件)')
-              finally:
-                  shutil.rmtree(tmp, ignore_errors=True)
+              for pkg in pkgs:
+                  out(f'  [{pkg.name}]')
+                  tmp = pathlib.Path('/tmp/so-list')
+                  if tmp.exists():
+                      shutil.rmtree(tmp)
+                  tmp.mkdir(parents=True)
+                  try:
+                      with zipfile.ZipFile(pkg) as z:
+                          z.extractall(tmp)
+                      for tar_path in sorted(tmp.glob('pkg-*.tar.zst')):
+                          subprocess.run(['tar', '--zstd', '-xf', str(tar_path), '-C', str(tmp)], check=True)
+                      sos = sorted(tmp.rglob('*.so*'), key=lambda p: p.stat().st_size)
+                      if sos:
+                          for so in sos:
+                              out(f'    {so.stat().st_size:>10,d}  {so.name}')
+                      else:
+                          out('    (无 .so 文件)')
+                  finally:
+                      shutil.rmtree(tmp, ignore_errors=True)
           PY
 
-      - name: 检查 OpenCV glibc 符号版本
+      - name: 检查产物 glibc 符号版本
         run: |
           set -eu
           python3 - <<'PY'
           import os, sys, zipfile, subprocess, pathlib, tempfile, tarfile, shutil
 
-          pkg = next(pathlib.Path("local-channel/linux-64").glob("opencv-*.conda"), None)
-          if not pkg:
-              print("SKIP: 未找到 opencv .conda 包，跳过符号检查")
+          GLIBC_MAX = (2, 35)
+          exit_code = 0
+          pkgs = sorted(pathlib.Path("local-channel/linux-64").glob("*.conda"))
+          if not pkgs:
+              print("SKIP: 未找到任何 .conda 包，跳过检查")
               sys.exit(0)
 
-          print(f"检查包: {pkg}")
+          for pkg in pkgs:
+              print(f"")
+              print(f"===== 检查: {pkg.name} =====")
+              print(f"路径: {pkg}")
+              tmp = pathlib.Path("/tmp/pkg-check")
+              if tmp.exists():
+                  shutil.rmtree(tmp)
+              tmp.mkdir(parents=True, exist_ok=True)
+              try:
+                  with zipfile.ZipFile(pkg) as z:
+                      z.extractall(tmp)
+                  for tar_path in sorted(tmp.glob("pkg-*.tar.zst")):
+                      subprocess.run(["tar", "--zstd", "-xf", str(tar_path), "-C", str(tmp)], check=True)
+                  sos = sorted(tmp.rglob("*.so*"), key=lambda p: p.stat().st_size)
+                  if not sos:
+                      print("  无 .so 文件，跳过 glibc 检查")
+                      continue
+                  bad = []
+                  for so in sos:
+                      proc = subprocess.run(["strings", str(so)], text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                      for line in proc.stdout.splitlines():
+                          if line.startswith("GLIBC_"):
+                              ver = line.removeprefix("GLIBC_")
+                              try:
+                                  parts = tuple(map(int, ver.split(".")[:2]))
+                              except Exception:
+                                  continue
+                              if parts > GLIBC_MAX:
+                                  bad.append((str(so), line))
+                  if bad:
+                      print(f"ERROR: {pkg.name} 需要过新的 glibc：")
+                      for so, sym in sorted(set(bad)):
+                          print(f"  {sym}  {so}")
+                      exit_code = 1
+                  else:
+                      print(f"OK: {pkg.name} 没有超过 GLIBC_2.35 的符号")
 
-          tmp = pathlib.Path("/tmp/opencv-conda")
-          if tmp.exists():
-              shutil.rmtree(tmp)
-          tmp.mkdir(parents=True, exist_ok=True)
+                  print("")
+                  print("  .so 文件大小:")
+                  for so in sos:
+                      print(f"    {so.stat().st_size:>10,d}  {so.name}")
 
-          with zipfile.ZipFile(pkg) as z:
-              z.extractall(tmp)
+                  if "mxnet" in pkg.name:
+                      mkl = list(tmp.rglob("libmklml_intel.so*")) + list(tmp.rglob("libmkldnn.so*"))
+                      if mkl:
+                          print(f"ERROR: MXNet 包包含 MKL/MKLDNN 库：")
+                          for f in mkl:
+                              print(f"  {f}")
+                          exit_code = 1
+                      else:
+                          print("OK: MXNet 包不含 MKL/MKLDNN")
+              finally:
+                  shutil.rmtree(tmp, ignore_errors=True)
 
-          for tar_path in tmp.glob("pkg-*.tar.zst"):
-              subprocess.run(["tar", "--zstd", "-xf", str(tar_path), "-C", str(tmp)], check=True)
-
-          sos = sorted(tmp.rglob("*.so*"), key=lambda p: p.stat().st_size)
-          if not sos:
-              print("WARN: 未找到任何 .so 文件")
-              sys.exit(1)
-
-          bad = []
-          for so in sos:
-              proc = subprocess.run(["strings", str(so)], text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-              for line in proc.stdout.splitlines():
-                  if line.startswith("GLIBC_"):
-                      ver = line.removeprefix("GLIBC_")
-                      try:
-                          parts = tuple(map(int, ver.split(".")[:2]))
-                      except Exception:
-                          continue
-                      if parts > (2, 35):
-                          bad.append((str(so), line))
-
-          if bad:
-              print("ERROR: OpenCV 包需要过新的 glibc：")
-              for so, sym in sorted(set(bad)):
-                  print(f"  {sym}  {so}")
-              sys.exit(1)
-
-          print("OK: OpenCV 包没有超过 GLIBC_2.35 的符号")
-          print("")
-          print("=== .so 文件大小 ===")
-          for so in sos:
-              print(f"  {so.stat().st_size:>12,d}  {so.name}")
+          sys.exit(exit_code)
           PY
 
       - name: 生成 runtime channel
@@ -178,11 +220,11 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: local-channel-runtime
-          key: opencv-runtime-v2-${{ hashFiles('Recipes/opencv-minimal/recipe.yaml', 'Recipes/opencv-minimal/variants.yaml', 'Pixi/pixi.toml') }}
+          key: native-runtime-v1-${{ hashFiles('Recipes/opencv-minimal/**', 'Recipes/mxnet-minimal/**', 'Recipes/cnocr-legacy/**', 'Pixi/pixi.toml') }}
 
   build:
     name: 构建镜像
-    needs: opencv
+    needs: native-packages
     runs-on: ubuntu-latest
     steps:
       - name: 检出仓库
@@ -192,9 +234,9 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: local-channel-runtime
-          key: opencv-runtime-v2-${{ hashFiles('Recipes/opencv-minimal/recipe.yaml', 'Recipes/opencv-minimal/variants.yaml', 'Pixi/pixi.toml') }}
+          key: native-runtime-v1-${{ hashFiles('Recipes/opencv-minimal/**', 'Recipes/mxnet-minimal/**', 'Recipes/cnocr-legacy/**', 'Pixi/pixi.toml') }}
           restore-keys: |
-            opencv-runtime-v2-
+            native-runtime-v1-
           fail-on-cache-miss: false
 
       - name: 合并为 Docker context

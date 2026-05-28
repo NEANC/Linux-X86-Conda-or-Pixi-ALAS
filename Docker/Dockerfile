@@ -81,6 +81,12 @@ RUN set -eu; \
             printf '{"info":{"subdir":"noarch"},"packages":{}}\n' > /opt/local-channel/noarch/repodata.json; \
         fi; \
         echo "已强制锁定 OpenCV-mini channel 和版本"; \
+        sed '/^mxnet = /d' pixi.toml > pixi.toml.tmp && mv pixi.toml.tmp pixi.toml; \
+        sed '/^cnocr = /d' pixi.toml > pixi.toml.tmp && mv pixi.toml.tmp pixi.toml; \
+        sed '/^\[pypi-dependencies\]/i\mxnet = "==1.6.0"' pixi.toml > pixi.toml.tmp && mv pixi.toml.tmp pixi.toml; \
+        sed '/^mxnet = /a\cnocr = "==1.2.3.1"' pixi.toml > pixi.toml.tmp && mv pixi.toml.tmp pixi.toml; \
+        sed '/^jellyfish = /i\gluoncv = ">=0.3,<0.7"' pixi.toml > pixi.toml.tmp && mv pixi.toml.tmp pixi.toml; \
+        echo "已迁移 mxnet/cnocr → dependencies，注入 gluoncv"
     fi; \
     pixi install --manifest-path pixi.toml; \
     "$_pe/bin/python" -V; \
@@ -88,6 +94,24 @@ RUN set -eu; \
     printf 'import cv2\nprint("cv2 path:", cv2.__file__)\ninfo = cv2.getBuildInformation()\nfor key in ["To be built", "PNG", "JPEG", "FFMPEG", "GStreamer", "GUI"]:\n    for line in info.splitlines():\n        if key in line:\n            print(line)\n' > /tmp/check_cv2.py; \
     "$_pe/bin/python" /tmp/check_cv2.py; \
     rm -f /tmp/check_cv2.py; \
+    echo "=== MXNet 完整性检查 ==="; \
+    pixi list --manifest-path pixi.toml | grep -Ei 'mxnet|cnocr|opencv' || true; \
+    printf 'import mxnet as mx\nprint("mxnet:", mx.__version__)\na = mx.nd.array([1, 2, 3])\nassert (a + 1).asnumpy().tolist() == [2.0, 3.0, 4.0]\nfrom cnocr import CnOcr\nprint("mxnet/cnocr import OK")\n' > /tmp/check_mxnet.py; \
+    "$_pe/bin/python" /tmp/check_mxnet.py; \
+    if find "$_pe/lib/python3.7/site-packages/mxnet" -type f \( \
+        -name 'libmklml_intel.so*' -o \
+        -name 'libmkldnn.so*' \
+    \) | grep -q .; then \
+        echo "ERROR: PyPI/MKL MXNet was installed; expected MXNet-mini"; \
+        find "$_pe/lib/python3.7/site-packages/mxnet" -type f \( \
+            -name 'libmklml_intel.so*' -o \
+            -name 'libmkldnn.so*' -o \
+            -name 'libmxnet.so*' \
+        \) -exec ls -lh {} \; ; \
+        exit 1; \
+    fi; \
+    rm -f /tmp/check_mxnet.py; \
+    echo "MXNet-mini 验证通过"; \
     echo "=== 清理前体积 ==="; \
     du -sh "$_pe" 2>/dev/null || true; \
     find "$_pe" -type d \( \

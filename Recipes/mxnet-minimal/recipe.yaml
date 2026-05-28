@@ -1,0 +1,121 @@
+context:
+  version: "1.6.0"
+
+package:
+  name: mxnet
+  version: ${{ version }}
+
+source:
+  url: https://archive.apache.org/dist/incubator/mxnet/${{ version }}/apache-mxnet-src-${{ version }}-incubating.tar.gz
+
+build:
+  number: 0
+  script: |
+    set -eux
+
+    SP_DIR="$($PYTHON -c 'import sysconfig; print(sysconfig.get_paths()["platlib"])')"
+
+    cat > config.mk <<'MXCONF'
+    CC = ${CC}
+    CXX = ${CXX}
+    PYTHON = ${PYTHON}
+
+    USE_CUDA = 0
+    USE_CUDNN = 0
+    ENABLE_CUDA_RTC = 0
+    USE_NCCL = 0
+    USE_NVTX = 0
+
+    USE_OPENCV = 0
+
+    USE_OPENMP = 1
+
+    USE_MKLDNN = 0
+    USE_BLAS = openblas
+    USE_LAPACK = 1
+
+    USE_DIST_KVSTORE = 0
+    USE_HDFS = 0
+    USE_S3 = 0
+    USE_CPP_PACKAGE = 0
+    USE_GPERFTOOLS = 0
+    USE_JEMALLOC = 0
+    USE_OPERATOR_TUNING = 0
+    USE_SIGNAL_HANDLER = 0
+    USE_F16C = 0
+    USE_SSE = 1
+
+    WERROR = 0
+
+    ADD_CFLAGS = ${CFLAGS}
+    ADD_LDFLAGS = ${LDFLAGS}
+    MXCONF
+
+    make -j"${CPU_COUNT:-2}"
+
+    cp -f lib/libmxnet.so python/mxnet/libmxnet.so
+
+    cd python
+    "$PYTHON" -m pip install . --no-deps --no-build-isolation -vv
+
+    rm -rf \
+      "$SP_DIR/mxnet/tests" \
+      "$SP_DIR/mxnet/test_utils.py" \
+      "$SP_DIR/mxnet/scala" \
+      "$SP_DIR/mxnet/r" \
+      "$SP_DIR/mxnet/julia" \
+      2>/dev/null || true
+
+    find "$SP_DIR/mxnet" -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true
+    find "$SP_DIR/mxnet" -type f \( -name "*.pyc" -o -name "*.pyo" -o -name "*.a" \) -delete 2>/dev/null || true
+
+    if find "$SP_DIR/mxnet" -type f \( -name "libmklml_intel.so*" -o -name "libmkldnn.so*" \) | grep -q .; then
+      echo "ERROR: MKL/MKLDNN libraries are still packaged"
+      find "$SP_DIR/mxnet" -type f \( -name "libmklml_intel.so*" -o -name "libmkldnn.so*" \) -exec ls -lh {} \;
+      exit 1
+    fi
+
+    strip --strip-unneeded "$SP_DIR/mxnet/libmxnet.so" || true
+
+requirements:
+  build:
+    - ${{ compiler('c') }}
+    - ${{ compiler('cxx') }}
+    - sysroot_linux-64 ==2.28
+    - make
+    - cmake
+    - pkg-config
+    - perl
+    - patch
+  host:
+    - python ==3.7.6
+    - pip
+    - setuptools
+    - wheel
+    - cython
+    - numpy ==1.21.6
+    - libopenblas
+    - libpng
+    - zlib
+  run:
+    - python >=3.7,<3.8
+    - numpy >=1.21,<2
+    - requests
+    - graphviz
+    - libopenblas
+    - libgcc-ng
+    - libstdcxx-ng
+    - libgomp
+    - zlib
+
+tests:
+  - script:
+      - python - <<'PY'
+        import mxnet as mx
+        print("mxnet:", mx.__version__)
+        a = mx.nd.array([1, 2, 3])
+        b = a + 1
+        assert b.asnumpy().tolist() == [2.0, 3.0, 4.0]
+        from mxnet import gluon
+        print("mxnet minimal OK")
+        PY

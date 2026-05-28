@@ -57,3 +57,17 @@ for key in ['To be built','GUI','FFMPEG','GStreamer','PNG','JPEG','TIFF','OpenCL
         if key in line:
             print(line)
 "
+
+echo ""
+echo "===== MXNet libraries ====="
+find "$_pe/lib/python3.7/site-packages/mxnet" -maxdepth 2 -type f -name "*.so*" \
+  -exec du -h {} \; 2>/dev/null | sort -h || true
+
+echo ""
+echo "===== MXNet import test ====="
+./.pixi/envs/default/bin/python - <<'PY'
+import mxnet as mx
+print("mxnet:", mx.__version__)
+a = mx.nd.array([1, 2, 3])
+print((a + 1).asnumpy())
+PY
