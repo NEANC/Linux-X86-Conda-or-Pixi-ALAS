@@ -100,13 +100,16 @@ RUN set -eu; \
         "$_pe/share/locale" \
         "$_pe/share/opencv4" \
         "$_pe/share/qt" \
+        "$_pe/share/terminfo" \
         "$_pe/translations" \
         "$_pe/qml" \
         "$_pe/mkspecs" \
         "$_pe/doc" \
         "$_pe/resources" \
+        "$_pe/plugins" \
         "$_pe/lib/cmake" \
         "$_pe/lib/pkgconfig" \
+        "$_pe/lib/libQt5"* \
         "$_pe/lib/libQt5WebEngine*" \
         "$_pe/lib/python3.7/ensurepip" \
         "$_pe/bin/pip" \
@@ -116,6 +119,7 @@ RUN set -eu; \
         "$_pe/lib/python3.7/site-packages/pip-"*".dist-info" \
         /root/.cache \
         /root/.rattler \
+        /root/.cargo \
         /tmp/* \
         /var/tmp/* \
         2>/dev/null || true; \

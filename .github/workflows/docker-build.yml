@@ -88,6 +88,10 @@ jobs:
             du -xh -d1 / 2>/dev/null | sort -h
 
             echo ""
+            echo "===== /root 目录体积 ====="
+            du -xh -d2 /root 2>/dev/null | sort -h | tail -30
+
+            echo ""
             echo "===== Pixi 环境体积 ====="
             du -xh -d2 /opt/alas-pixi-env/.pixi/envs/default 2>/dev/null | sort -h | tail -80
 
