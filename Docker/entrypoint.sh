@@ -165,7 +165,7 @@ use_prebuilt_pixi_env() {
         rm -rf .pixi pixi.lock
     fi
 
-    cp -a "${_up_prebuilt}/.pixi" .pixi
+    ln -sfn "${_up_prebuilt}/.pixi" .pixi
     cp "${_up_prebuilt}/pixi.lock" pixi.lock
 
     if [ -x .pixi/envs/default/bin/python ] && .pixi/envs/default/bin/python -V >/dev/null 2>&1; then
