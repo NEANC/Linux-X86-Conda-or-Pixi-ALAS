@@ -19,7 +19,7 @@ du -xh -d1 /opt/alas-pixi-env/.pixi/envs/default/lib/python3.7/site-packages 2>/
 echo ""
 echo "===== lib 目录最大 .so 文件 Top 80 ====="
 find /opt/alas-pixi-env/.pixi/envs/default/lib -type f -name "*.so*" 2>/dev/null \
-  | xargs -r du -h \
+  -print0 | xargs -0 -r du -h \
   | sort -h \
   | tail -80
 
