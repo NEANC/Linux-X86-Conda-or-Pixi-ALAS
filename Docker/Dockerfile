@@ -125,6 +125,11 @@ RUN set -eu; \
         "$_pe/lib/pkgconfig" \
         "$_pe/lib/libQt5"* \
         "$_pe/lib/libQt5WebEngine*" \
+        "$_pe/lib/libx264"* \
+        "$_pe/lib/libopenh264"* \
+        "$_pe/share/ffmpeg" \
+        "$_pe/bin/ffmpeg" \
+        "$_pe/bin/ffprobe" \
         "$_pe/lib/python3.7/ensurepip" \
         "$_pe/bin/pip" \
         "$_pe/bin/pip3" \
