@@ -109,6 +109,11 @@ RUN set -eu; \
         "$_pe/lib/pkgconfig" \
         "$_pe/lib/libQt5WebEngine*" \
         "$_pe/lib/python3.7/ensurepip" \
+        "$_pe/bin/pip" \
+        "$_pe/bin/pip3" \
+        "$_pe/bin/pip3.7" \
+        "$_pe/lib/python3.7/site-packages/pip" \
+        "$_pe/lib/python3.7/site-packages/pip-"*".dist-info" \
         /root/.cache \
         /root/.rattler \
         /tmp/* \
