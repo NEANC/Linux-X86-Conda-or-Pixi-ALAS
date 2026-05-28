@@ -16,37 +16,7 @@ build:
     SP_DIR="$($PYTHON -c 'import sysconfig; print(sysconfig.get_paths()["platlib"])')"
 
     echo "===== patch python/setup.py for binary wheel ====="
-    $PYTHON - <<'PY'
-from pathlib import Path
-
-p = Path("python/setup.py")
-s = p.read_text()
-
-if "class BinaryDistribution" not in s:
-    s = s.replace(
-        "from setuptools import find_packages",
-        "from setuptools import find_packages\n"
-        "from setuptools.dist import Distribution\n\n"
-        "class BinaryDistribution(Distribution):\n"
-        "    def has_ext_modules(self):\n"
-        "        return True\n"
-        "    def is_pure(self):\n"
-        "        return False\n"
-    )
-
-s = s.replace(
-    "data_files=[('mxnet', [LIB_PATH[0]])],",
-    "package_data={'mxnet': [os.path.basename(LIB_PATH[0])]},"
-)
-
-if "distclass=BinaryDistribution" not in s:
-    s = s.replace(
-        "**kwargs)",
-        "distclass=BinaryDistribution,\n      **kwargs)"
-    )
-
-p.write_text(s)
-PY
+    printf 'from pathlib import Path\np = Path("python/setup.py")\ns = p.read_text()\nif "class BinaryDistribution" not in s:\n    s = s.replace(\n        "from setuptools import find_packages",\n        "from setuptools import find_packages\\n""from setuptools.dist import Distribution\\n\\n""class BinaryDistribution(Distribution):\\n""    def has_ext_modules(self):\\n""        return True\\n""    def is_pure(self):\\n""        return False\\n"\n    )\ns = s.replace(\n    "data_files=[(\\047mxnet\\047, [LIB_PATH[0]])],",\n    "package_data={\\047mxnet\\047: [os.path.basename(LIB_PATH[0])]},"\n)\nif "distclass=BinaryDistribution" not in s:\n    s = s.replace(\n        "**kwargs)",\n        "distclass=BinaryDistribution,\\n      **kwargs)"\n    )\np.write_text(s)\n' > /tmp/patch_setup.py && $PYTHON /tmp/patch_setup.py && rm -f /tmp/patch_setup.py
 
     echo "===== configure MXNet with CMake ====="
     cmake -S . -B build -G Ninja \
