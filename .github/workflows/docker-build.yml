@@ -298,7 +298,15 @@ jobs:
       - name: 检出仓库
         uses: actions/checkout@v6
 
+      - name: 恢复 runtime channel 缓存
+        id: runtime-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: local-channel-runtime
+          key: native-runtime-v1-${{ hashFiles('Docker/Recipes/opencv-minimal/**', 'Docker/Recipes/mxnet-minimal/**', 'Docker/Recipes/cnocr-legacy/**', 'Pixi/pixi.toml') }}
+
       - name: 安装 Pixi
+        if: steps.runtime-cache.outputs.cache-hit != 'true'
         uses: prefix-dev/setup-pixi@v0.9.6
         with:
           pixi-version: latest
@@ -306,6 +314,7 @@ jobs:
           run-install: false
 
       - name: 下载所有产物
+        if: steps.runtime-cache.outputs.cache-hit != 'true'
         uses: actions/download-artifact@v8
         with:
           pattern: "{opencv,mxnet,cnocr}-conda"
@@ -313,11 +322,13 @@ jobs:
           merge-multiple: true
 
       - name: 索引本地 Channel
+        if: steps.runtime-cache.outputs.cache-hit != 'true'
         run: |
           pixi global install rattler-index
           rattler-index fs ./local-channel --target-platform linux-64
 
       - name: 输出产物信息
+        if: steps.runtime-cache.outputs.cache-hit != 'true'
         run: |
           _size=$(du -sh local-channel | cut -f1)
           echo "Channel 大小: ${_size}" | tee -a "$GITHUB_STEP_SUMMARY"
@@ -359,6 +370,7 @@ jobs:
           PY
 
       - name: 检查产物 glibc 符号版本
+        if: steps.runtime-cache.outputs.cache-hit != 'true'
         run: |
           set -eu
           python3 - "$GITHUB_STEP_SUMMARY" <<'PY'
@@ -435,6 +447,7 @@ jobs:
           PY
 
       - name: 生成 runtime channel
+        if: steps.runtime-cache.outputs.cache-hit != 'true'
         run: |
           set -eux
           rm -rf local-channel-runtime
@@ -449,6 +462,7 @@ jobs:
           find local-channel-runtime -maxdepth 3 -type f -exec ls -lh {} \;
 
       - name: 保存编译缓存 (runtime channel)
+        if: steps.runtime-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5
         with:
           path: local-channel-runtime
