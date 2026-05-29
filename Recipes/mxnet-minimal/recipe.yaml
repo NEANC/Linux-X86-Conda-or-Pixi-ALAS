@@ -117,8 +117,7 @@ build:
 
     echo "===== cleanup installed mxnet ====="
     rm -f "$PREFIX/lib/libmxnet.so"
-    rm -f "$SP_DIR/mxnet/test_utils.py"
-    printf "from pathlib import Path\np = Path('$SP_DIR/mxnet/__init__.py')\ns = p.read_text()\ns = s.replace('from . import test_utils\\n', '')\np.write_text(s)\n" > /tmp/fix_init.py && $PYTHON /tmp/fix_init.py && rm -f /tmp/fix_init.py
+    echo "" > "$SP_DIR/mxnet/test_utils.py"
     find "$SP_DIR/mxnet" -type d \( \
       -name __pycache__ -o \
       -name tests -o \
