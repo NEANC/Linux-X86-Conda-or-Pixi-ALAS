@@ -515,6 +515,13 @@ jobs:
             native-runtime-v2-
           fail-on-cache-miss: false
 
+      - name: 安装 Pixi
+        uses: prefix-dev/setup-pixi@v0.9.6
+        with:
+          pixi-version: latest
+          cache: false
+          run-install: false
+
       - name: 合并为 Docker context
         run: |
           set -eux
