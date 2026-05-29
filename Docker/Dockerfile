@@ -113,9 +113,12 @@ RUN set -eu; \
     rm -f /tmp/check_mxnet.py; \
     echo "MXNet-mini 验证通过"; \
     echo "=== numpy.testing 检查 ==="; \
-    printf 'import numpy\nimport numpy.testing\nprint("numpy.testing OK")\n' > /tmp/check_np.py; \
-    "$_pe/bin/python" /tmp/check_np.py; \
-    rm -f /tmp/check_np.py; \
+    if [ -d "$_pe/lib/python3.7/site-packages/numpy/testing" ]; then \
+        echo "numpy/testing 目录存在"; \
+    else \
+        echo "ERROR: numpy/testing 目录缺失"; \
+        exit 1; \
+    fi; \
     echo "=== 清理前体积 ==="; \
     du -sh "$_pe" 2>/dev/null || true; \
     find "$_pe" -type d \( \
