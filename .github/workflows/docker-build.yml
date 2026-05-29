@@ -7,7 +7,7 @@ on:
   pull_request:
     paths:
       - "Docker/**"
-      - "Pixi/pixi.toml"
+      - "Docker/pixi.docker.toml"
       - ".github/workflows/docker-build.yml"
       - "Docker/Recipes/opencv-minimal/**"
       - "Docker/Recipes/mxnet-minimal/**"
@@ -38,7 +38,7 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: local-channel-runtime
-          key: native-runtime-v1-${{ hashFiles('Docker/Recipes/opencv-minimal/**', 'Docker/Recipes/mxnet-minimal/**', 'Docker/Recipes/cnocr-legacy/**', 'Pixi/pixi.toml') }}
+          key: native-runtime-v2-${{ hashFiles('Docker/Recipes/opencv-minimal/**', 'Docker/Recipes/mxnet-minimal/**', 'Docker/Recipes/cnocr-legacy/**', 'Docker/pixi.docker.toml') }}
 
       - name: 安装 Pixi
         if: steps.runtime.outputs.cache-hit != 'true'
@@ -143,7 +143,7 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: local-channel-runtime
-          key: native-runtime-v1-${{ hashFiles('Docker/Recipes/opencv-minimal/**', 'Docker/Recipes/mxnet-minimal/**', 'Docker/Recipes/cnocr-legacy/**', 'Pixi/pixi.toml') }}
+          key: native-runtime-v2-${{ hashFiles('Docker/Recipes/opencv-minimal/**', 'Docker/Recipes/mxnet-minimal/**', 'Docker/Recipes/cnocr-legacy/**', 'Docker/pixi.docker.toml') }}
 
       - name: 安装 Pixi
         if: steps.runtime.outputs.cache-hit != 'true'
@@ -262,7 +262,7 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: local-channel-runtime
-          key: native-runtime-v1-${{ hashFiles('Docker/Recipes/opencv-minimal/**', 'Docker/Recipes/mxnet-minimal/**', 'Docker/Recipes/cnocr-legacy/**', 'Pixi/pixi.toml') }}
+          key: native-runtime-v2-${{ hashFiles('Docker/Recipes/opencv-minimal/**', 'Docker/Recipes/mxnet-minimal/**', 'Docker/Recipes/cnocr-legacy/**', 'Docker/pixi.docker.toml') }}
 
       - name: 安装 Pixi
         if: steps.runtime.outputs.cache-hit != 'true'
@@ -333,7 +333,7 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: local-channel-runtime
-          key: native-runtime-v1-${{ hashFiles('Docker/Recipes/opencv-minimal/**', 'Docker/Recipes/mxnet-minimal/**', 'Docker/Recipes/cnocr-legacy/**', 'Pixi/pixi.toml') }}
+          key: native-runtime-v2-${{ hashFiles('Docker/Recipes/opencv-minimal/**', 'Docker/Recipes/mxnet-minimal/**', 'Docker/Recipes/cnocr-legacy/**', 'Docker/pixi.docker.toml') }}
 
       - name: 安装 Pixi
         if: steps.runtime-cache.outputs.cache-hit != 'true'
@@ -496,7 +496,7 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: local-channel-runtime
-          key: native-runtime-v1-${{ hashFiles('Docker/Recipes/opencv-minimal/**', 'Docker/Recipes/mxnet-minimal/**', 'Docker/Recipes/cnocr-legacy/**', 'Pixi/pixi.toml') }}
+          key: native-runtime-v2-${{ hashFiles('Docker/Recipes/opencv-minimal/**', 'Docker/Recipes/mxnet-minimal/**', 'Docker/Recipes/cnocr-legacy/**', 'Docker/pixi.docker.toml') }}
 
   build:
     name: 构建镜像
@@ -510,21 +510,31 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: local-channel-runtime
-          key: native-runtime-v1-${{ hashFiles('Docker/Recipes/opencv-minimal/**', 'Docker/Recipes/mxnet-minimal/**', 'Docker/Recipes/cnocr-legacy/**', 'Pixi/pixi.toml') }}
+          key: native-runtime-v2-${{ hashFiles('Docker/Recipes/opencv-minimal/**', 'Docker/Recipes/mxnet-minimal/**', 'Docker/Recipes/cnocr-legacy/**', 'Docker/pixi.docker.toml') }}
           restore-keys: |
-            native-runtime-v1-
+            native-runtime-v2-
           fail-on-cache-miss: false
 
       - name: 合并为 Docker context
         run: |
+          set -eux
+          rm -rf local-channel
+          mkdir -p local-channel/linux-64 local-channel/noarch
+
           if [ -d local-channel-runtime/noarch ] || [ -d local-channel-runtime/linux-64 ]; then
-            rm -rf local-channel
-            cp -a local-channel-runtime local-channel
+            cp -v local-channel-runtime/linux-64/*.conda local-channel/linux-64/ || true
+            cp -v local-channel-runtime/noarch/*.conda local-channel/noarch/ 2>/dev/null || true
             echo "使用 runtime channel (cache hit)"
           else
-            mkdir -p local-channel
-            echo "无 runtime channel，fallback conda-forge"
+            echo "WARN: 无 runtime channel，fallback conda-forge"
           fi
+
+          pixi global install rattler-index
+          rattler-index fs ./local-channel --target-platform linux-64
+
+          echo "=== Docker context local-channel ==="
+          du -sh local-channel
+          find local-channel -maxdepth 3 -type f -exec ls -lh {} \;
 
       - name: 设置 Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -537,8 +547,8 @@ jobs:
           platforms: linux/amd64
           load: true
           tags: ${{ env.IMAGE_TAG }}
-          cache-from: type=gha,scope=alas-pixi
-          cache-to: type=gha,scope=alas-pixi,mode=max,ignore-error=true
+          cache-from: type=gha,scope=alas-pixi-v2
+          cache-to: type=gha,scope=alas-pixi-v2,mode=max,ignore-error=true
           outputs: type=docker,compression=gzip,compression-level=9
 
       - name: 转换镜像为单层

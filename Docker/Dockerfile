@@ -66,8 +66,8 @@ RUN set -eu; \
 # 步骤5：预构建 Pixi 虚拟环境
 RUN mkdir -p /opt/alas-pixi-env
 
-COPY Docker/local-channel /opt/local-channel
-COPY Pixi/pixi.toml /opt/alas-pixi-env/pixi.toml
+COPY local-channel /opt/local-channel
+COPY Docker/pixi.docker.toml /opt/alas-pixi-env/pixi.toml
 
 RUN set -eu; \
     . /tmp/builder-proxy.sh; \
@@ -75,19 +75,19 @@ RUN set -eu; \
     _pe="/opt/alas-pixi-env/.pixi/envs/default"; \
     if [ -d /opt/local-channel/linux-64 ] || [ -d /opt/local-channel/noarch ]; then \
         sed 's|channels = \["conda-forge"\]|channels = ["file:///opt/local-channel", "conda-forge"]|' pixi.toml > pixi.toml.tmp && mv pixi.toml.tmp pixi.toml; \
-        sed 's|opencv = "\*"|opencv = "==4.5.5"|' pixi.toml > pixi.toml.tmp && mv pixi.toml.tmp pixi.toml; \
         mkdir -p /opt/local-channel/noarch; \
         if [ ! -f /opt/local-channel/noarch/repodata.json ]; then \
             printf '{"info":{"subdir":"noarch"},"packages":{}}\n' > /opt/local-channel/noarch/repodata.json; \
         fi; \
-        echo "已强制锁定 OpenCV-mini channel 和版本"; \
-        sed '/^mxnet = /d' pixi.toml > pixi.toml.tmp && mv pixi.toml.tmp pixi.toml; \
-        sed '/^cnocr = /d' pixi.toml > pixi.toml.tmp && mv pixi.toml.tmp pixi.toml; \
-        sed '/^\[pypi-dependencies\]/i\mxnet = "==1.6.0"' pixi.toml > pixi.toml.tmp && mv pixi.toml.tmp pixi.toml; \
-        sed '/^mxnet = /a\cnocr = "==1.2.3.1"' pixi.toml > pixi.toml.tmp && mv pixi.toml.tmp pixi.toml; \
-        sed '/^jellyfish = /i\gluoncv = ">=0.3,<0.7"' pixi.toml > pixi.toml.tmp && mv pixi.toml.tmp pixi.toml; \
-        echo "已迁移 mxnet/cnocr → dependencies，注入 gluoncv"; \
+        echo "已注入本地 channel"; \
     fi; \
+    echo "===== local-channel packages ====="; \
+    find /opt/local-channel -maxdepth 3 -type f -name '*.conda' -exec ls -lh {} \; || true; \
+    test -f /opt/local-channel/linux-64/opencv-*.conda || echo "WARN: opencv .conda not found"; \
+    test -f /opt/local-channel/linux-64/mxnet-*.conda || echo "WARN: mxnet .conda not found"; \
+    test -f /opt/local-channel/linux-64/cnocr-*.conda || echo "WARN: cnocr .conda not found"; \
+    echo "===== pixi.toml ====="; \
+    cat pixi.toml; \
     pixi install --manifest-path pixi.toml; \
     "$_pe/bin/python" -V; \
     echo "=== cv2 import 检查 ==="; \
