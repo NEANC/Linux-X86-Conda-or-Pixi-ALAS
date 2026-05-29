@@ -66,7 +66,7 @@ RUN set -eu; \
 # 步骤5：预构建 Pixi 虚拟环境
 RUN mkdir -p /opt/alas-pixi-env
 
-COPY local-channel /opt/local-channel
+COPY Docker/local-channel /opt/local-channel
 COPY Pixi/pixi.toml /opt/alas-pixi-env/pixi.toml
 
 RUN set -eu; \

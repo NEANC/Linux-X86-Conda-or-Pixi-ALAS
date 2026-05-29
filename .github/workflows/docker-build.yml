@@ -9,9 +9,9 @@ on:
       - "Docker/**"
       - "Pixi/pixi.toml"
       - ".github/workflows/docker-build.yml"
-      - "Recipes/opencv-minimal/**"
-      - "Recipes/mxnet-minimal/**"
-      - "Recipes/cnocr-legacy/**"
+      - "Docker/Recipes/opencv-minimal/**"
+      - "Docker/Recipes/mxnet-minimal/**"
+      - "Docker/Recipes/cnocr-legacy/**"
       - "!Docker/*.md"
   workflow_dispatch:
 
@@ -45,7 +45,7 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: local-channel
-          key: opencv-build-v1-${{ hashFiles('Recipes/opencv-minimal/recipe.yaml', 'Recipes/opencv-minimal/variants.yaml') }}
+          key: opencv-build-v1-${{ hashFiles('Docker/Recipes/opencv-minimal/recipe.yaml', 'Docker/Recipes/opencv-minimal/variants.yaml') }}
 
       - name: 安装 rattler-build
         if: steps.cache.outputs.cache-hit != 'true'
@@ -55,8 +55,8 @@ jobs:
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
           rattler-build build \
-            -r Recipes/opencv-minimal/recipe.yaml \
-            -m Recipes/opencv-minimal/variants.yaml \
+            -r Docker/Recipes/opencv-minimal/recipe.yaml \
+            -m Docker/Recipes/opencv-minimal/variants.yaml \
             -c conda-forge \
             --target-platform linux-64 \
             --output-dir ./local-channel
@@ -119,7 +119,7 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: local-channel
-          key: opencv-build-v1-${{ hashFiles('Recipes/opencv-minimal/recipe.yaml', 'Recipes/opencv-minimal/variants.yaml') }}
+          key: opencv-build-v1-${{ hashFiles('Docker/Recipes/opencv-minimal/recipe.yaml', 'Docker/Recipes/opencv-minimal/variants.yaml') }}
 
   mxnet:
     name: 构建 MXNet-mini
@@ -140,7 +140,7 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: local-channel
-          key: mxnet-build-v1-${{ hashFiles('Recipes/mxnet-minimal/recipe.yaml', 'Recipes/mxnet-minimal/variants.yaml') }}
+          key: mxnet-build-v1-${{ hashFiles('Docker/Recipes/mxnet-minimal/recipe.yaml', 'Docker/Recipes/mxnet-minimal/variants.yaml') }}
           restore-keys: |
             mxnet-build-v1-
 
@@ -152,8 +152,8 @@ jobs:
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
           rattler-build build \
-            -r Recipes/mxnet-minimal/recipe.yaml \
-            -m Recipes/mxnet-minimal/variants.yaml \
+            -r Docker/Recipes/mxnet-minimal/recipe.yaml \
+            -m Docker/Recipes/mxnet-minimal/variants.yaml \
             -c conda-forge \
             --target-platform linux-64 \
             --output-dir ./local-channel
@@ -227,7 +227,7 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: local-channel
-          key: mxnet-build-v1-${{ hashFiles('Recipes/mxnet-minimal/recipe.yaml', 'Recipes/mxnet-minimal/variants.yaml') }}
+          key: mxnet-build-v1-${{ hashFiles('Docker/Recipes/mxnet-minimal/recipe.yaml', 'Docker/Recipes/mxnet-minimal/variants.yaml') }}
 
   cnocr:
     name: 构建 CnOCR legacy
@@ -249,7 +249,7 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: local-channel
-          key: cnocr-build-v1-${{ hashFiles('Recipes/cnocr-legacy/recipe.yaml') }}
+          key: cnocr-build-v1-${{ hashFiles('Docker/Recipes/cnocr-legacy/recipe.yaml') }}
 
       - name: 下载 OpenCV 产物
         if: steps.cache.outputs.cache-hit != 'true'
@@ -268,7 +268,7 @@ jobs:
           pixi global install rattler-index
           rattler-index fs ./local-channel --target-platform linux-64
           rattler-build build \
-            -r Recipes/cnocr-legacy/recipe.yaml \
+            -r Docker/Recipes/cnocr-legacy/recipe.yaml \
             -c file://${PWD}/local-channel \
             -c conda-forge \
             --target-platform linux-64 \
@@ -288,7 +288,7 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: local-channel
-          key: cnocr-build-v1-${{ hashFiles('Recipes/cnocr-legacy/recipe.yaml') }}
+          key: cnocr-build-v1-${{ hashFiles('Docker/Recipes/cnocr-legacy/recipe.yaml') }}
 
   assemble-native:
     name: 组装本机包
@@ -452,7 +452,7 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: local-channel-runtime
-          key: native-runtime-v1-${{ hashFiles('Recipes/opencv-minimal/**', 'Recipes/mxnet-minimal/**', 'Recipes/cnocr-legacy/**', 'Pixi/pixi.toml') }}
+          key: native-runtime-v1-${{ hashFiles('Docker/Recipes/opencv-minimal/**', 'Docker/Recipes/mxnet-minimal/**', 'Docker/Recipes/cnocr-legacy/**', 'Pixi/pixi.toml') }}
 
   build:
     name: 构建镜像
@@ -466,7 +466,7 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: local-channel-runtime
-          key: native-runtime-v1-${{ hashFiles('Recipes/opencv-minimal/**', 'Recipes/mxnet-minimal/**', 'Recipes/cnocr-legacy/**', 'Pixi/pixi.toml') }}
+          key: native-runtime-v1-${{ hashFiles('Docker/Recipes/opencv-minimal/**', 'Docker/Recipes/mxnet-minimal/**', 'Docker/Recipes/cnocr-legacy/**', 'Pixi/pixi.toml') }}
           restore-keys: |
             native-runtime-v1-
           fail-on-cache-miss: false
