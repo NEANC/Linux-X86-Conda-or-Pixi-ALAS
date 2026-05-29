@@ -1,0 +1,82 @@
+context:
+  version: "4.5.5"
+
+package:
+  name: opencv
+  version: ${{ version }}
+
+source:
+  url: https://github.com/opencv/opencv/archive/refs/tags/${{ version }}.tar.gz
+  sha256: a1cfdcf6619387ca9e232687504da996aaa9f7b5689986b8331ec02cb61d28ad
+
+build:
+  number: 0
+  script: |
+    set -eux
+
+    PY3_INC="$($PYTHON -c 'import sysconfig; print(sysconfig.get_paths()["include"])')"
+    PY3_SITE="$($PYTHON -c 'import sysconfig; print(sysconfig.get_paths()["platlib"])')"
+    PY3_NUMPY="$($PYTHON -c 'import numpy; print(numpy.get_include())')"
+
+    cmake -S "$SRC_DIR" -B build -G Ninja \
+      ${CMAKE_ARGS} \
+      -D CMAKE_BUILD_TYPE=Release \
+      -D CMAKE_INSTALL_PREFIX="$PREFIX" \
+      -D CMAKE_INSTALL_LIBDIR=lib \
+      -D BUILD_SHARED_LIBS=ON \
+      -D BUILD_LIST=core,imgproc,imgcodecs,python3 \
+      -D BUILD_opencv_python3=ON \
+      -D BUILD_opencv_python2=OFF \
+      -D PYTHON3_EXECUTABLE="$PYTHON" \
+      -D PYTHON3_INCLUDE_DIR="$PY3_INC" \
+      -D PYTHON3_LIBRARY="$PREFIX/lib/libpython3.7m.so" \
+      -D PYTHON3_NUMPY_INCLUDE_DIRS="$PY3_NUMPY" \
+      -D PYTHON3_PACKAGES_PATH="$PY3_SITE" \
+      -D WITH_PNG=ON \
+      -D BUILD_PNG=OFF \
+      -D WITH_JPEG=OFF \
+      -D WITH_TIFF=OFF \
+      -D WITH_WEBP=OFF \
+      -D WITH_OPENJPEG=OFF \
+      -D WITH_JASPER=OFF \
+      -D WITH_OPENEXR=OFF \
+      -D WITH_FFMPEG=OFF \
+      -D WITH_GSTREAMER=OFF \
+      -D WITH_V4L=OFF \
+      -D WITH_GTK=OFF \
+      -D WITH_QT=OFF \
+      -D WITH_OPENCL=OFF \
+      -D WITH_IPP=OFF \
+      -D WITH_TBB=OFF \
+      -D WITH_EIGEN=OFF \
+      -D WITH_PROTOBUF=OFF \
+      -D BUILD_TESTS=OFF \
+      -D BUILD_PERF_TESTS=OFF \
+      -D BUILD_EXAMPLES=OFF \
+      -D BUILD_DOCS=OFF \
+      -D BUILD_opencv_apps=OFF
+
+    ninja -C build install
+
+requirements:
+  build:
+    - ${{ compiler('c') }}
+    - ${{ compiler('cxx') }}
+    - sysroot_linux-64 ==2.28
+    - cmake
+    - ninja
+    - pkg-config
+    - libxcrypt
+  host:
+    - python ==3.7.6
+    - numpy ==1.21.6
+    - libpng
+    - zlib
+    - libxcrypt
+  run:
+    - python >=3.7,<3.8
+    - numpy >=1.21,<2
+    - libpng
+    - zlib
+    - libgcc-ng
+    - libstdcxx-ng

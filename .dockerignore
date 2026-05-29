@@ -1,12 +1,29 @@
 *
+!local-channel/
 !Docker/
 !Pixi/
+
+local-channel/*
+!local-channel/linux-64/
+!local-channel/noarch/
+!local-channel/linux-64/**
+!local-channel/noarch/**
 
 Docker/*
 !Docker/builder-proxy.sh
 !Docker/entrypoint.sh
 !Docker/Dockerfile
 !Docker/Dockerfile.flat
+!Docker/pixi.docker.toml
+!Docker/local-channel/
+!Docker/Recipes/
+
+Docker/local-channel/*
+!Docker/local-channel/.gitkeep
+!Docker/local-channel/noarch/
+!Docker/local-channel/linux-64/
+!Docker/local-channel/noarch/**
+!Docker/local-channel/linux-64/**
 
 Pixi/*
 !Pixi/pixi.toml

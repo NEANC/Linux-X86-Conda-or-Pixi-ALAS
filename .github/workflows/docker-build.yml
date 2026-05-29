@@ -7,8 +7,11 @@ on:
   pull_request:
     paths:
       - "Docker/**"
-      - "Pixi/pixi.toml"
+      - "Docker/pixi.docker.toml"
       - ".github/workflows/docker-build.yml"
+      - "Docker/Recipes/opencv-minimal/**"
+      - "Docker/Recipes/mxnet-minimal/**"
+      - "Docker/Recipes/cnocr-legacy/**"
       - "!Docker/*.md"
   workflow_dispatch:
 
@@ -23,12 +26,522 @@ env:
   IMAGE_TAG: alas-pixi-alpine:ci-test
 
 jobs:
-  build:
-    name: 构建镜像
+  opencv:
+    name: 构建 OpenCV-mini
     runs-on: ubuntu-latest
     steps:
       - name: 检出仓库
         uses: actions/checkout@v6
+
+      - name: 检查 runtime 缓存是否已存在
+        id: runtime
+        uses: actions/cache/restore@v5
+        with:
+          path: local-channel-runtime
+          key: native-runtime-v2-${{ hashFiles('Docker/Recipes/opencv-minimal/**', 'Docker/Recipes/mxnet-minimal/**', 'Docker/Recipes/cnocr-legacy/**', 'Docker/pixi.docker.toml') }}
+
+      - name: 安装 Pixi
+        if: steps.runtime.outputs.cache-hit != 'true'
+        uses: prefix-dev/setup-pixi@v0.9.6
+        with:
+          pixi-version: latest
+          cache: false
+          run-install: false
+
+      - name: 恢复 OpenCV 缓存
+        id: cache
+        if: steps.runtime.outputs.cache-hit != 'true'
+        uses: actions/cache/restore@v5
+        with:
+          path: local-channel
+          key: opencv-build-v1-${{ hashFiles('Docker/Recipes/opencv-minimal/recipe.yaml', 'Docker/Recipes/opencv-minimal/variants.yaml') }}
+
+      - name: 安装 rattler-build
+        if: steps.runtime.outputs.cache-hit != 'true' && steps.cache.outputs.cache-hit != 'true'
+        run: pixi global install rattler-build
+
+      - name: 编译 OpenCV-mini
+        if: steps.runtime.outputs.cache-hit != 'true' && steps.cache.outputs.cache-hit != 'true'
+        run: |
+          rattler-build build \
+            -r Docker/Recipes/opencv-minimal/recipe.yaml \
+            -m Docker/Recipes/opencv-minimal/variants.yaml \
+            -c conda-forge \
+            --target-platform linux-64 \
+            --output-dir ./local-channel
+          pixi global install rattler-index
+          rattler-index fs ./local-channel --target-platform linux-64
+
+      - name: 检查 OpenCV glibc 符号版本
+        if: steps.runtime.outputs.cache-hit != 'true' && steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -eu
+          python3 - <<'PY'
+          import sys, zipfile, subprocess, pathlib, shutil
+          pkg = next(pathlib.Path("local-channel/linux-64").glob("opencv-*.conda"), None)
+          if not pkg:
+              print("SKIP: 未找到 opencv .conda")
+              sys.exit(0)
+          tmp = pathlib.Path("/tmp/opencv-check")
+          if tmp.exists():
+              shutil.rmtree(tmp)
+          tmp.mkdir(parents=True)
+          try:
+              with zipfile.ZipFile(pkg) as z:
+                  z.extractall(tmp)
+              for t in sorted(tmp.glob("pkg-*.tar.zst")):
+                  subprocess.run(["tar", "--zstd", "-xf", str(t), "-C", str(tmp)], check=True)
+              bad = []
+              for so in tmp.rglob("*.so*"):
+                  proc = subprocess.run(["strings", str(so)], text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                  for line in proc.stdout.splitlines():
+                      if line.startswith("GLIBC_"):
+                          ver = line.removeprefix("GLIBC_")
+                          try:
+                              parts = tuple(map(int, ver.split(".")[:2]))
+                          except Exception:
+                              continue
+                          if parts > (2, 35):
+                              bad.append((so.name, line))
+              if bad:
+                  print("ERROR: OpenCV 包需要过新的 glibc：")
+                  for n, sym in sorted(set(bad)):
+                      print(f"  {sym}  {n}")
+                  sys.exit(1)
+              print("OK: OpenCV 包没有超过 GLIBC_2.35 的符号")
+              sos = sorted(tmp.rglob("*.so*"), key=lambda p: p.stat().st_size)
+              for so in sos:
+                  print(f"  {so.stat().st_size:>10,d}  {so.name}")
+          finally:
+              shutil.rmtree(tmp, ignore_errors=True)
+          PY
+
+      - name: 上传 OpenCV 产物
+        if: steps.runtime.outputs.cache-hit != 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: opencv-conda
+          path: local-channel/linux-64/opencv-*.conda
+          compression-level: 0
+
+      - name: 保存 OpenCV 缓存
+        if: steps.runtime.outputs.cache-hit != 'true' && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: local-channel
+          key: opencv-build-v1-${{ hashFiles('Docker/Recipes/opencv-minimal/recipe.yaml', 'Docker/Recipes/opencv-minimal/variants.yaml') }}
+
+  mxnet:
+    name: 构建 MXNet-mini
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v6
+
+      - name: 检查 runtime 缓存是否已存在
+        id: runtime
+        uses: actions/cache/restore@v5
+        with:
+          path: local-channel-runtime
+          key: native-runtime-v2-${{ hashFiles('Docker/Recipes/opencv-minimal/**', 'Docker/Recipes/mxnet-minimal/**', 'Docker/Recipes/cnocr-legacy/**', 'Docker/pixi.docker.toml') }}
+
+      - name: 安装 Pixi
+        if: steps.runtime.outputs.cache-hit != 'true'
+        uses: prefix-dev/setup-pixi@v0.9.6
+        with:
+          pixi-version: latest
+          cache: false
+          run-install: false
+
+      - name: 恢复 MXNet 缓存
+        id: cache
+        if: steps.runtime.outputs.cache-hit != 'true'
+        uses: actions/cache/restore@v5
+        with:
+          path: local-channel
+          key: mxnet-build-v2-${{ hashFiles('Docker/Recipes/mxnet-minimal/recipe.yaml', 'Docker/Recipes/mxnet-minimal/variants.yaml') }}
+          restore-keys: |
+            mxnet-build-v2-
+
+      - name: 安装 rattler-build
+        if: steps.runtime.outputs.cache-hit != 'true' && steps.cache.outputs.cache-hit != 'true'
+        run: pixi global install rattler-build
+
+      - name: 编译 MXNet-mini
+        if: steps.runtime.outputs.cache-hit != 'true' && steps.cache.outputs.cache-hit != 'true'
+        run: |
+          rattler-build build \
+            -r Docker/Recipes/mxnet-minimal/recipe.yaml \
+            -m Docker/Recipes/mxnet-minimal/variants.yaml \
+            -c conda-forge \
+            --target-platform linux-64 \
+            --output-dir ./local-channel
+          pixi global install rattler-index
+          rattler-index fs ./local-channel --target-platform linux-64
+
+      - name: 检查 MXNet glibc + MKL
+        if: steps.runtime.outputs.cache-hit != 'true' && steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -eu
+          python3 - <<'PY'
+          import sys, zipfile, subprocess, pathlib, shutil
+          pkg = next(pathlib.Path("local-channel/linux-64").glob("mxnet-*.conda"), None)
+          if not pkg:
+              print("SKIP: 未找到 mxnet .conda")
+              sys.exit(0)
+          tmp = pathlib.Path("/tmp/mxnet-check")
+          if tmp.exists():
+              shutil.rmtree(tmp)
+          tmp.mkdir(parents=True)
+          err = 0
+          try:
+              with zipfile.ZipFile(pkg) as z:
+                  z.extractall(tmp)
+              for t in sorted(tmp.glob("pkg-*.tar.zst")):
+                  subprocess.run(["tar", "--zstd", "-xf", str(t), "-C", str(tmp)], check=True)
+              bad_glibc = []
+              for so in tmp.rglob("*.so*"):
+                  proc = subprocess.run(["strings", str(so)], text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                  for line in proc.stdout.splitlines():
+                      if line.startswith("GLIBC_"):
+                          ver = line.removeprefix("GLIBC_")
+                          try:
+                              parts = tuple(map(int, ver.split(".")[:2]))
+                          except Exception:
+                              continue
+                          if parts > (2, 35):
+                              bad_glibc.append((so.name, line))
+              if bad_glibc:
+                  print("ERROR: MXNet 包需要过新的 glibc：")
+                  for n, sym in sorted(set(bad_glibc)):
+                      print(f"  {sym}  {n}")
+                  err = 1
+              else:
+                  print("OK: MXNet 包没有超过 GLIBC_2.35 的符号")
+              mkl = list(tmp.rglob("libmklml_intel.so*")) + list(tmp.rglob("libmkldnn.so*"))
+              if mkl:
+                  print("ERROR: MXNet 包包含 MKL/MKLDNN 库：")
+                  for f in mkl:
+                      print(f"  {f.name}")
+                  err = 1
+              else:
+                  print("OK: MXNet 包不含 MKL/MKLDNN")
+              sos = sorted(tmp.rglob("*.so*"), key=lambda p: p.stat().st_size)
+              for so in sos:
+                  print(f"  {so.stat().st_size:>10,d}  {so.name}")
+              sys.exit(err)
+          finally:
+              shutil.rmtree(tmp, ignore_errors=True)
+          PY
+
+      - name: 上传 MXNet 产物
+        if: steps.runtime.outputs.cache-hit != 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: mxnet-conda
+          path: local-channel/linux-64/mxnet-*.conda
+          compression-level: 0
+
+      - name: 保存 MXNet 缓存
+        if: steps.runtime.outputs.cache-hit != 'true' && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: local-channel
+          key: mxnet-build-v2-${{ hashFiles('Docker/Recipes/mxnet-minimal/recipe.yaml', 'Docker/Recipes/mxnet-minimal/variants.yaml') }}
+
+  cnocr:
+    name: 构建 CnOCR legacy
+    needs: opencv
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v6
+
+      - name: 检查 runtime 缓存是否已存在
+        id: runtime
+        uses: actions/cache/restore@v5
+        with:
+          path: local-channel-runtime
+          key: native-runtime-v2-${{ hashFiles('Docker/Recipes/opencv-minimal/**', 'Docker/Recipes/mxnet-minimal/**', 'Docker/Recipes/cnocr-legacy/**', 'Docker/pixi.docker.toml') }}
+
+      - name: 安装 Pixi
+        if: steps.runtime.outputs.cache-hit != 'true'
+        uses: prefix-dev/setup-pixi@v0.9.6
+        with:
+          pixi-version: latest
+          cache: false
+          run-install: false
+
+      - name: 恢复 CnOCR 缓存
+        id: cache
+        if: steps.runtime.outputs.cache-hit != 'true'
+        uses: actions/cache/restore@v5
+        with:
+          path: local-channel
+          key: cnocr-build-v1-${{ hashFiles('Docker/Recipes/cnocr-legacy/recipe.yaml') }}
+
+      - name: 下载 OpenCV 产物
+        if: steps.runtime.outputs.cache-hit != 'true' && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/download-artifact@v8
+        with:
+          name: opencv-conda
+          path: local-channel/linux-64
+
+      - name: 安装 rattler-build
+        if: steps.runtime.outputs.cache-hit != 'true' && steps.cache.outputs.cache-hit != 'true'
+        run: pixi global install rattler-build
+
+      - name: 编译 CnOCR legacy
+        if: steps.runtime.outputs.cache-hit != 'true' && steps.cache.outputs.cache-hit != 'true'
+        run: |
+          pixi global install rattler-index
+          rattler-index fs ./local-channel --target-platform linux-64
+          rattler-build build \
+            -r Docker/Recipes/cnocr-legacy/recipe.yaml \
+            -c file://${PWD}/local-channel \
+            -c conda-forge \
+            --target-platform linux-64 \
+            --output-dir ./local-channel \
+            --no-test
+          rattler-index fs ./local-channel --target-platform linux-64
+
+      - name: 上传 CnOCR 产物
+        if: steps.runtime.outputs.cache-hit != 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: cnocr-conda
+          path: local-channel/linux-64/cnocr-*.conda
+          compression-level: 0
+
+      - name: 保存 CnOCR 缓存
+        if: steps.runtime.outputs.cache-hit != 'true' && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: local-channel
+          key: cnocr-build-v1-${{ hashFiles('Docker/Recipes/cnocr-legacy/recipe.yaml') }}
+
+  assemble-native:
+    name: 组装 runtime
+    needs: [opencv, mxnet, cnocr]
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v6
+
+      - name: 恢复 runtime channel 缓存
+        id: runtime-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: local-channel-runtime
+          key: native-runtime-v2-${{ hashFiles('Docker/Recipes/opencv-minimal/**', 'Docker/Recipes/mxnet-minimal/**', 'Docker/Recipes/cnocr-legacy/**', 'Docker/pixi.docker.toml') }}
+
+      - name: 安装 Pixi
+        if: steps.runtime-cache.outputs.cache-hit != 'true'
+        uses: prefix-dev/setup-pixi@v0.9.6
+        with:
+          pixi-version: latest
+          cache: false
+          run-install: false
+
+      - name: 下载所有产物
+        if: steps.runtime-cache.outputs.cache-hit != 'true'
+        uses: actions/download-artifact@v8
+        with:
+          pattern: "{opencv,mxnet,cnocr}-conda"
+          path: local-channel/linux-64
+          merge-multiple: true
+
+      - name: 索引本地 Channel
+        if: steps.runtime-cache.outputs.cache-hit != 'true'
+        run: |
+          pixi global install rattler-index
+          rattler-index fs ./local-channel --target-platform linux-64
+
+      - name: 输出产物信息
+        if: steps.runtime-cache.outputs.cache-hit != 'true'
+        run: |
+          _size=$(du -sh local-channel | cut -f1)
+          echo "Channel 大小: ${_size}" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "=== .conda 包 ===" | tee -a "$GITHUB_STEP_SUMMARY"
+          find local-channel -name '*.conda' -exec ls -lh {} \; | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "=== .so 文件大小 ===" | tee -a "$GITHUB_STEP_SUMMARY"
+          python3 - "$GITHUB_STEP_SUMMARY" <<'PY'
+          import zipfile, pathlib, subprocess, shutil, os, sys
+          summary = sys.argv[1]
+          def out(msg):
+              print(msg)
+              with open(summary, 'a') as f:
+                  f.write(msg + '\n')
+          pkgs = sorted(pathlib.Path('local-channel/linux-64').glob('*.conda'))
+          if not pkgs:
+              out('  (未找到任何 .conda 包)')
+          else:
+              for pkg in pkgs:
+                  out(f'  [{pkg.name}]')
+                  tmp = pathlib.Path('/tmp/so-list')
+                  if tmp.exists():
+                      shutil.rmtree(tmp)
+                  tmp.mkdir(parents=True)
+                  try:
+                      with zipfile.ZipFile(pkg) as z:
+                          z.extractall(tmp)
+                      for tar_path in sorted(tmp.glob('pkg-*.tar.zst')):
+                          subprocess.run(['tar', '--zstd', '-xf', str(tar_path), '-C', str(tmp)], check=True)
+                      sos = sorted(tmp.rglob('*.so*'), key=lambda p: p.stat().st_size)
+                      if sos:
+                          for so in sos:
+                              out(f'    {so.stat().st_size:>10,d}  {so.relative_to(tmp)}')
+                      else:
+                          out('    (无 .so 文件)')
+                  finally:
+                      shutil.rmtree(tmp, ignore_errors=True)
+          PY
+
+      - name: 检查产物 glibc 符号版本
+        if: steps.runtime-cache.outputs.cache-hit != 'true'
+        run: |
+          set -eu
+          python3 - "$GITHUB_STEP_SUMMARY" <<'PY'
+          import sys, zipfile, subprocess, pathlib, shutil
+
+          summary = sys.argv[1]
+          def out(msg):
+              print(msg)
+              with open(summary, 'a') as f:
+                  f.write(msg + '\n')
+
+          GLIBC_MAX = (2, 35)
+          exit_code = 0
+          pkgs = sorted(pathlib.Path("local-channel/linux-64").glob("*.conda"))
+          if not pkgs:
+              out("SKIP: 未找到任何 .conda 包，跳过检查")
+              sys.exit(0)
+
+          out("")
+          out("===== 产物质量检查 =====")
+          out("")
+          for pkg in pkgs:
+              out(f"--- {pkg.name} ---")
+              tmp = pathlib.Path("/tmp/pkg-check")
+              if tmp.exists():
+                  shutil.rmtree(tmp)
+              tmp.mkdir(parents=True, exist_ok=True)
+              try:
+                  with zipfile.ZipFile(pkg) as z:
+                      z.extractall(tmp)
+                  for tar_path in sorted(tmp.glob("pkg-*.tar.zst")):
+                      subprocess.run(["tar", "--zstd", "-xf", str(tar_path), "-C", str(tmp)], check=True)
+                  sos = sorted(tmp.rglob("*.so*"), key=lambda p: p.stat().st_size)
+                  if not sos:
+                      out("  无 .so 文件，跳过 glibc 检查")
+                      continue
+                  bad = []
+                  for so in sos:
+                      proc = subprocess.run(["strings", str(so)], text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                      for line in proc.stdout.splitlines():
+                          if line.startswith("GLIBC_"):
+                              ver = line.removeprefix("GLIBC_")
+                              try:
+                                  parts = tuple(map(int, ver.split(".")[:2]))
+                              except Exception:
+                                  continue
+                              if parts > GLIBC_MAX:
+                                  bad.append((str(so.relative_to(tmp)), line))
+                  if bad:
+                      out(f"  ❌ glibc 过高：")
+                      for n, sym in sorted(set(bad)):
+                          out(f"    {sym}  {n}")
+                      exit_code = 1
+                  else:
+                      out(f"  ✅ glibc OK")
+
+                  out("  .so 文件:")
+                  for so in sos:
+                      out(f"    {so.stat().st_size:>10,d}  {so.relative_to(tmp)}")
+
+                  if "mxnet" in pkg.name:
+                      mkl = list(tmp.rglob("libmklml_intel.so*")) + list(tmp.rglob("libmkldnn.so*"))
+                      if mkl:
+                          out(f"  ❌ MKL/MKLDNN 残留：")
+                          for f in mkl:
+                              out(f"    {f.name}")
+                          exit_code = 1
+                      else:
+                          out(f"  ✅ 无 MKL/MKLDNN")
+              finally:
+                  shutil.rmtree(tmp, ignore_errors=True)
+
+          sys.exit(exit_code)
+          PY
+
+      - name: 生成 runtime channel
+        if: steps.runtime-cache.outputs.cache-hit != 'true'
+        run: |
+          set -eux
+          rm -rf local-channel-runtime
+          mkdir -p local-channel-runtime/linux-64 local-channel-runtime/noarch
+          cp local-channel/linux-64/*.conda local-channel-runtime/linux-64/ || true
+          pixi global install rattler-index
+          rattler-index fs ./local-channel-runtime --target-platform linux-64
+          echo "=== local-channel (full) ==="
+          du -sh local-channel || true
+          echo "=== local-channel-runtime ==="
+          du -sh local-channel-runtime || true
+          find local-channel-runtime -maxdepth 3 -type f -exec ls -lh {} \;
+
+      - name: 保存编译缓存 (runtime channel)
+        if: steps.runtime-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: local-channel-runtime
+          key: native-runtime-v2-${{ hashFiles('Docker/Recipes/opencv-minimal/**', 'Docker/Recipes/mxnet-minimal/**', 'Docker/Recipes/cnocr-legacy/**', 'Docker/pixi.docker.toml') }}
+
+  build:
+    name: 构建镜像
+    needs: assemble-native
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v6
+
+      - name: 恢复 OpenCV runtime channel
+        uses: actions/cache/restore@v5
+        with:
+          path: local-channel-runtime
+          key: native-runtime-v2-${{ hashFiles('Docker/Recipes/opencv-minimal/**', 'Docker/Recipes/mxnet-minimal/**', 'Docker/Recipes/cnocr-legacy/**', 'Docker/pixi.docker.toml') }}
+          restore-keys: |
+            native-runtime-v2-
+          fail-on-cache-miss: false
+
+      - name: 安装 Pixi
+        uses: prefix-dev/setup-pixi@v0.9.6
+        with:
+          pixi-version: latest
+          cache: false
+          run-install: false
+
+      - name: 合并为 Docker context
+        run: |
+          set -eux
+          rm -rf local-channel
+          mkdir -p local-channel/linux-64 local-channel/noarch
+
+          if [ -d local-channel-runtime/noarch ] || [ -d local-channel-runtime/linux-64 ]; then
+            cp -v local-channel-runtime/linux-64/*.conda local-channel/linux-64/ || true
+            cp -v local-channel-runtime/noarch/*.conda local-channel/noarch/ 2>/dev/null || true
+            echo "使用 runtime channel (cache hit)"
+          else
+            echo "WARN: 无 runtime channel，fallback conda-forge"
+          fi
+
+          pixi global install rattler-index
+          rattler-index fs ./local-channel --target-platform linux-64
+
+          echo "=== Docker context local-channel ==="
+          du -sh local-channel
+          find local-channel -maxdepth 3 -type f -exec ls -lh {} \;
 
       - name: 设置 Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -41,8 +554,9 @@ jobs:
           platforms: linux/amd64
           load: true
           tags: ${{ env.IMAGE_TAG }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=alas-pixi-v2
+          cache-to: type=gha,scope=alas-pixi-v2,mode=max,ignore-error=true
+          outputs: type=docker,compression=gzip,compression-level=9
 
       - name: 转换镜像为单层
         run: |
@@ -53,20 +567,23 @@ jobs:
           docker export flat-tmp -o /tmp/alas-rootfs.tar
           docker rm flat-tmp
 
-          _size_raw=$(stat -c '%s' /tmp/alas-rootfs.tar 2>/dev/null || echo "?")
+          _size_raw=$(stat -c '%s' /tmp/alas-rootfs.tar 2>/dev/null || echo "0")
           _size_human=$(numfmt --to=iec --suffix=B "${_size_raw}" 2>/dev/null || echo "${_size_raw} bytes")
+          echo "ROOTFS_RAW=${_size_raw}" >> $GITHUB_ENV
+          echo "ROOTFS_HUMAN=${_size_human}" >> $GITHUB_ENV
           echo "rootfs tar 大小: ${_size_human}"
 
           echo ""
-          echo "========== 导入为单层镜像 =========="
-          docker import /tmp/alas-rootfs.tar alas-pixi-alpine:flat-rootfs
+          echo "========== 构建单层镜像 (FROM scratch, gzip -9) =========="
+          mkdir -p /tmp/flat-ctx
+          cp /tmp/alas-rootfs.tar /tmp/flat-ctx/alas-rootfs.tar
           rm -f /tmp/alas-rootfs.tar
-
-          echo ""
-          echo "========== 注入容器元数据 =========="
-          docker build -f Docker/Dockerfile.flat \
-            --build-arg FLAT_BASE=alas-pixi-alpine:flat-rootfs \
-            -t ${{ env.IMAGE_TAG }} .
+          cp Docker/Dockerfile.flat /tmp/flat-ctx/Dockerfile
+          docker buildx build \
+            --output "type=docker,compression=gzip,compression-level=9" \
+            -t ${{ env.IMAGE_TAG }} \
+            /tmp/flat-ctx
+          rm -rf /tmp/flat-ctx
 
           echo ""
           echo "========== 镜像对比 =========="
@@ -78,23 +595,53 @@ jobs:
           echo "FLAT_SIZE=${_orig_human}" >> $GITHUB_ENV
           echo "FLAT_SIZE_BYTES=${_orig_size}" >> $GITHUB_ENV
 
+      - name: 分析镜像体积
+        run: |
+          set -eu
+          docker run -i --rm --entrypoint sh ${{ env.IMAGE_TAG }} < Docker/analyze-image.sh
+
       - name: 导出镜像为产物
         run: |
           set -eu
           echo "========== 导出单层镜像 =========="
-          docker save ${{ env.IMAGE_TAG }} | gzip > "${{ env.ARTIFACT_NAME }}"
+          docker save ${{ env.IMAGE_TAG }} | gzip -9 > "${{ env.ARTIFACT_NAME }}"
 
-          _size_gz=$(stat -c '%s' "${{ env.ARTIFACT_NAME }}" 2>/dev/null || echo "?")
+          _size_gz=$(stat -c '%s' "${{ env.ARTIFACT_NAME }}" 2>/dev/null || echo "0")
           _size_human=$(numfmt --to=iec --suffix=B "${_size_gz}" 2>/dev/null || echo "${_size_gz} bytes")
+          echo "SAVE_SIZE_BYTES=${_size_gz}" >> $GITHUB_ENV
+          echo "SAVE_SIZE_HUMAN=${_size_human}" >> $GITHUB_ENV
           echo "gzip 产物大小: ${_size_human}"
 
           _ratio="0"
-          if [ "${_size_gz}" != "?" ] && [ -n "${FLAT_SIZE_BYTES:-}" ] && [ "${FLAT_SIZE_BYTES}" != "0" ]; then
+          if [ "${_size_gz}" != "0" ] && [ -n "${FLAT_SIZE_BYTES:-}" ] && [ "${FLAT_SIZE_BYTES}" != "0" ]; then
             _ratio=$(awk "BEGIN {printf \"%.1f\", ${_size_gz} * 100 / ${FLAT_SIZE_BYTES}}")
             echo "压缩率: ${_ratio}% (镜像 ${FLAT_SIZE:-?} → gzip ${_size_human})"
+            echo "COMPRESS_RATIO=${_ratio}" >> $GITHUB_ENV
           else
             echo "镜像盘上大小: ${FLAT_SIZE:-?}"
           fi
+
+      - name: 汇报镜像体积
+        run: |
+          {
+            echo
+            echo "===== 镜像体积报告 ====="
+            echo ""
+            echo "| 指标 | 大小 |"
+            echo "|---|---|"
+            echo "| rootfs (tar) | ${ROOTFS_HUMAN:-?} |"
+            echo "| 单层镜像 (gzip -9) | ${FLAT_SIZE:-?} |"
+            echo "| docker save + gzip -9 | ${SAVE_SIZE_HUMAN:-?} |"
+            if [ -n "${COMPRESS_RATIO:-}" ]; then
+              echo "| 压缩率 (save vs 镜像) | ${COMPRESS_RATIO}% |"
+            fi
+            echo ""
+            if [ -n "${ROOTFS_RAW:-}" ] && [ "${ROOTFS_RAW}" != "0" ] && [ -n "${FLAT_SIZE_BYTES:-}" ] && [ "${FLAT_SIZE_BYTES}" != "0" ]; then
+              _overhead=$((FLAT_SIZE_BYTES - ROOTFS_RAW))
+              _overhead_human=$(numfmt --to=iec --suffix=B "${_overhead#-}" 2>/dev/null || echo "${_overhead} bytes")
+              echo "| 镜像 overhead (meta/layer) | ${_overhead_human} |"
+            fi
+          } | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: 上传镜像产物
         uses: actions/upload-artifact@v7
@@ -102,6 +649,7 @@ jobs:
           name: alas-pixi-image
           path: ${{ env.ARTIFACT_NAME }}
           retention-days: 1
+          compression-level: 0
 
   test:
     name: 镜像测试
@@ -140,7 +688,7 @@ jobs:
 
           echo ""
           echo "等待 Pixi 环境部署与 ALAS 启动..."
-          sleep 45
+          sleep 30
 
           echo ""
           echo "========== 容器状态 =========="
@@ -189,14 +737,20 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: 设置 Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
       - name: 提取 Docker 元数据
         id: meta
         uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          flavor: |
+            latest=false
           tags: |
             type=semver,pattern={{raw}}
             type=sha,prefix=,format=short
+            type=raw,value=latest,enable=${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-') }}
             type=raw,value=pr-${{ github.event.number }},enable=${{ github.event_name == 'pull_request' }}
 
       - name: 下载镜像产物
@@ -204,20 +758,61 @@ jobs:
         with:
           name: alas-pixi-image
 
-      - name: 加载镜像
+      - name: 重建并推送 (gzip -9)
         run: |
           set -eu
+
+          echo "========== 加载镜像 =========="
           gunzip -c "${{ env.ARTIFACT_NAME }}" | docker load
-          docker images --filter reference='alas-pixi-alpine:*'
 
-      - name: 推送镜像到 Registry
+          echo "========== 提取 rootfs =========="
+          mkdir -p /tmp/pub-ctx
+          docker create --name pub-flat ${{ env.IMAGE_TAG }}
+          docker export pub-flat -o /tmp/pub-ctx/alas-rootfs.tar
+          docker rm pub-flat
+          cp Docker/Dockerfile.flat /tmp/pub-ctx/Dockerfile
+
+          echo "========== 构建标签列表 =========="
+          _tag_args=""
+          while IFS= read -r tag; do
+            [ -n "${tag}" ] || continue
+            echo "  标签: ${tag}"
+            _tag_args="${_tag_args} --tag ${tag}"
+          done <<< "${{ steps.meta.outputs.tags }}"
+
+          echo "========== 构建并推送 (gzip -9) =========="
+          docker buildx build \
+            --output "type=image,push=true,compression=gzip,compression-level=9,force-compression=true" \
+            ${_tag_args} \
+            /tmp/pub-ctx
+
+          rm -rf /tmp/pub-ctx
+
+      - name: 检出推送镜像大小
         run: |
           set -eu
 
-          echo "========== 推送单层镜像 =========="
-          while IFS= read -r tag; do
-            [ -n "$tag" ] || continue
-            echo "打标签并推送: ${tag}"
-            docker tag ${{ env.IMAGE_TAG }} "${tag}"
-            docker push "${tag}"
-          done <<< "${{ steps.meta.outputs.tags }}"
+          _first_tag=$(echo "${{ steps.meta.outputs.tags }}" | head -1)
+          echo "检视镜像: ${_first_tag}"
+
+          echo ""
+          echo "========== Registry 层信息 =========="
+          _manifest=$(docker buildx imagetools inspect --raw "${_first_tag}" 2>/dev/null)
+          if echo "${_manifest}" | jq -e '.manifests' >/dev/null 2>&1; then
+            _digest=$(echo "${_manifest}" | jq -r '.manifests[0].digest')
+            _manifest=$(docker buildx imagetools inspect --raw "${_first_tag}@${_digest}")
+          fi
+
+          _total=$(echo "${_manifest}" | jq '[.layers[].size] | add')
+          echo "Registry 总大小: $(numfmt --to=iec --suffix=B "${_total}")"
+
+          echo "${_manifest}" | jq -r '.layers | to_entries[] | "  Layer \(.key): \(.value.size | tostring | . + " bytes")  \(.value.mediaType)"' \
+            | while IFS= read -r line; do
+              _sz=$(echo "${line}" | grep -oP '\d+(?= bytes)')
+              if [ -n "${_sz}" ]; then
+                _h=$(numfmt --to=iec --suffix=B "${_sz}" 2>/dev/null || echo "${_sz} bytes")
+                echo "${line}" | sed "s/[0-9]* bytes/${_h}/"
+              else
+                echo "${line}"
+              fi
+            done

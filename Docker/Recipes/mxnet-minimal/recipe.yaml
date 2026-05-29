@@ -1,0 +1,188 @@
+context:
+  version: "1.6.0"
+
+package:
+  name: mxnet
+  version: ${{ version }}
+
+source:
+  url: https://archive.apache.org/dist/incubator/mxnet/${{ version }}/apache-mxnet-src-${{ version }}-incubating.tar.gz
+
+build:
+  number: 2
+  script: |
+    set -eux
+
+    SP_DIR="$($PYTHON -c 'import sysconfig; print(sysconfig.get_paths()["platlib"])')"
+
+    echo "===== patch python/setup.py for binary wheel ====="
+    printf 'from pathlib import Path\np = Path("python/setup.py")\ns = p.read_text()\nif "class BinaryDistribution" not in s:\n    s = s.replace(\n        "from setuptools import find_packages",\n        "from setuptools import find_packages\\n""from setuptools.dist import Distribution\\n\\n""class BinaryDistribution(Distribution):\\n""    def has_ext_modules(self):\\n""        return True\\n""    def is_pure(self):\\n""        return False\\n"\n    )\ns = s.replace(\n    "data_files=[(\\047mxnet\\047, [LIB_PATH[0]])],",\n    "package_data={\\047mxnet\\047: [os.path.basename(LIB_PATH[0])]},"\n)\nif "distclass=BinaryDistribution" not in s:\n    s = s.replace(\n        "**kwargs)",\n        "distclass=BinaryDistribution,\\n      **kwargs)"\n    )\np.write_text(s)\n' > /tmp/patch_setup.py && $PYTHON /tmp/patch_setup.py && rm -f /tmp/patch_setup.py
+
+    echo "===== patch MXNet elemwise template undefined symbols ====="
+    printf 'from pathlib import Path\nfiles = [\n    Path("src/operator/tensor/elemwise_binary_broadcast_op_basic.cc"),\n    Path("src/operator/tensor/elemwise_binary_broadcast_op_basic.cu"),\n]\nfor p in files:\n    if not p.exists():\n        continue\n    s = p.read_text()\n    old = \047#include "./elemwise_binary_op.h"\047\n    new = \047#include "./elemwise_binary_op-inl.h"\047\n    if old in s:\n        s = s.replace(old, new)\n        p.write_text(s)\n        print(f"patched: {p}")\n    elif new in s:\n        print(f"already patched: {p}")\n    else:\n        print(f"WARNING: include pattern not found in {p}")\n' > /tmp/patch_elemwise.py && $PYTHON /tmp/patch_elemwise.py && rm -f /tmp/patch_elemwise.py
+
+    echo "===== configure MXNet with CMake ====="
+    cmake -S . -B build -G Ninja \
+      ${CMAKE_ARGS} \
+      -D CMAKE_BUILD_TYPE=Release \
+      -D CMAKE_INSTALL_PREFIX="$PREFIX" \
+      -D CMAKE_INSTALL_LIBDIR=lib \
+      -D CMAKE_CXX_STANDARD=14 \
+      -D CMAKE_CXX_STANDARD_REQUIRED=ON \
+      -D USE_CUDA=OFF \
+      -D USE_CUDNN=OFF \
+      -D USE_NCCL=OFF \
+      -D USE_NVTX=OFF \
+      -D USE_OPENCV=OFF \
+      -D USE_OPENMP=OFF \
+      -D USE_MKLDNN=OFF \
+      -D USE_MKL_IF_AVAILABLE=OFF \
+      -D USE_BLAS=open \
+      -D USE_LAPACK=OFF \
+      -D USE_DIST_KVSTORE=OFF \
+      -D USE_HDFS=OFF \
+      -D USE_S3=OFF \
+      -D USE_CPP_PACKAGE=OFF \
+      -D USE_TVM_OP=OFF \
+      -D USE_PROFILER=OFF \
+      -D USE_SIGNAL_HANDLER=OFF \
+      -D USE_GPERFTOOLS=OFF \
+      -D USE_JEMALLOC=OFF \
+      -D USE_F16C=OFF \
+      -D OpenBLAS_HOME="$PREFIX" \
+      -D OpenBLAS_ROOT="$PREFIX" \
+      -D OpenBLAS_INCLUDE_DIR="$PREFIX/include" \
+      -D OpenBLAS_LIB="$PREFIX/lib/libopenblas.so" \
+      -D CMAKE_CXX_FLAGS="-Wno-maybe-uninitialized -Wno-template-id-cdtor" \
+      -D CMAKE_POLICY_VERSION_MINIMUM=3.5 \
+      -D BUILD_TESTING=OFF \
+      -D INSTALL_GTEST=OFF
+
+    echo "===== build libmxnet ====="
+    cmake --build build --target mxnet --parallel "${CPU_COUNT:-2}"
+
+    echo "===== install libmxnet ====="
+    cmake --install build
+
+    echo "===== locate libmxnet ====="
+    LIBMXNET="$(find "$PREFIX" build -name 'libmxnet.so' -type f | head -n 1)"
+    if [ -z "$LIBMXNET" ]; then
+      echo "ERROR: libmxnet.so not found"
+      find build "$PREFIX" -name '*mxnet*' -print | head -200
+      exit 1
+    fi
+    echo "libmxnet: $LIBMXNET"
+
+    echo "===== check unresolved symbols in libmxnet ====="
+    if ldd -r "$LIBMXNET" 2>&1 | grep -q "undefined symbol"; then
+      echo "ERROR: libmxnet.so has unresolved symbols"
+      ldd -r "$LIBMXNET" | grep -i "undefined"
+      nm -D -u "$LIBMXNET" 2>/dev/null | c++filt | grep -E 'DnsCsr|ElemwiseBinary' || true
+      exit 1
+    fi
+    echo "libmxnet symbol check passed"
+
+    echo "===== strip libmxnet ====="
+    strip --strip-unneeded "$LIBMXNET" || true
+
+    echo "===== build python wheel ====="
+    cp "$LIBMXNET" python/mxnet/libmxnet.so
+
+    find python/mxnet -type d \( \
+      -name __pycache__ -o \
+      -name tests -o \
+      -name test -o \
+      -name examples -o \
+      -name docs \
+    \) -prune -exec rm -rf {} + 2>/dev/null || true
+
+    find python/mxnet -type f \( \
+      -name "*.pyc" -o \
+      -name "*.pyo" -o \
+      -name "*.a" -o \
+      -name "*.la" \
+    \) -delete 2>/dev/null || true
+
+    mkdir -p /tmp/mxnet-wheel
+    $PYTHON -m pip wheel ./python \
+      --no-deps \
+      --no-build-isolation \
+      -w /tmp/mxnet-wheel
+
+    echo "===== install wheel into conda prefix ====="
+    $PYTHON -m pip install /tmp/mxnet-wheel/mxnet-*.whl \
+      --no-deps \
+      --no-build-isolation \
+      -vv
+
+    echo "===== cleanup installed mxnet ====="
+    rm -f "$PREFIX/lib/libmxnet.so"
+    echo "" > "$SP_DIR/mxnet/test_utils.py"
+    find "$SP_DIR/mxnet" -type d \( \
+      -name __pycache__ -o \
+      -name tests -o \
+      -name test -o \
+      -name examples -o \
+      -name docs \
+    \) -prune -exec rm -rf {} + 2>/dev/null || true
+
+    find "$SP_DIR/mxnet" -type f \( \
+      -name "*.pyc" -o \
+      -name "*.pyo" -o \
+      -name "*.a" -o \
+      -name "*.la" \
+    \) -delete 2>/dev/null || true
+
+    if find "$SP_DIR/mxnet" -type f \( -name "libmklml_intel.so*" -o -name "libmkldnn.so*" \) | grep -q .; then
+      echo "ERROR: MKL/MKLDNN libraries are still packaged"
+      find "$SP_DIR/mxnet" -type f \( -name "libmklml_intel.so*" -o -name "libmkldnn.so*" \) -exec ls -lh {} \;
+      exit 1
+    fi
+
+    strip --strip-unneeded "$SP_DIR/mxnet/libmxnet.so" || true
+
+    echo "===== libmxnet.so locations in conda prefix ====="
+    find "$PREFIX" -name 'libmxnet.so' -type f -exec ls -lh {} \;
+
+    echo "===== mxnet package size ====="
+    du -sh "$SP_DIR/mxnet"
+    find "$SP_DIR/mxnet" -maxdepth 2 -type f -name "*.so*" -exec ls -lh {} \;
+
+requirements:
+  build:
+    - ${{ compiler('c') }}
+    - ${{ compiler('cxx') }}
+    - sysroot_linux-64 ==2.28
+    - cmake
+    - ninja
+    - patch
+    - pkg-config
+  host:
+    - python ==3.7.6
+    - pip
+    - setuptools
+    - wheel
+    - cython
+    - numpy ==1.21.6
+    - openblas >=0.3.20,<0.3.26
+    - libopenblas >=0.3.20,<0.3.26
+    - libcblas
+    - zlib
+  run:
+    - python >=3.7,<3.8
+    - numpy >=1.21,<2
+    - requests
+    - libopenblas >=0.3.20,<0.3.26
+    - libcblas
+    - libgcc-ng
+    - libstdcxx-ng
+    - zlib
+
+  ignore_run_exports:
+    from_package:
+      - libopenblas
+      - openblas
+
+tests:
+  - script:
+      - printf 'import mxnet as mx\nprint("mxnet:", mx.__version__)\na = mx.nd.array([1, 2, 3])\nb = a + 1\nassert b.asnumpy().tolist() == [2.0, 3.0, 4.0]\nfrom mxnet import gluon\nprint("mxnet cmake wheel OK")\n' > /tmp/test_mxnet.py && python /tmp/test_mxnet.py && rm -f /tmp/test_mxnet.py

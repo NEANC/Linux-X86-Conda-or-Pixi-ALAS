@@ -1,0 +1,56 @@
+name: 缓存回收
+
+on:
+  workflow_dispatch:
+    inputs:
+      cache_prefix:
+        description: "缓存 key 前缀（空 = 全部删除）"
+        required: false
+        default: ""
+      dry_run:
+        description: "仅列出，不删除"
+        type: boolean
+        required: false
+        default: true
+
+permissions:
+  actions: write
+
+jobs:
+  prune:
+    name: 清理 Actions Cache
+    runs-on: ubuntu-latest
+    steps:
+      - name: 列出所有缓存
+        run: |
+          echo "===== 当前所有缓存 ====="
+          gh cache list --limit 100 --sort last_accessed_at
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: 删除匹配的缓存
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        run: |
+          PREFIX="${{ github.event.inputs.cache_prefix }}"
+          if [ -z "$PREFIX" ]; then
+            echo "⚠️  将删除所有缓存！"
+            for id in $(gh cache list --limit 100 --json id --jq '.[].id'); do
+              echo "删除: $id"
+              gh cache delete "$id"
+            done
+          else
+            echo "删除前缀匹配 '${PREFIX}' 的缓存..."
+            for row in $(gh cache list --limit 100 --json id,key --jq ".[] | select(.key | startswith(\"${PREFIX}\")) | .id"); do
+              echo "删除: $row"
+              gh cache delete "$row"
+            done
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: 确认最终状态
+        run: |
+          echo "===== 剩余缓存 ====="
+          gh cache list --limit 100 --sort last_accessed_at
+        env:
+          GH_TOKEN: ${{ github.token }}

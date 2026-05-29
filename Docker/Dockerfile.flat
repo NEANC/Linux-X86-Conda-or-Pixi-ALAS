@@ -1,5 +1,6 @@
-ARG FLAT_BASE=alas-pixi-alpine:flat-rootfs
-FROM ${FLAT_BASE}
+FROM scratch
+
+ADD alas-rootfs.tar /
 
 ENV LANG=C.UTF-8 \
     PATH="/root/.pixi/bin:${PATH}" \

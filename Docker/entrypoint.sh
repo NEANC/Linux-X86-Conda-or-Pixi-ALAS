@@ -64,6 +64,8 @@ websockets = "*"
 h11 = "*"
 python-dotenv = "*"
 requests = "*"
+mxnet = "==1.6.0"
+cnocr = "==1.2.3.1"
 [pypi-dependencies]
 anyio = "==1.3.1"
 adbutils = "==0.11.0"
@@ -71,8 +73,7 @@ uiautomator2 = "==2.16.17"
 uiautomator2cache = "==0.3.0.1"
 onepush = "==1.4.0"
 pypresence = "==4.2.1"
-cnocr = ">=1.2.0,<2"
-mxnet = "==1.6.0"
+gluoncv = ">=0.3,<0.7"
 jellyfish = "==0.11.2"
 pydantic = "*"
 pywebio = "==1.6.2"
@@ -180,7 +181,7 @@ use_prebuilt_pixi_env() {
         rm -rf .pixi pixi.lock
     fi
 
-    cp -a "${_up_prebuilt}/.pixi" .pixi
+    ln -sfn "${_up_prebuilt}/.pixi" .pixi
     cp "${_up_prebuilt}/pixi.lock" pixi.lock
 
     if [ -x .pixi/envs/default/bin/python ] && .pixi/envs/default/bin/python -V >/dev/null 2>&1; then
