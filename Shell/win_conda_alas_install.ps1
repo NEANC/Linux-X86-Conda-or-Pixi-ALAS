@@ -479,8 +479,8 @@ dependencies:
       - onepush==1.4.0
       - pycryptodome==3.9.9
       - pypresence==4.2.1
+      - mxnet @ https://github.com/swordfeng/mxnet-build/releases/download/rev1/mxnet-1.9.1-cp38-cp38-win_amd64.whl
       - cnocr==1.2.3.1
-      - mxnet-alas==0.0.5
       - pywebio==1.6.2
       - starlette==0.14.2
       - uvicorn==0.17.6
