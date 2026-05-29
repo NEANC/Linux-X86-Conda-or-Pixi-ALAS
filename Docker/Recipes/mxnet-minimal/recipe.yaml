@@ -9,7 +9,7 @@ source:
   url: https://archive.apache.org/dist/incubator/mxnet/${{ version }}/apache-mxnet-src-${{ version }}-incubating.tar.gz
 
 build:
-  number: 1
+  number: 2
   script: |
     set -eux
 
@@ -164,18 +164,24 @@ requirements:
     - wheel
     - cython
     - numpy ==1.21.6
-    - openblas >=0.3.25,<0.3.26
-    - libopenblas >=0.3.25,<0.3.26
+    - openblas >=0.3.20,<0.3.26
+    - libopenblas >=0.3.20,<0.3.26
     - libcblas
     - zlib
   run:
     - python >=3.7,<3.8
     - numpy >=1.21,<2
     - requests
+    - libopenblas >=0.3.20,<0.3.26
     - libcblas
     - libgcc-ng
     - libstdcxx-ng
     - zlib
+
+  ignore_run_exports:
+    from_package:
+      - libopenblas
+      - openblas
 
 tests:
   - script:

@@ -33,7 +33,15 @@ jobs:
       - name: 检出仓库
         uses: actions/checkout@v6
 
+      - name: 检查 runtime 缓存是否已存在
+        id: runtime
+        uses: actions/cache/restore@v5
+        with:
+          path: local-channel-runtime
+          key: native-runtime-v1-${{ hashFiles('Docker/Recipes/opencv-minimal/**', 'Docker/Recipes/mxnet-minimal/**', 'Docker/Recipes/cnocr-legacy/**', 'Pixi/pixi.toml') }}
+
       - name: 安装 Pixi
+        if: steps.runtime.outputs.cache-hit != 'true'
         uses: prefix-dev/setup-pixi@v0.9.6
         with:
           pixi-version: latest
@@ -42,17 +50,18 @@ jobs:
 
       - name: 恢复 OpenCV 缓存
         id: cache
+        if: steps.runtime.outputs.cache-hit != 'true'
         uses: actions/cache/restore@v5
         with:
           path: local-channel
           key: opencv-build-v1-${{ hashFiles('Docker/Recipes/opencv-minimal/recipe.yaml', 'Docker/Recipes/opencv-minimal/variants.yaml') }}
 
       - name: 安装 rattler-build
-        if: steps.cache.outputs.cache-hit != 'true'
+        if: steps.runtime.outputs.cache-hit != 'true' && steps.cache.outputs.cache-hit != 'true'
         run: pixi global install rattler-build
 
       - name: 编译 OpenCV-mini
-        if: steps.cache.outputs.cache-hit != 'true'
+        if: steps.runtime.outputs.cache-hit != 'true' && steps.cache.outputs.cache-hit != 'true'
         run: |
           rattler-build build \
             -r Docker/Recipes/opencv-minimal/recipe.yaml \
@@ -64,7 +73,7 @@ jobs:
           rattler-index fs ./local-channel --target-platform linux-64
 
       - name: 检查 OpenCV glibc 符号版本
-        if: steps.cache.outputs.cache-hit != 'true'
+        if: steps.runtime.outputs.cache-hit != 'true' && steps.cache.outputs.cache-hit != 'true'
         run: |
           set -eu
           python3 - <<'PY'
@@ -108,6 +117,7 @@ jobs:
           PY
 
       - name: 上传 OpenCV 产物
+        if: steps.runtime.outputs.cache-hit != 'true'
         uses: actions/upload-artifact@v7
         with:
           name: opencv-conda
@@ -115,7 +125,7 @@ jobs:
           compression-level: 0
 
       - name: 保存 OpenCV 缓存
-        if: steps.cache.outputs.cache-hit != 'true'
+        if: steps.runtime.outputs.cache-hit != 'true' && steps.cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5
         with:
           path: local-channel
@@ -128,7 +138,15 @@ jobs:
       - name: 检出仓库
         uses: actions/checkout@v6
 
+      - name: 检查 runtime 缓存是否已存在
+        id: runtime
+        uses: actions/cache/restore@v5
+        with:
+          path: local-channel-runtime
+          key: native-runtime-v1-${{ hashFiles('Docker/Recipes/opencv-minimal/**', 'Docker/Recipes/mxnet-minimal/**', 'Docker/Recipes/cnocr-legacy/**', 'Pixi/pixi.toml') }}
+
       - name: 安装 Pixi
+        if: steps.runtime.outputs.cache-hit != 'true'
         uses: prefix-dev/setup-pixi@v0.9.6
         with:
           pixi-version: latest
@@ -137,19 +155,20 @@ jobs:
 
       - name: 恢复 MXNet 缓存
         id: cache
+        if: steps.runtime.outputs.cache-hit != 'true'
         uses: actions/cache/restore@v5
         with:
           path: local-channel
-          key: mxnet-build-v1-${{ hashFiles('Docker/Recipes/mxnet-minimal/recipe.yaml', 'Docker/Recipes/mxnet-minimal/variants.yaml') }}
+          key: mxnet-build-v2-${{ hashFiles('Docker/Recipes/mxnet-minimal/recipe.yaml', 'Docker/Recipes/mxnet-minimal/variants.yaml') }}
           restore-keys: |
-            mxnet-build-v1-
+            mxnet-build-v2-
 
       - name: 安装 rattler-build
-        if: steps.cache.outputs.cache-hit != 'true'
+        if: steps.runtime.outputs.cache-hit != 'true' && steps.cache.outputs.cache-hit != 'true'
         run: pixi global install rattler-build
 
       - name: 编译 MXNet-mini
-        if: steps.cache.outputs.cache-hit != 'true'
+        if: steps.runtime.outputs.cache-hit != 'true' && steps.cache.outputs.cache-hit != 'true'
         run: |
           rattler-build build \
             -r Docker/Recipes/mxnet-minimal/recipe.yaml \
@@ -161,7 +180,7 @@ jobs:
           rattler-index fs ./local-channel --target-platform linux-64
 
       - name: 检查 MXNet glibc + MKL
-        if: steps.cache.outputs.cache-hit != 'true'
+        if: steps.runtime.outputs.cache-hit != 'true' && steps.cache.outputs.cache-hit != 'true'
         run: |
           set -eu
           python3 - <<'PY'
@@ -216,6 +235,7 @@ jobs:
           PY
 
       - name: 上传 MXNet 产物
+        if: steps.runtime.outputs.cache-hit != 'true'
         uses: actions/upload-artifact@v7
         with:
           name: mxnet-conda
@@ -223,11 +243,11 @@ jobs:
           compression-level: 0
 
       - name: 保存 MXNet 缓存
-        if: steps.cache.outputs.cache-hit != 'true'
+        if: steps.runtime.outputs.cache-hit != 'true' && steps.cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5
         with:
           path: local-channel
-          key: mxnet-build-v1-${{ hashFiles('Docker/Recipes/mxnet-minimal/recipe.yaml', 'Docker/Recipes/mxnet-minimal/variants.yaml') }}
+          key: mxnet-build-v2-${{ hashFiles('Docker/Recipes/mxnet-minimal/recipe.yaml', 'Docker/Recipes/mxnet-minimal/variants.yaml') }}
 
   cnocr:
     name: 构建 CnOCR legacy
@@ -237,7 +257,15 @@ jobs:
       - name: 检出仓库
         uses: actions/checkout@v6
 
+      - name: 检查 runtime 缓存是否已存在
+        id: runtime
+        uses: actions/cache/restore@v5
+        with:
+          path: local-channel-runtime
+          key: native-runtime-v1-${{ hashFiles('Docker/Recipes/opencv-minimal/**', 'Docker/Recipes/mxnet-minimal/**', 'Docker/Recipes/cnocr-legacy/**', 'Pixi/pixi.toml') }}
+
       - name: 安装 Pixi
+        if: steps.runtime.outputs.cache-hit != 'true'
         uses: prefix-dev/setup-pixi@v0.9.6
         with:
           pixi-version: latest
@@ -246,24 +274,25 @@ jobs:
 
       - name: 恢复 CnOCR 缓存
         id: cache
+        if: steps.runtime.outputs.cache-hit != 'true'
         uses: actions/cache/restore@v5
         with:
           path: local-channel
           key: cnocr-build-v1-${{ hashFiles('Docker/Recipes/cnocr-legacy/recipe.yaml') }}
 
       - name: 下载 OpenCV 产物
-        if: steps.cache.outputs.cache-hit != 'true'
+        if: steps.runtime.outputs.cache-hit != 'true' && steps.cache.outputs.cache-hit != 'true'
         uses: actions/download-artifact@v8
         with:
           name: opencv-conda
           path: local-channel/linux-64
 
       - name: 安装 rattler-build
-        if: steps.cache.outputs.cache-hit != 'true'
+        if: steps.runtime.outputs.cache-hit != 'true' && steps.cache.outputs.cache-hit != 'true'
         run: pixi global install rattler-build
 
       - name: 编译 CnOCR legacy
-        if: steps.cache.outputs.cache-hit != 'true'
+        if: steps.runtime.outputs.cache-hit != 'true' && steps.cache.outputs.cache-hit != 'true'
         run: |
           pixi global install rattler-index
           rattler-index fs ./local-channel --target-platform linux-64
@@ -277,6 +306,7 @@ jobs:
           rattler-index fs ./local-channel --target-platform linux-64
 
       - name: 上传 CnOCR 产物
+        if: steps.runtime.outputs.cache-hit != 'true'
         uses: actions/upload-artifact@v7
         with:
           name: cnocr-conda
@@ -284,14 +314,14 @@ jobs:
           compression-level: 0
 
       - name: 保存 CnOCR 缓存
-        if: steps.cache.outputs.cache-hit != 'true'
+        if: steps.runtime.outputs.cache-hit != 'true' && steps.cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5
         with:
           path: local-channel
           key: cnocr-build-v1-${{ hashFiles('Docker/Recipes/cnocr-legacy/recipe.yaml') }}
 
   assemble-native:
-    name: 组装本机包
+    name: 组装 runtime
     needs: [opencv, mxnet, cnocr]
     runs-on: ubuntu-latest
     steps:
