@@ -272,8 +272,15 @@ detect_init_system() {
         INIT_SYSTEM="openrc"
         _log_message "INFO" "检测到 init 系统: OpenRC"
     elif command -v service >/dev/null 2>&1 && [ -d /etc/init.d ]; then
-        INIT_SYSTEM="sysvinit"
-        _log_message "INFO" "检测到 init 系统: SysVinit"
+        # 容器环境检测：systemctl 存在但 systemd 非 PID 1 时，
+        # service 命令实际上是 systemd wrapper，调用会报 "Unit xxx.service not found"
+        if command -v systemctl >/dev/null 2>&1 && [ ! -d /run/systemd/system ]; then
+            INIT_SYSTEM="unknown"
+            _log_message "WARNING" "systemd 未作为 init 运行，service 为 systemd wrapper，跳过服务配置"
+        else
+            INIT_SYSTEM="sysvinit"
+            _log_message "INFO" "检测到 init 系统: SysVinit"
+        fi
     else
         INIT_SYSTEM="unknown"
         _log_message "WARNING" "无法检测 init 系统，将跳过服务配置"
@@ -1080,10 +1087,10 @@ dependencies:
   - xorg-libsm
   - xorg-libxrender
   - xorg-libxext
-  - python=3.7.6
-  - av>=8.0.3,<9
-  - numpy=1.16.6
-  - scipy=1.4.1
+  - python=3.8.10
+  - av=10.0.0
+  - numpy=1.24.4
+  - scipy=1.10.1
   - pillow
   - psutil=5.9.3
   - pyyaml
@@ -1108,8 +1115,8 @@ dependencies:
     - onepush==1.4.0
     - pycryptodome==3.9.9
     - pypresence==4.2.1
-    - cnocr==1.2.2
-    - mxnet==1.6.0
+    - cnocr==1.2.3.1
+    - mxnet-alas==0.0.5
     - pywebio==1.6.2
     - starlette==0.14.2
     - uvicorn==0.17.6

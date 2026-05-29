@@ -451,18 +451,17 @@ channels:
 platforms:
   - win-64
 dependencies:
-  - python=3.7.9
-  - av>=8.0.3,<9
-  - numpy=1.16.6
-  - scipy=1.4.1
+  - python=3.8.10
+  - av=10.0.0
+  - numpy=1.24.4
+  - scipy=1.10.1
+  - pillow
   - psutil=5.9.3
   - pyyaml
   - tqdm
   - lz4
   - pyzmq=22.3.0
-  - pip
   - pip:
-      - pillow
       - opencv-python==4.5.5.62
       - imageio==2.27.0
       - adbutils==0.11.0
@@ -480,8 +479,8 @@ dependencies:
       - onepush==1.4.0
       - pycryptodome==3.9.9
       - pypresence==4.2.1
-      - cnocr==1.2.2
-      - mxnet==1.6.0
+      - mxnet @ https://github.com/swordfeng/mxnet-build/releases/download/rev1/mxnet-1.9.1-cp38-cp38-win_amd64.whl
+      - cnocr==1.2.3.1
       - pywebio==1.6.2
       - starlette==0.14.2
       - uvicorn==0.17.6
