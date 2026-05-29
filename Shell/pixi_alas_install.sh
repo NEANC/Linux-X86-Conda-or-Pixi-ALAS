@@ -278,8 +278,15 @@ detect_init_system() {
         INIT_SYSTEM="openrc"
         _log_message "INFO" "检测到 init 系统: OpenRC"
     elif command -v service >/dev/null 2>&1 && [ -d /etc/init.d ]; then
-        INIT_SYSTEM="sysvinit"
-        _log_message "INFO" "检测到 init 系统: SysVinit"
+        # 容器环境检测：systemctl 存在但 systemd 非 PID 1 时，
+        # service 命令实际上是 systemd wrapper，调用会报 "Unit xxx.service not found"
+        if command -v systemctl >/dev/null 2>&1 && [ ! -d /run/systemd/system ]; then
+            INIT_SYSTEM="unknown"
+            _log_message "WARNING" "systemd 未作为 init 运行，service 为 systemd wrapper，跳过服务配置"
+        else
+            INIT_SYSTEM="sysvinit"
+            _log_message "INFO" "检测到 init 系统: SysVinit"
+        fi
     else
         INIT_SYSTEM="unknown"
         _log_message "WARNING" "无法检测 init 系统，将跳过服务配置"
