@@ -461,7 +461,7 @@ dependencies:
   - tqdm
   - lz4
   - pyzmq=22.3.0
-  - pip
+  - pip:
       - opencv-python==4.5.5.62
       - imageio==2.27.0
       - adbutils==0.11.0
